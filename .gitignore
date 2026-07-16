@@ -1,0 +1,68 @@
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# Logs
+*.log
+pandasai.log
+logs/
+
+# Uploaded / generated data (keep folder via .gitkeep)
+data/uploads/*
+!data/uploads/.gitkeep
+exports/charts/*
+!exports/charts/.gitkeep
+exports/*
+!exports/charts/
+!exports/.gitkeep
+
+# Excel / Office temp files
+~$*
+*.tmp
+*.temp
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.cursor/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Local Streamlit cache
+.streamlit/cache/

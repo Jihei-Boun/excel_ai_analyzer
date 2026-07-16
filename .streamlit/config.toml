@@ -1,0 +1,13 @@
+[server]
+headless = false
+# 8501은 다른 앱이 사용 중일 수 있음 → 기본 8502
+port = 8502
+address = "localhost"
+
+[browser]
+gatherUsageStats = false
+serverAddress = "localhost"
+serverPort = 8502
+
+[client]
+toolbarMode = "minimal"
