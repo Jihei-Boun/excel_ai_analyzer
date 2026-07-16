@@ -5,10 +5,10 @@ from __future__ import annotations
 import streamlit as st
 
 RECOMMENDED_PROMPTS = (
-    "연구활동비 항목을 리스트로 보여줘",
-    "예산잔액이 500만원 이상인 항목만 보여줘",
-    "국내여비와 국외여비만 리스트로 보여줘",
-    "예산잔액 합계를 구해줘",
+    "각 컬럼의 데이터 타입과 결측치 개수를 알려줘",
+    "첫 번째 숫자형 컬럼의 합계를 구해줘",
+    "범주형 컬럼별 행 개수를 표로 보여줘",
+    "숫자형 컬럼들의 기초 통계를 보여줘",
 )
 QUICK_OPERATIONS = (
     ("합계", "sum"),
@@ -40,11 +40,12 @@ def init_session_state() -> None:
         "chat_messages": [],
         "ollama_base_url": "http://localhost:11434",
         "ollama_model": "qwen2.5:7b",
-        "intent_model": "qwen2.5:7b",
         "ollama_connected": False,
         "work_target": "원본 df",
         "active_operation": None,
         "pending_prompt": "",
+        "pending_analysis_prompt": "",
+        "chat_input_nonce": 0,
         "last_filter_summary": "",
         "_df_sanitized": False,
     }

@@ -15,11 +15,12 @@ from ui.session_store import QUICK_OPERATIONS, RECOMMENDED_PROMPTS
 def render_chat_panel() -> None:
     st.markdown('<p class="panel-title">AI 분석</p>', unsafe_allow_html=True)
     st.markdown(
-        '<p class="panel-desc">자연어로 필터·합계·정렬을 요청하세요.</p>',
+        '<p class="panel-desc">현재 데이터에 원하는 분석을 자연어로 요청하세요.</p>',
         unsafe_allow_html=True,
     )
 
     _render_chat_history()
+    _process_pending_analysis()
     _render_selected_result()
     _render_operation_result()
     _render_quick_operations()
@@ -50,12 +51,18 @@ def _render_chat_history() -> None:
             )
 
 
+def _process_pending_analysis() -> None:
+    prompt = st.session_state.pop("pending_analysis_prompt", "") or ""
+    if prompt:
+        process_user_prompt(prompt, user_already_added=True)
+
+
 def _render_selected_result() -> None:
     selected = st.session_state.get("selected_df")
     if selected is None:
         return
 
-    st.caption(f"선택 결과 · {len(selected):,}행")
+    st.caption(f"표 결과 · {len(selected):,}행")
     st.dataframe(
         for_display(selected.head(10)),
         use_container_width=True,
@@ -163,19 +170,33 @@ def _render_operation_result() -> None:
 def _render_chat_input() -> None:
     st.markdown("---")
     default = st.session_state.pop("pending_prompt", "") or ""
-    prompt = st.text_area(
-        "질문 입력",
-        value=default,
-        placeholder="예: 예산잔액이 500만원 이상인 항목만 보여줘",
-        label_visibility="collapsed",
-        height=72,
-        key="chat_prompt_input",
-    )
+    nonce = st.session_state.get("chat_input_nonce", 0)
+    if default:
+        nonce += 1
+        st.session_state.chat_input_nonce = nonce
 
-    if st.button("전송", type="primary", use_container_width=True):
+    with st.form("chat_prompt_form", clear_on_submit=True):
+        prompt = st.text_area(
+            "질문 입력",
+            value=default,
+            placeholder="예: 매출이 높은 상위 10개 행을 보여줘",
+            label_visibility="collapsed",
+            height=72,
+            key=f"chat_prompt_input_{nonce}",
+        )
+        submitted = st.form_submit_button(
+            "전송",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if submitted:
         if not prompt.strip():
             return
         if st.session_state.get("df") is None:
             st.warning("먼저 엑셀 파일을 업로드하세요.")
             return
-        process_user_prompt(prompt.strip())
+        prompt = prompt.strip()
+        st.session_state.chat_messages.append({"role": "user", "content": prompt})
+        st.session_state.pending_analysis_prompt = prompt
+        st.rerun()

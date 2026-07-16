@@ -1,6 +1,7 @@
 streamlit>=1.32.0
 pandas>=2.1.0,<3
 openpyxl>=3.1.0
+xlrd>=2.0.1
 requests>=2.31.0
 
 # PandasAI (Python 3.12: --no-deps 후 아래 런타임 의존성 설치)

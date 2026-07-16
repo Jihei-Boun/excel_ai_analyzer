@@ -50,13 +50,6 @@ def render_sidebar() -> None:
             index=_model_index(model_options, st.session_state.ollama_model),
         )
 
-        with st.expander("고급 설정", expanded=False):
-            st.session_state.intent_model = st.selectbox(
-                "의도 분석 모델",
-                model_options,
-                index=_model_index(model_options, st.session_state.intent_model),
-            )
-
         files = st.session_state.get("uploaded_files") or []
         if files:
             st.markdown('<p class="sidebar-label">파일</p>', unsafe_allow_html=True)

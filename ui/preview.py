@@ -22,8 +22,7 @@ def render_preview_section() -> None:
             unsafe_allow_html=True,
         )
 
-    # Arrow/비목섹션 호환을 위해 세션 데이터 정리
-    if "비목섹션" not in df.columns or not st.session_state.get("_df_sanitized"):
+    if not st.session_state.get("_df_sanitized"):
         df = sanitize_dataframe(df)
         st.session_state.df = df
         file_id = st.session_state.get("active_file_id")
