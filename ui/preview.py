@@ -5,7 +5,7 @@ from __future__ import annotations
 import streamlit as st
 
 from core.excel_loader import load_excel, sanitize_dataframe
-from ui.display import for_display
+from ui.display import for_preview_display, preview_column_labels
 from ui.upload import get_preview_context, set_preview_file
 
 
@@ -54,11 +54,17 @@ def render_preview_section() -> None:
             return
 
     height = min(900, max(280, 38 * (len(df) + 1)))
+    column_labels = preview_column_labels(list(df.columns))
+    column_config = {
+        column: st.column_config.Column(label=label)
+        for column, label in column_labels.items()
+    }
     st.dataframe(
-        for_display(df),
+        for_preview_display(df),
         use_container_width=True,
         height=height,
         hide_index=True,
+        column_config=column_config,
     )
     _render_summary_cards(df)
 

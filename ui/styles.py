@@ -204,6 +204,22 @@ APP_CSS = """
         margin: 0.12rem 0;
     }
 
+    .list-group-name {
+        margin: 0.55rem 0 0.2rem 0;
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #cbd5e1;
+    }
+
+    .list-group-name:first-child {
+        margin-top: 0.15rem;
+    }
+
+    .list-result-nested {
+        margin: 0.1rem 0 0.45rem 0.35rem;
+        padding: 0.35rem 0.75rem 0.35rem 1.2rem;
+    }
+
     .result-box {
         background: var(--surface);
         border: 1px solid var(--border);

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pandas as pd
 
 from core.analyzer import find_mentioned_column, format_context_label
-from core.pandasai_config import is_total_label
+from core.excel_loader import find_merged_header_pair, merged_header_base
+from core.pandasai_config import is_total_label, prepare_dataframe_for_ai
 
 _SOURCE_COL = "출처파일"
 
@@ -16,6 +19,69 @@ _LIST_DISPLAY_KEYWORDS = (
     "나열",
     "list",
 )
+
+_GROUP_COLUMN_HINTS = (
+    "비목분류",
+    "대분류",
+    "중분류",
+    "상위분류",
+    "카테고리",
+    "category",
+)
+
+_GROUP_COLUMN_SUFFIXES = (
+    "분류",
+    "구분",
+)
+
+_GROUP_COLUMN_EXACT = (
+    "비목",
+    "카테고리",
+    "category",
+    "구분",
+)
+
+_ITEM_COLUMN_HINTS = (
+    "비용명",
+    "세목",
+    "계정",
+    "코드",
+    "항목",
+    "내역",
+    "명칭",
+)
+
+_CODE_COLUMN_HINTS = (
+    "세목코드",
+    "비용코드",
+    "계정코드",
+    "항목코드",
+    "코드",
+    "세목",
+    "번호",
+    "code",
+)
+
+_AMOUNT_COLUMN_HINTS = (
+    "예산",
+    "금액",
+    "합계",
+    "실적",
+    "집행",
+    "수량",
+    "단가",
+    "차액",
+    "잔액",
+)
+
+
+@dataclass(frozen=True)
+class ListDisplayResult:
+    """리스트 UI에 쓸 평면·그룹 목록."""
+
+    label: str
+    values: list[str]
+    groups: dict[str, list[str]] | None = None
 
 
 def expects_list_display(prompt: str) -> bool:
@@ -58,31 +124,422 @@ def to_list_display(
     prompt: str,
     *,
     source_col: str = _SOURCE_COL,
-) -> tuple[list[str], str] | None:
-    """리스트 표시용 (값 목록, 컬럼 라벨)을 추출한다."""
+    source_df: pd.DataFrame | None = None,
+) -> ListDisplayResult | None:
+    """리스트 표시용 값(평면·분류별 그룹)을 추출한다."""
     if df is None or df.empty or not expects_list_display(prompt):
         return None
 
-    column = _list_target_column(df, prompt, source_col=source_col)
-    if column is None:
+    work = enrich_for_grouped_list(df, source_df, prompt, source_col=source_col)
+    prepared = prepare_dataframe_for_ai(work)
+    mentioned = find_mentioned_column(prepared, prompt)
+    merged_pair = find_merged_header_pair(prepared.columns, mentioned)
+    if merged_pair:
+        code_col, item_col = merged_pair
+    else:
+        item_col = _list_item_column(prepared, prompt, source_col=source_col)
+        if item_col is None:
+            return None
+        code_col = None
+
+    group_col = _list_group_column(prepared, prompt, item_col, source_col=source_col)
+    if code_col is None:
+        code_col = _list_code_column(
+            prepared,
+            item_col,
+            group_col=group_col,
+            source_col=source_col,
+        )
+
+    list_label = format_context_label(merged_header_base(item_col))
+    groups = (
+        _build_grouped_list(
+            prepared,
+            group_col,
+            item_col,
+            code_col=code_col,
+            source_col=source_col,
+        )
+        if group_col is not None
+        else None
+    )
+
+    if groups:
+        values = [item for items in groups.values() for item in items]
+        if not values:
+            return None
+        return ListDisplayResult(
+            label=list_label,
+            values=values,
+            groups=groups,
+        )
+
+    values = _build_flat_list(prepared, item_col, code_col=code_col)
+    if not values:
         return None
 
+    return ListDisplayResult(
+        label=list_label,
+        values=values,
+        groups=None,
+    )
+
+
+def enrich_for_grouped_list(
+    result: pd.DataFrame,
+    source: pd.DataFrame | None,
+    prompt: str,
+    *,
+    source_col: str = _SOURCE_COL,
+) -> pd.DataFrame:
+    """결과에 분류·코드 컬럼이 빠졌을 때 원본 데이터에서 보강한다."""
+    if source is None or source.empty or result is None or result.empty:
+        return result
+    if not expects_list_display(prompt):
+        return result
+
+    mentioned = find_mentioned_column(source, prompt)
+    merged_pair = find_merged_header_pair(source.columns, mentioned)
+    if merged_pair:
+        code_col, item_col = merged_pair
+    else:
+        item_col = _list_item_column(result, prompt, source_col=source_col)
+        if item_col is None:
+            item_col = _list_item_column(source, prompt, source_col=source_col)
+        if item_col is None:
+            return result
+        group_col = _list_group_column(source, prompt, item_col, source_col=source_col)
+        code_col = _list_code_column(
+            source,
+            item_col,
+            group_col=group_col,
+            source_col=source_col,
+        )
+
+    group_col = _list_group_column(source, prompt, item_col, source_col=source_col)
+
+    needs_group = (
+        group_col is not None
+        and group_col not in result.columns
+        and group_col in source.columns
+    )
+    needs_pair = merged_pair is not None and (
+        code_col not in result.columns or item_col not in result.columns
+    )
+    needs_code = (
+        not merged_pair
+        and code_col is not None
+        and code_col not in result.columns
+        and code_col in source.columns
+    )
+    if not needs_group and not needs_code and not needs_pair:
+        return result
+
+    prepared = prepare_dataframe_for_ai(source)
+    if item_col not in prepared.columns and (
+        not merged_pair or code_col not in prepared.columns
+    ):
+        return result
+
+    match_col = item_col
+    if merged_pair and item_col not in result.columns and code_col in result.columns:
+        match_col = code_col
+
+    if match_col in result.columns:
+        item_keys = {
+            _format_item_text(value)
+            for value in result[match_col].tolist()
+            if _format_item_text(value)
+        }
+        if not item_keys:
+            return result
+        mask = prepared[match_col].map(_format_item_text).isin(item_keys)
+    elif group_col and group_col in result.columns:
+        # LLM이 분류명만 반환한 경우에도 원본에서 해당 분류의 세부 비용명을 다시 확장한다.
+        group_keys = {
+            _format_item_text(value)
+            for value in result[group_col].tolist()
+            if _format_item_text(value)
+        }
+        if not group_keys:
+            return result
+        filled_groups = pd.Series(
+            _forward_fill_group_labels(prepared[group_col]),
+            index=prepared.index,
+        ).map(_format_item_text)
+        mask = filled_groups.isin(group_keys)
+    elif len(result) == len(prepared):
+        mask = pd.Series(True, index=prepared.index)
+    else:
+        return result
+
+    columns = list(
+        dict.fromkeys(
+            column
+            for column in (source_col, group_col, code_col, item_col)
+            if column and column in prepared.columns
+        )
+    )
+    subset = prepared.loc[mask, columns].reset_index(drop=True)
+    return subset if not subset.empty else result
+
+
+def _build_flat_list(
+    df: pd.DataFrame,
+    column: str,
+    *,
+    code_col: str | None = None,
+) -> list[str]:
     values: list[str] = []
     seen: set[str] = set()
-    for raw in df[column].tolist():
-        text = _clean_cell_text(raw)
-        if not text or _cell_is_total_label(raw):
+    for _, row in df.iterrows():
+        text = _format_list_entry(row, item_col=column, code_col=code_col)
+        if not text or _cell_is_total_label(row.get(column)):
             continue
         if text in seen:
             continue
         seen.add(text)
         values.append(text)
+    return values
 
-    if not values:
+
+def _build_grouped_list(
+    df: pd.DataFrame,
+    group_col: str,
+    item_col: str,
+    *,
+    code_col: str | None = None,
+    source_col: str,
+) -> dict[str, list[str]] | None:
+    multi_source = source_col in df.columns and df[source_col].nunique() > 1
+    group_labels = _forward_fill_group_labels(df[group_col])
+    groups: dict[str, list[str]] = {}
+    seen_pairs: set[tuple[str, str]] = set()
+
+    for position, (_, row) in enumerate(df.iterrows()):
+        group_text = group_labels[position]
+        if not group_text or _cell_is_total_label(group_text):
+            continue
+
+        group_name = group_text
+        if multi_source:
+            file_name = _clean_cell_text(row.get(source_col))
+            if file_name:
+                group_name = f"{file_name} · {group_text}"
+
+        item_text = _format_list_entry(row, item_col=item_col, code_col=code_col)
+        if not item_text or _cell_is_total_label(row.get(item_col)):
+            continue
+        if item_text == group_text:
+            continue
+
+        pair = (group_name, item_text)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+
+        groups.setdefault(group_name, []).append(item_text)
+
+    if not groups:
+        return None
+    return groups
+
+
+def _format_list_entry(
+    row: pd.Series,
+    *,
+    item_col: str,
+    code_col: str | None,
+) -> str:
+    """한 행을 '코드: 비용명' 형태로 포맷한다."""
+    name = _format_item_text(row.get(item_col))
+    if not code_col or code_col not in row.index:
+        return name
+
+    code = _format_item_text(row.get(code_col))
+    if code and name:
+        return f"{code}: {name}"
+    return code or name
+
+
+def _list_code_column(
+    df: pd.DataFrame,
+    item_col: str,
+    *,
+    group_col: str | None,
+    source_col: str,
+) -> str | None:
+    """비용명과 짝을 이루는 코드(숫자) 컬럼을 찾는다."""
+    skip = {item_col, source_col}
+    if group_col:
+        skip.add(group_col)
+
+    scored: list[tuple[int, int, str]] = []
+    columns = list(df.columns)
+    item_index = columns.index(item_col) if item_col in columns else len(columns)
+
+    for index, column in enumerate(columns):
+        if column in skip:
+            continue
+        if _is_amount_like_column(column):
+            continue
+
+        series = df[column]
+        is_numeric = pd.api.types.is_numeric_dtype(series)
+        name_score = 0
+        if _column_name_matches(column, _CODE_COLUMN_HINTS):
+            name_score = 20
+        elif is_numeric:
+            name_score = 5
+
+        if not is_numeric and name_score == 0:
+            continue
+        if not is_numeric and name_score > 0:
+            # 문자열이지만 코드명인 열(예: '121' 텍스트)도 허용
+            sample = series.dropna().head(8).map(_format_item_text)
+            if sample.empty or not all(text.isdigit() for text in sample if text):
+                continue
+
+        distance = abs(index - item_index)
+        left_bonus = 10 if index < item_index else 0
+        scored.append((name_score + left_bonus, -distance, column))
+
+    if not scored:
         return None
 
-    label = format_context_label(column)
-    return values, label
+    scored.sort(reverse=True)
+    return scored[0][2]
+
+
+def _is_amount_like_column(name: str) -> bool:
+    normalized = str(name).replace(" ", "").lower()
+    return any(hint.lower() in normalized for hint in _AMOUNT_COLUMN_HINTS)
+
+
+def _forward_fill_group_labels(series: pd.Series) -> list[str]:
+    """병합 셀로 비어 있는 분류명을 위 행 값으로 채운다."""
+    labels: list[str] = []
+    current: str | None = None
+
+    for value in series.tolist():
+        if _cell_is_total_label(value):
+            current = None
+            labels.append("")
+            continue
+
+        text = _clean_cell_text(value)
+        if text:
+            current = text
+        labels.append(current or "")
+
+    return labels
+
+
+def _list_group_column(
+    df: pd.DataFrame,
+    prompt: str,
+    item_col: str,
+    *,
+    source_col: str,
+) -> str | None:
+    if _is_group_like_column(item_col):
+        return None
+
+    text_columns = _text_columns(df, source_col=source_col)
+
+    mentioned = find_mentioned_column(df, prompt)
+    if mentioned and _is_group_like_column(mentioned) and mentioned != item_col:
+        return mentioned
+
+    for column in text_columns:
+        if column == item_col:
+            continue
+        if _is_group_like_column(column):
+            return column
+
+    if len(text_columns) < 2:
+        return None
+
+    if item_col in text_columns:
+        index = text_columns.index(item_col)
+        if index > 0:
+            return text_columns[index - 1]
+
+    others = [column for column in text_columns if column != item_col]
+    return others[0] if len(others) == 1 else None
+
+
+def _list_item_column(
+    df: pd.DataFrame,
+    prompt: str,
+    *,
+    source_col: str,
+) -> str | None:
+    mentioned = find_mentioned_column(df, prompt)
+    if mentioned and mentioned in df.columns:
+        return mentioned
+
+    text_columns = _text_columns(df, source_col=source_col)
+    detail_columns = [column for column in text_columns if not _is_group_like_column(column)]
+    if detail_columns:
+        return detail_columns[-1]
+
+    for column in df.columns:
+        if column == source_col:
+            continue
+        if _column_name_matches(column, _ITEM_COLUMN_HINTS):
+            return column
+
+    numeric_columns = [
+        column
+        for column in df.columns
+        if column != source_col and pd.api.types.is_numeric_dtype(df[column])
+    ]
+    if len(numeric_columns) == 1 and text_columns:
+        return numeric_columns[0]
+
+    if len(text_columns) == 1:
+        return text_columns[0]
+    if len(df.columns) == 1:
+        return str(df.columns[0])
+    return None
+
+
+def _text_columns(df: pd.DataFrame, *, source_col: str) -> list[str]:
+    return [
+        column
+        for column in df.columns
+        if column != source_col and not pd.api.types.is_numeric_dtype(df[column])
+    ]
+
+
+def _is_group_like_column(name: str) -> bool:
+    normalized = str(name).replace(" ", "").lower()
+    if normalized in {hint.lower() for hint in _GROUP_COLUMN_EXACT}:
+        return True
+    if any(hint.lower() in normalized for hint in _GROUP_COLUMN_HINTS):
+        return True
+    return any(normalized.endswith(suffix) for suffix in _GROUP_COLUMN_SUFFIXES)
+
+
+def _column_name_matches(name: str, hints: tuple[str, ...]) -> bool:
+    normalized = str(name).replace(" ", "").lower()
+    return any(hint.lower() in normalized for hint in hints)
+
+
+def _format_item_text(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    if isinstance(value, (int,)):
+        return str(value)
+    return _clean_cell_text(value)
 
 
 def _aggregate_check_columns(
@@ -91,9 +548,23 @@ def _aggregate_check_columns(
     *,
     source_col: str,
 ) -> list[str]:
+    columns: list[str] = []
+
     mentioned = find_mentioned_column(df, prompt)
     if mentioned:
-        return [mentioned]
+        columns.append(mentioned)
+
+    item_col = _list_item_column(df, prompt, source_col=source_col)
+    if item_col and item_col not in columns:
+        columns.append(item_col)
+
+    if item_col:
+        group_col = _list_group_column(df, prompt, item_col, source_col=source_col)
+        if group_col and group_col not in columns:
+            columns.append(group_col)
+
+    if columns:
+        return columns
 
     text_columns = [
         column
@@ -105,28 +576,6 @@ def _aggregate_check_columns(
     if text_columns:
         return [text_columns[0]]
     return []
-
-
-def _list_target_column(
-    df: pd.DataFrame,
-    prompt: str,
-    *,
-    source_col: str,
-) -> str | None:
-    mentioned = find_mentioned_column(df, prompt)
-    if mentioned and mentioned in df.columns:
-        return mentioned
-
-    candidates = [
-        column
-        for column in df.columns
-        if column != source_col and not pd.api.types.is_numeric_dtype(df[column])
-    ]
-    if len(candidates) == 1:
-        return candidates[0]
-    if len(df.columns) == 1:
-        return str(df.columns[0])
-    return None
 
 
 def _cell_is_total_label(value: object) -> bool:

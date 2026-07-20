@@ -111,11 +111,13 @@ def _render_chat_history() -> None:
 
         attached = message.get("dataframe")
         list_values = message.get("list_values")
+        list_groups = message.get("list_groups")
         if list_values:
             _render_list_result(
                 list_values,
                 message.get("list_label"),
                 attached if isinstance(attached, pd.DataFrame) else None,
+                groups=list_groups if isinstance(list_groups, dict) else None,
             )
         elif isinstance(attached, pd.DataFrame) and not attached.empty:
             height = min(520, max(120, 38 * (min(len(attached), 15) + 1)))
@@ -131,15 +133,35 @@ def _render_list_result(
     values: list[str],
     label: str | None,
     full_df: pd.DataFrame | None,
+    *,
+    groups: dict[str, list[str]] | None = None,
 ) -> None:
-    """단일 컬럼 리스트 요청 결과를 불릿 목록으로 표시한다."""
-    title = f"{label} · {len(values)}개" if label else f"{len(values)}개 항목"
-    st.caption(title)
-    items = "".join(f"<li>{html.escape(value)}</li>" for value in values)
-    st.markdown(
-        f'<ul class="list-result">{items}</ul>',
-        unsafe_allow_html=True,
-    )
+    """단일·분류별 리스트 요청 결과를 불릿 목록으로 표시한다."""
+    if groups:
+        total = sum(len(items) for items in groups.values())
+        title = (
+            f"{label} · {total}개 · {len(groups)}개 분류"
+            if label
+            else f"{total}개 항목 · {len(groups)}개 분류"
+        )
+        st.caption(title)
+        parts: list[str] = []
+        for group_name, items in groups.items():
+            parts.append(
+                f'<div class="list-group-name">{html.escape(group_name)}</div>'
+            )
+            parts.append('<ul class="list-result list-result-nested">')
+            parts.extend(f"<li>{html.escape(item)}</li>" for item in items)
+            parts.append("</ul>")
+        st.markdown("".join(parts), unsafe_allow_html=True)
+    else:
+        title = f"{label} · {len(values)}개" if label else f"{len(values)}개 항목"
+        st.caption(title)
+        items = "".join(f"<li>{html.escape(value)}</li>" for value in values)
+        st.markdown(
+            f'<ul class="list-result">{items}</ul>',
+            unsafe_allow_html=True,
+        )
 
     if full_df is not None and not full_df.empty and len(full_df.columns) > 1:
         with st.expander("전체 데이터 보기", expanded=False):

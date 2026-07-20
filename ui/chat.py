@@ -130,7 +130,12 @@ def _run_prompt(
     if isinstance(result, pd.DataFrame):
         result = result.reset_index(drop=True)
         _update_context_from_filter(df, prompt, result)
-        result, summary, meta = _postprocess_table_result(result, prompt, summary)
+        result, summary, meta = _postprocess_table_result(
+            result,
+            prompt,
+            summary,
+            source_df=source,
+        )
         is_filter = detect_aggregate_op(prompt) is None
         reply, stored = _store_dataframe_result(
             result,
@@ -166,6 +171,8 @@ def _postprocess_table_result(
     result: pd.DataFrame,
     prompt: str,
     summary: str,
+    *,
+    source_df: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, str, dict]:
     """집계 행 제거·리스트 표시 메타를 적용한다."""
     meta: dict = {}
@@ -174,10 +181,12 @@ def _postprocess_table_result(
         if excluded:
             summary = f"{summary} · 합계·소계 {excluded}행 제외"
 
-    list_info = to_list_display(result, prompt)
+    list_info = to_list_display(result, prompt, source_df=source_df)
     if list_info is not None:
-        meta["list_values"] = list_info[0]
-        meta["list_label"] = list_info[1]
+        meta["list_values"] = list_info.values
+        meta["list_label"] = list_info.label
+        if list_info.groups:
+            meta["list_groups"] = list_info.groups
 
     return result, summary, meta
 
@@ -293,7 +302,20 @@ def _run_multi_prompt(
         is_filter = detect_aggregate_op(prompt) is None
         if is_filter:
             _update_context_from_filter(result, prompt, result)
-        result, summary, meta = _postprocess_table_result(result, prompt, summary)
+        multi_source = st.session_state.get("analysis_filter_df")
+        if multi_source is None or len(multi_source) == 0:
+            parts = []
+            for name, frame in prepared:
+                part = frame.copy()
+                part.insert(0, "출처파일", name)
+                parts.append(part)
+            multi_source = pd.concat(parts, ignore_index=True) if parts else None
+        result, summary, meta = _postprocess_table_result(
+            result,
+            prompt,
+            summary,
+            source_df=multi_source,
+        )
         reply, stored = _store_dataframe_result(
             result,
             summary,

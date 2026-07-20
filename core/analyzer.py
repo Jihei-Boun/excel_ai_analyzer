@@ -37,6 +37,14 @@ _COMPLEX_KEYWORDS = (
     "plot",
 )
 
+_LIST_REQUEST_KEYWORDS = (
+    "리스트",
+    "목록",
+    "나열",
+    "뽑아",
+    "list",
+)
+
 
 def run_analysis(
     df: pd.DataFrame,
@@ -50,6 +58,12 @@ def run_analysis(
         raise ValueError("분석 요청을 입력해 주세요.")
 
     output_type = "dataframe" if _expects_dataframe(prompt) else None
+
+    # 단순 리스트 요청은 LLM이 간헐적으로 None을 반환하므로 직접 DataFrame으로 만든다.
+    if output_type == "dataframe" and _is_list_request(prompt):
+        seed = _build_list_seed_frame(df, prompt)
+        if seed is not None and not seed.empty:
+            return seed, f"리스트 결과: {len(seed):,}행"
 
     # 병합 셀·분류 필터처럼 단순 목록 요청은 LLM보다 값 일치가 안정적이다.
     if output_type == "dataframe" and not _is_complex_analysis(prompt):
@@ -121,6 +135,20 @@ def run_multi_analysis(
         raise ValueError("분석 요청을 입력해 주세요.")
 
     output_type = "dataframe" if _expects_dataframe(prompt) else None
+
+    if output_type == "dataframe" and _is_list_request(prompt):
+        list_parts: list[pd.DataFrame] = []
+        for name, frame in named_dfs:
+            seed = _build_list_seed_frame(frame, prompt)
+            if seed is None or seed.empty:
+                continue
+            part = seed.copy()
+            part.insert(0, "출처파일", name)
+            list_parts.append(part)
+        if list_parts:
+            merged = pd.concat(list_parts, ignore_index=True)
+            file_count = merged["출처파일"].nunique() if "출처파일" in merged.columns else 0
+            return merged, f"리스트 결과: {len(merged):,}행 ({file_count}개 파일)"
 
     # 분류값 목록처럼 단순 요청은 파일별 값 일치 후 합친다.
     if output_type == "dataframe" and not _is_complex_analysis(prompt):
@@ -231,6 +259,28 @@ def _expects_dataframe(prompt: str) -> bool:
         "columns",
     )
     return any(keyword in lowered for keyword in table_keywords)
+
+
+def _is_list_request(prompt: str) -> bool:
+    lowered = prompt.lower()
+    return any(keyword in lowered for keyword in _LIST_REQUEST_KEYWORDS)
+
+
+def _build_list_seed_frame(df: pd.DataFrame, prompt: str) -> pd.DataFrame | None:
+    """리스트 요청용 최소 DataFrame을 만든다 (후처리에서 그룹/코드 보강)."""
+    prepared = prepare_dataframe_for_ai(df)
+    mentioned = find_mentioned_column(prepared, prompt)
+    if mentioned and mentioned in prepared.columns:
+        return prepared[[mentioned]].reset_index(drop=True)
+
+    text_cols = [
+        col
+        for col in prepared.columns
+        if pd.api.types.is_string_dtype(prepared[col]) or prepared[col].dtype == object
+    ]
+    if not text_cols:
+        return None
+    return prepared[[text_cols[-1]]].reset_index(drop=True)
 
 
 def _is_complex_analysis(prompt: str) -> bool:
