@@ -9,7 +9,7 @@ import streamlit as st
 
 from ui.chat import process_user_prompt
 from ui.display import for_display
-from ui.session_store import MULTI_FILE_PROMPTS, QUICK_OPERATIONS, RECOMMENDED_PROMPTS, reset_work_state
+from ui.session_store import MULTI_FILE_PROMPTS, RECOMMENDED_PROMPTS
 from ui.upload import (
     get_active_named_frames,
     get_analysis_df,
@@ -42,7 +42,6 @@ def render_chat_panel() -> None:
     _process_pending_analysis()
     _render_selected_result()
     _render_operation_result()
-    _render_quick_operations()
     _render_chat_input()
 
 
@@ -126,17 +125,6 @@ def _process_pending_analysis() -> None:
         process_user_prompt(prompt, user_already_added=True)
 
 
-def _work_source() -> pd.DataFrame | None:
-    """필터 목록이 있으면 그걸, 있으면 표 결과, 없으면 분석 대상 df."""
-    filter_df = st.session_state.get("analysis_filter_df")
-    if filter_df is not None and len(filter_df) > 0:
-        return filter_df
-    selected = st.session_state.get("selected_df")
-    if selected is not None and len(selected) > 0:
-        return selected
-    return get_analysis_df()
-
-
 def _render_selected_result() -> None:
     """현재 선택(필터) 데이터. 채팅 마지막 메시지에 이미 같은 표가 있으면 생략."""
     selected = st.session_state.get("selected_df")
@@ -183,69 +171,6 @@ def _same_frame(left: pd.DataFrame, right: pd.DataFrame) -> bool:
         return left.reset_index(drop=True).equals(right.reset_index(drop=True))
     except Exception:
         return False
-
-
-def _render_quick_operations() -> None:
-    if is_multi_analysis_mode():
-        return
-    source = _work_source()
-    if source is None:
-        return
-
-    with st.expander("빠른 연산", expanded=False):
-        op_cols = st.columns(4)
-        for idx, (label, op_id) in enumerate(QUICK_OPERATIONS):
-            with op_cols[idx % 4]:
-                if st.button(label, key=f"op_{op_id}", use_container_width=True):
-                    st.session_state.active_operation = op_id
-                    _run_quick_operation(op_id)
-                    st.rerun()
-
-
-def _run_quick_operation(op_id: str) -> None:
-    source = _work_source()
-    if source is None:
-        return
-
-    numeric_cols = source.select_dtypes(include="number").columns
-    if op_id == "reset":
-        reset_work_state(clear_chat=True)
-        return
-
-    if len(numeric_cols) == 0:
-        st.session_state.operation_result = "수치형 컬럼이 없습니다."
-        return
-
-    target_col = numeric_cols[0]
-    context = st.session_state.get("analysis_context_label") or "합계"
-    from core.analyzer import format_context_label
-
-    row_label = format_context_label(context)
-
-    if op_id in {"sum", "mean", "max", "min"}:
-        series = pd.to_numeric(source[target_col], errors="coerce")
-        if op_id == "sum":
-            value = float(series.sum())
-        elif op_id == "mean":
-            value = float(series.mean())
-        elif op_id == "max":
-            value = float(series.max())
-        else:
-            value = float(series.min())
-        table = pd.DataFrame({"": [row_label], str(target_col): [value]})
-        # 집계 결과는 연산 결과로만 보여주고, 필터/선택 데이터는 유지
-        st.session_state.operation_result = table
-        st.session_state.work_target = "분석 결과"
-        return
-
-    if op_id == "sort":
-        st.session_state.selected_df = source.sort_values(target_col, ascending=False)
-        st.session_state.work_target = "selected_df"
-    elif op_id == "topn":
-        st.session_state.selected_df = source.nlargest(10, target_col)
-        st.session_state.work_target = "selected_df"
-    elif op_id == "filter":
-        st.session_state.pending_prompt = f"{target_col} 상위 10개만 보여줘"
 
 
 def _render_operation_result() -> None:

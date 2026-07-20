@@ -16,18 +16,6 @@ MULTI_FILE_PROMPTS = (
     "각 파일의 숫자형 컬럼 합계를 표로 비교해줘",
     "두 파일을 공통 키로 병합한 결과를 보여줘",
 )
-QUICK_OPERATIONS = (
-    ("합계", "sum"),
-    ("평균", "mean"),
-    ("최댓값", "max"),
-    ("최솟값", "min"),
-    ("정렬", "sort"),
-    ("상위 N", "topn"),
-    ("필터", "filter"),
-    ("초기화", "reset"),
-)
-
-
 def init_session_state() -> None:
     defaults = {
         "df": None,
