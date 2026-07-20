@@ -8,13 +8,18 @@ import streamlit as st
 from core.analyzer import (
     _expects_dataframe,
     _filter_by_mentioned_value,
+    _filter_multi_by_mentioned_value,
     _is_complex_analysis,
+    _normalize_text,
     build_context_aggregate_table,
+    build_multi_context_aggregate_table,
     detect_aggregate_op,
+    extract_matched_value,
     infer_context_label,
     run_analysis,
     run_multi_analysis,
     scalar_to_context_table,
+    split_frames_by_source,
 )
 from core.excel_loader import sanitize_dataframe
 from ui.upload import get_active_named_frames, get_analysis_df, is_multi_analysis_mode
@@ -230,6 +235,23 @@ def _run_multi_prompt(
     model = st.session_state.ollama_model
     prepared = [(name, sanitize_dataframe(df)) for name, df in named_frames]
 
+    # 집계: 이전 필터(연구활동비 등) 기준으로 파일별 요약 표
+    if detect_aggregate_op(prompt) is not None:
+        source_named, context_label = _resolve_multi_aggregate_source(prepared, prompt)
+        contextual = build_multi_context_aggregate_table(
+            source_named,
+            prompt,
+            context_label=context_label,
+        )
+        if contextual is not None:
+            table, summary = contextual
+            return _store_dataframe_result(
+                table,
+                summary,
+                keep_as_filter=False,
+                replace_selection=False,
+            )
+
     result, summary = run_multi_analysis(
         prepared,
         prompt,
@@ -239,15 +261,84 @@ def _run_multi_prompt(
 
     if isinstance(result, pd.DataFrame):
         result = result.reset_index(drop=True)
-        st.session_state.selected_df = result
-        st.session_state.operation_result = None
-        st.session_state.work_target = "다중 파일 분석 결과"
-        st.session_state.active_operation = None
-        return summary, result
+        is_filter = detect_aggregate_op(prompt) is None
+        if is_filter:
+            _update_context_from_filter(result, prompt, result)
+        return _store_dataframe_result(
+            result,
+            summary,
+            keep_as_filter=is_filter,
+            replace_selection=True,
+        )
 
     st.session_state.operation_result = result
     st.session_state.active_operation = "PandasAI (다중)"
     return summary, None
+
+
+def _resolve_multi_aggregate_source(
+    prepared: list[tuple[str, pd.DataFrame]],
+    prompt: str,
+) -> tuple[list[tuple[str, pd.DataFrame]], str | None]:
+    """집계에 쓸 파일별 데이터와 행 맥락 라벨을 결정한다."""
+    context_label = st.session_state.get("analysis_context_label")
+    filter_df = st.session_state.get("analysis_filter_df")
+
+    # 프롬프트에 새 분류값이 있으면 그걸로 다시 필터 (이전 필터와 다르면)
+    prompt_filtered = _filter_multi_by_mentioned_value(prepared, prompt)
+    prompt_label = None
+    if prompt_filtered is not None and not prompt_filtered.empty:
+        prompt_label = infer_context_label(
+            prompt=prompt,
+            result_df=prompt_filtered,
+            full_df=None,
+        ) or extract_matched_value(prompt_filtered, prompt)
+
+    reuse_filter = (
+        filter_df is not None
+        and len(filter_df) > 0
+        and "출처파일" in filter_df.columns
+    )
+    if reuse_filter and prompt_label and context_label:
+        if _normalize_text(str(prompt_label)) != _normalize_text(str(context_label)):
+            reuse_filter = False
+    if reuse_filter and prompt_label and prompt_filtered is not None:
+        # 이전 필터에 해당 값이 없으면 갱신
+        on_filter = _filter_by_mentioned_value(filter_df, prompt)
+        if on_filter is None or on_filter.empty:
+            reuse_filter = False
+
+    if reuse_filter:
+        parts = split_frames_by_source(filter_df)
+        if parts:
+            if not context_label:
+                context_label = infer_context_label(
+                    prompt=None,
+                    result_df=filter_df,
+                    full_df=None,
+                )
+                if context_label:
+                    st.session_state.analysis_context_label = context_label
+            return parts, str(context_label) if context_label else None
+
+    if prompt_filtered is not None and not prompt_filtered.empty:
+        label = prompt_label or infer_context_label(
+            prompt=prompt,
+            result_df=prompt_filtered,
+            full_df=None,
+        )
+        st.session_state.analysis_filter_df = prompt_filtered
+        st.session_state.selected_df = prompt_filtered
+        if label:
+            st.session_state.analysis_context_label = label
+            context_label = label
+        return split_frames_by_source(prompt_filtered), (
+            str(context_label) if context_label else None
+        )
+
+    if not context_label:
+        context_label = infer_context_label(prompt=prompt, result_df=None, full_df=None)
+    return prepared, str(context_label) if context_label else None
 
 
 def _resolve_analysis_source(df: pd.DataFrame, prompt: str) -> pd.DataFrame:

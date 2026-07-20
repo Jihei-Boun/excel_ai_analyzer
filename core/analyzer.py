@@ -567,19 +567,7 @@ def build_context_aggregate_table(
     if not metric_cols:
         return None
 
-    if op == "mean":
-        op_name = "평균"
-        reduce = lambda s: float(s.mean())
-    elif op == "max":
-        op_name = "최댓값"
-        reduce = lambda s: float(s.max())
-    elif op == "min":
-        op_name = "최솟값"
-        reduce = lambda s: float(s.min())
-    else:
-        op_name = "총합"
-        reduce = lambda s: float(s.sum())
-
+    op_name, reduce = _aggregate_reducer(op)
     row_label = format_context_label(context_label)
     row: dict[str, object] = {"": row_label}
     summary_parts: list[str] = []
@@ -598,6 +586,121 @@ def build_context_aggregate_table(
     table = pd.DataFrame([row])
     summary = f"{row_label} · " + " / ".join(summary_parts)
     return table, summary
+
+
+def build_multi_context_aggregate_table(
+    named_dfs: list[tuple[str, pd.DataFrame]],
+    prompt: str,
+    *,
+    context_label: str | None = None,
+) -> tuple[pd.DataFrame, str] | None:
+    """다중 파일 집계를 파일별 행 · 수치 컬럼 열 요약 표로 만든다.
+
+    예::
+                     | 계획예산
+        -------------|----------
+        5예실대비표.xlsx | 79977000
+        4예실대비표.xlsx | 46410000
+    """
+    op = detect_aggregate_op(prompt)
+    if op is None or not named_dfs:
+        return None
+
+    # 컬럼 탐색은 행이 있는 첫 프레임 기준
+    probe = next((df for _, df in named_dfs if df is not None and not df.empty), None)
+    if probe is None:
+        return None
+
+    metric_cols = find_mentioned_numeric_columns(probe, prompt)
+    if not metric_cols:
+        # 다른 파일에만 컬럼명이 있을 수 있음
+        for _, df in named_dfs:
+            metric_cols = find_mentioned_numeric_columns(df, prompt)
+            if metric_cols:
+                break
+    if not metric_cols:
+        return None
+
+    op_name, reduce = _aggregate_reducer(op)
+    ctx = format_context_label(context_label)
+    rows: list[dict[str, object]] = []
+    summary_parts: list[str] = []
+
+    for file_name, df in named_dfs:
+        if df is None or df.empty:
+            continue
+        # 단일파일 요약 표와 동일하게 첫 열은 라벨, 나머지는 수치 컬럼
+        row_label = f"{ctx} · {file_name}" if ctx and ctx != "합계" else file_name
+        row: dict[str, object] = {"": row_label}
+        file_bits: list[str] = []
+        for metric_col in metric_cols:
+            col = _resolve_metric_column(df, metric_col)
+            if col is None:
+                continue
+            value = reduce(pd.to_numeric(df[col], errors="coerce"))
+            if pd.isna(value):
+                continue
+            row[str(metric_col)] = value
+            file_bits.append(f"{metric_col} {op_name}: {value:,.0f}")
+        if len(row) <= 1:
+            continue
+        rows.append(row)
+        summary_parts.append(f"{file_name} → " + " / ".join(file_bits))
+
+    if not rows:
+        return None
+
+    table = pd.DataFrame(rows)
+    # 열 순서: 라벨 → 요청한 수치 컬럼 순
+    ordered = [""] + [c for c in metric_cols if c in table.columns]
+    extra = [c for c in table.columns if c not in ordered]
+    table = table[ordered + extra]
+
+    prefix = f"{ctx} · 파일별" if ctx and ctx != "합계" else "파일별"
+    summary = f"{prefix} {op_name} — " + " | ".join(summary_parts)
+    return table, summary
+
+
+def _aggregate_reducer(op: str) -> tuple[str, object]:
+    if op == "mean":
+        return "평균", lambda s: float(s.mean())
+    if op == "max":
+        return "최댓값", lambda s: float(s.max())
+    if op == "min":
+        return "최솟값", lambda s: float(s.min())
+    return "총합", lambda s: float(s.sum())
+
+
+def _resolve_metric_column(df: pd.DataFrame, wanted: str) -> str | None:
+    """파일마다 컬럼명이 달라도 같은 수치 열을 찾는다."""
+    if wanted in df.columns:
+        return wanted
+    target = _normalize_text(str(wanted))
+    for column in df.columns:
+        if _normalize_text(str(column)) == target:
+            return column
+    for column in df.columns:
+        norm = _normalize_text(str(column))
+        if target and (target in norm or norm in target):
+            coerced = pd.to_numeric(df[column], errors="coerce")
+            if coerced.notna().any() or pd.api.types.is_numeric_dtype(df[column]):
+                return column
+    return None
+
+
+def split_frames_by_source(
+    df: pd.DataFrame,
+    *,
+    source_col: str = "출처파일",
+) -> list[tuple[str, pd.DataFrame]]:
+    """합쳐진 다중 파일 결과를 (파일명, DataFrame) 목록으로 나눈다."""
+    if df is None or df.empty or source_col not in df.columns:
+        return []
+    parts: list[tuple[str, pd.DataFrame]] = []
+    for name, group in df.groupby(source_col, sort=False):
+        part = group.drop(columns=[source_col]).reset_index(drop=True)
+        parts.append((str(name), part))
+    return parts
 
 
 def scalar_to_context_table(
