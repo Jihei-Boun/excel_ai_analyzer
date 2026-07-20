@@ -9,6 +9,7 @@ from ui.header import render_header
 from ui.session_store import init_session_state
 from ui.sidebar import render_sidebar
 from ui.styles import inject_styles
+from ui.upload import apply_pending_widget_sync
 from ui.workspace import render_workspace
 
 st.set_page_config(
@@ -20,6 +21,7 @@ st.set_page_config(
 
 inject_styles()
 init_session_state()
+apply_pending_widget_sync()
 render_sidebar()
 render_header()
 

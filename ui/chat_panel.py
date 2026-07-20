@@ -9,16 +9,35 @@ import streamlit as st
 
 from ui.chat import process_user_prompt
 from ui.display import for_display
-from ui.session_store import QUICK_OPERATIONS, RECOMMENDED_PROMPTS
+from ui.session_store import MULTI_FILE_PROMPTS, QUICK_OPERATIONS, RECOMMENDED_PROMPTS, reset_work_state
+from ui.upload import (
+    get_active_named_frames,
+    get_analysis_df,
+    get_analysis_file_name,
+    is_multi_analysis_mode,
+)
 
 
 def render_chat_panel() -> None:
     st.markdown('<p class="panel-title">AI 분석</p>', unsafe_allow_html=True)
-    st.markdown(
-        '<p class="panel-desc">현재 데이터에 원하는 분석을 자연어로 요청하세요.</p>',
-        unsafe_allow_html=True,
-    )
+    multi_mode = is_multi_analysis_mode()
+    if multi_mode:
+        active_names = [name for name, _ in get_active_named_frames()]
+        st.markdown(
+            '<p class="panel-desc">'
+            f"선택된 {len(active_names)}개 파일을 동시에 분석합니다. "
+            "비교·병합·교차 집계를 자연어로 요청하세요."
+            "</p>",
+            unsafe_allow_html=True,
+        )
+        st.caption(" · ".join(active_names))
+    else:
+        st.markdown(
+            '<p class="panel-desc">현재 데이터에 원하는 분석을 자연어로 요청하세요.</p>',
+            unsafe_allow_html=True,
+        )
 
+    _render_analysis_mode_setting()
     _render_chat_history()
     _process_pending_analysis()
     _render_selected_result()
@@ -27,12 +46,52 @@ def render_chat_panel() -> None:
     _render_chat_input()
 
 
+def _render_analysis_mode_setting() -> None:
+    files = st.session_state.get("uploaded_files") or []
+    if len(files) < 2:
+        return
+
+    from ui.upload import current_analysis_mode, set_analysis_mode
+
+    desired = current_analysis_mode()
+    if "chat_analysis_mode_radio" not in st.session_state:
+        st.session_state.chat_analysis_mode_radio = desired
+
+    with st.expander("분석 설정", expanded=desired == "multi"):
+        mode = st.radio(
+            "분석 범위",
+            options=["single", "multi"],
+            format_func=lambda value: (
+                "단일 파일 — 선택한 하나만 분석"
+                if value == "single"
+                else "동시 분석 — 선택한 여러 파일을 함께 분석"
+            ),
+            horizontal=False,
+            key="chat_analysis_mode_radio",
+        )
+        if mode == "single":
+            active_name = get_analysis_file_name() or "선택된 파일"
+            st.caption(f"현재 분석 대상: {active_name} (사이드바에서 선택)")
+        else:
+            active_count = len(get_active_named_frames())
+            if active_count >= 2:
+                st.caption(f"현재 {active_count}개 파일이 동시 분석 대상입니다.")
+            else:
+                st.caption("왼쪽 사이드바에서 2개 이상 파일을 선택하세요.")
+
+        if mode != desired:
+            # 라디오 위젯이 이미 새 값을 갖고 있으므로 키를 다시 쓰지 않는다.
+            set_analysis_mode(mode, sync_mode_radio=False)
+            st.rerun()
+
+
 def _render_chat_history() -> None:
     messages = st.session_state.chat_messages
     if not messages:
         st.caption("아직 대화가 없습니다. 아래 예시로 시작해 보세요.")
+        examples = MULTI_FILE_PROMPTS if is_multi_analysis_mode() else RECOMMENDED_PROMPTS
         cols = st.columns(2)
-        for idx, prompt in enumerate(RECOMMENDED_PROMPTS[:4]):
+        for idx, prompt in enumerate(examples[:4]):
             with cols[idx % 2]:
                 if st.button(prompt, key=f"ex_{idx}", use_container_width=True):
                     st.session_state.pending_prompt = prompt
@@ -50,6 +109,16 @@ def _render_chat_history() -> None:
                 unsafe_allow_html=True,
             )
 
+        attached = message.get("dataframe")
+        if isinstance(attached, pd.DataFrame) and not attached.empty:
+            height = min(520, max(120, 38 * (min(len(attached), 15) + 1)))
+            st.dataframe(
+                for_display(attached),
+                use_container_width=True,
+                hide_index=True,
+                height=height,
+            )
+
 
 def _process_pending_analysis() -> None:
     prompt = st.session_state.pop("pending_analysis_prompt", "") or ""
@@ -57,29 +126,68 @@ def _process_pending_analysis() -> None:
         process_user_prompt(prompt, user_already_added=True)
 
 
-def _render_selected_result() -> None:
+def _work_source() -> pd.DataFrame | None:
+    """필터 목록이 있으면 그걸, 있으면 표 결과, 없으면 분석 대상 df."""
+    filter_df = st.session_state.get("analysis_filter_df")
+    if filter_df is not None and len(filter_df) > 0:
+        return filter_df
     selected = st.session_state.get("selected_df")
-    if selected is None:
+    if selected is not None and len(selected) > 0:
+        return selected
+    return get_analysis_df()
+
+
+def _render_selected_result() -> None:
+    """현재 선택(필터) 데이터. 채팅 마지막 메시지에 이미 같은 표가 있으면 생략."""
+    selected = st.session_state.get("selected_df")
+    filter_df = st.session_state.get("analysis_filter_df")
+    # 집계 후에도 필터가 있으면 그걸 '선택 데이터'로 표시
+    display_df = filter_df if filter_df is not None and len(filter_df) > 0 else selected
+    if display_df is None or len(display_df) == 0:
         return
 
-    st.caption(f"표 결과 · {len(selected):,}행")
+    messages = st.session_state.get("chat_messages") or []
+    if messages:
+        last = messages[-1]
+        attached = last.get("dataframe") if last.get("role") == "assistant" else None
+        if isinstance(attached, pd.DataFrame) and _same_frame(attached, display_df):
+            return
+        # 마지막이 집계 요약 표이면 선택 데이터는 아래에 한 번만 안내
+        if isinstance(attached, pd.DataFrame) and not _same_frame(attached, display_df):
+            st.caption(f"선택 데이터(필터 유지) · {len(display_df):,}행")
+            height = min(360, max(120, 38 * (min(len(display_df), 10) + 1)))
+            st.dataframe(
+                for_display(display_df.head(10)),
+                use_container_width=True,
+                hide_index=True,
+                height=height,
+            )
+            return
+
+    st.caption(f"표 결과 · {len(display_df):,}행")
+    height = min(560, max(140, 38 * (min(len(display_df), 18) + 1)))
     st.dataframe(
-        for_display(selected.head(10)),
+        for_display(display_df),
         use_container_width=True,
         hide_index=True,
-        height=200,
+        height=height,
     )
 
 
-def _work_source() -> pd.DataFrame | None:
-    """선택된 데이터가 있으면 그걸, 없으면 원본 df를 반환한다."""
-    selected = st.session_state.get("selected_df")
-    if selected is not None:
-        return selected
-    return st.session_state.get("df")
+def _same_frame(left: pd.DataFrame, right: pd.DataFrame) -> bool:
+    if left is right:
+        return True
+    if left.shape != right.shape:
+        return False
+    try:
+        return left.reset_index(drop=True).equals(right.reset_index(drop=True))
+    except Exception:
+        return False
 
 
 def _render_quick_operations() -> None:
+    if is_multi_analysis_mode():
+        return
     source = _work_source()
     if source is None:
         return
@@ -101,10 +209,7 @@ def _run_quick_operation(op_id: str) -> None:
 
     numeric_cols = source.select_dtypes(include="number").columns
     if op_id == "reset":
-        st.session_state.selected_df = None
-        st.session_state.operation_result = None
-        st.session_state.work_target = "원본 df"
-        st.session_state.active_operation = None
+        reset_work_state(clear_chat=True)
         return
 
     if len(numeric_cols) == 0:
@@ -112,15 +217,28 @@ def _run_quick_operation(op_id: str) -> None:
         return
 
     target_col = numeric_cols[0]
-    if op_id == "sum":
-        st.session_state.operation_result = float(source[target_col].sum())
-    elif op_id == "mean":
-        st.session_state.operation_result = float(source[target_col].mean())
-    elif op_id == "max":
-        st.session_state.operation_result = float(source[target_col].max())
-    elif op_id == "min":
-        st.session_state.operation_result = float(source[target_col].min())
-    elif op_id == "sort":
+    context = st.session_state.get("analysis_context_label") or "합계"
+    from core.analyzer import format_context_label
+
+    row_label = format_context_label(context)
+
+    if op_id in {"sum", "mean", "max", "min"}:
+        series = pd.to_numeric(source[target_col], errors="coerce")
+        if op_id == "sum":
+            value = float(series.sum())
+        elif op_id == "mean":
+            value = float(series.mean())
+        elif op_id == "max":
+            value = float(series.max())
+        else:
+            value = float(series.min())
+        table = pd.DataFrame({"": [row_label], str(target_col): [value]})
+        # 집계 결과는 연산 결과로만 보여주고, 필터/선택 데이터는 유지
+        st.session_state.operation_result = table
+        st.session_state.work_target = "분석 결과"
+        return
+
+    if op_id == "sort":
         st.session_state.selected_df = source.sort_values(target_col, ascending=False)
         st.session_state.work_target = "selected_df"
     elif op_id == "topn":
@@ -137,25 +255,33 @@ def _render_operation_result() -> None:
 
     label = st.session_state.get("active_operation", "result")
     if isinstance(result, pd.DataFrame):
-        display = f"{len(result):,}행 × {len(result.columns)}열"
+        st.caption(f"연산 결과 · {label}")
+        st.dataframe(
+            for_display(result),
+            use_container_width=True,
+            hide_index=True,
+            height=min(220, max(100, 38 * (len(result) + 1))),
+        )
+        export_df = result
     else:
         try:
             display = f"{float(result):,.0f}"
         except (TypeError, ValueError):
             display = str(result)
+        st.markdown(
+            f"""
+            <div class="result-box">
+                <div class="label">결과 · {label}</div>
+                <div class="value">{display}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        export_df = st.session_state.get("analysis_filter_df") or st.session_state.get(
+            "selected_df"
+        )
 
-    st.markdown(
-        f"""
-        <div class="result-box">
-            <div class="label">결과 · {label}</div>
-            <div class="value">{display}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    export_df = result if isinstance(result, pd.DataFrame) else st.session_state.get("selected_df")
-    if export_df is not None:
+    if export_df is not None and isinstance(export_df, pd.DataFrame):
         buffer = io.BytesIO()
         export_df.to_excel(buffer, index=False, engine="openpyxl")
         st.download_button(
@@ -193,7 +319,11 @@ def _render_chat_input() -> None:
     if submitted:
         if not prompt.strip():
             return
-        if st.session_state.get("df") is None:
+        if is_multi_analysis_mode():
+            if len(get_active_named_frames()) < 2:
+                st.warning("동시 분석 모드에서는 파일 2개 이상을 선택하세요.")
+                return
+        elif get_analysis_df() is None:
             st.warning("먼저 엑셀 파일을 업로드하세요.")
             return
         prompt = prompt.strip()

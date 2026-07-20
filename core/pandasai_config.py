@@ -8,10 +8,13 @@ from typing import Any
 import pandas as pd
 
 try:
-    from pandasai import SmartDataframe
+    from pandasai import SmartDataframe, SmartDatalake
+    from pandasai.connectors import PandasConnector
     from pandasai.llm.local_llm import LocalLLM
 except ImportError:  # pragma: no cover
     SmartDataframe = None  # type: ignore[misc, assignment]
+    SmartDatalake = None  # type: ignore[misc, assignment]
+    PandasConnector = None  # type: ignore[misc, assignment]
     LocalLLM = None  # type: ignore[misc, assignment]
 
 _SAFE_CODE_RULES = (
@@ -45,11 +48,24 @@ def create_llm(base_url: str, model: str) -> Any:
     return LocalLLM(api_base=api_base, model=model)
 
 
+def _pandasai_config(base_url: str, model: str) -> dict[str, Any]:
+    return {
+        "llm": create_llm(base_url, model),
+        "enable_cache": False,
+        "save_charts": False,
+        "save_logs": False,
+        "verbose": False,
+        "max_retries": 1,
+        "use_error_correction_framework": True,
+    }
+
+
 def create_smart_dataframe(
     df: pd.DataFrame,
     *,
     base_url: str,
     model: str,
+    name: str | None = None,
 ) -> Any:
     """PandasAI SmartDataframe을 생성한다."""
     if SmartDataframe is None:
@@ -58,19 +74,42 @@ def create_smart_dataframe(
             "pip install -r requirements.txt 를 실행하세요."
         )
 
-    llm = create_llm(base_url, model)
     return SmartDataframe(
         df,
-        config={
-            "llm": llm,
-            "enable_cache": False,
-            "save_charts": False,
-            "save_logs": False,
-            "verbose": False,
-            "max_retries": 1,
-            "use_error_correction_framework": True,
-        },
+        name=name,
+        config=_pandasai_config(base_url, model),
     )
+
+
+def create_smart_datalake(
+    named_dfs: list[tuple[str, pd.DataFrame]],
+    *,
+    base_url: str,
+    model: str,
+) -> Any:
+    """여러 DataFrame을 PandasAI SmartDatalake로 묶는다."""
+    if SmartDatalake is None or PandasConnector is None:
+        raise ImportError(
+            "pandasai가 설치되어 있지 않습니다. "
+            "pip install -r requirements.txt 를 실행하세요."
+        )
+    if len(named_dfs) < 2:
+        raise ValueError("다중 파일 분석에는 파일 2개 이상이 필요합니다.")
+
+    connectors = []
+    used_names: set[str] = set()
+    for index, (file_name, df) in enumerate(named_dfs):
+        table_name = _unique_table_name(file_name, index, used_names)
+        used_names.add(table_name)
+        connectors.append(
+            PandasConnector(
+                {"original_df": prepare_dataframe_for_ai(df)},
+                name=table_name,
+                description=f"엑셀 파일: {file_name}",
+            )
+        )
+
+    return SmartDatalake(connectors, config=_pandasai_config(base_url, model))
 
 
 def chat(
@@ -85,12 +124,42 @@ def chat(
     prepared = prepare_dataframe_for_ai(df)
     safe_prompt = f"{_SAFE_CODE_RULES}\n{prompt}"
     sdf = create_smart_dataframe(prepared, base_url=base_url, model=model)
+    return _run_chat_session(sdf, safe_prompt, output_type=output_type)
+
+
+def chat_multi(
+    named_dfs: list[tuple[str, pd.DataFrame]],
+    prompt: str,
+    *,
+    base_url: str,
+    model: str,
+    output_type: str | None = None,
+) -> tuple[Any, str]:
+    """여러 파일을 SmartDatalake로 동시에 분석한다."""
+    inventory = _multi_file_inventory(named_dfs)
+    safe_prompt = (
+        f"{_SAFE_CODE_RULES}\n"
+        "여러 DataFrame(dfs[0], dfs[1], …)이 제공됩니다. "
+        "파일 이름과 테이블 이름을 참고해 비교·병합·교차 집계를 수행하세요.\n"
+        f"{inventory}\n"
+        f"{prompt}"
+    )
+    lake = create_smart_datalake(named_dfs, base_url=base_url, model=model)
+    return _run_chat_session(lake, safe_prompt, output_type=output_type)
+
+
+def _run_chat_session(
+    agent: Any,
+    safe_prompt: str,
+    *,
+    output_type: str | None = None,
+) -> tuple[Any, str]:
     kwargs: dict[str, Any] = {}
     if output_type:
         kwargs["output_type"] = output_type
 
     try:
-        raw = sdf.chat(safe_prompt, **kwargs)
+        raw = agent.chat(safe_prompt, **kwargs)
     except Exception as exc:
         raise RuntimeError(_friendly_error(exc)) from exc
 
@@ -114,14 +183,42 @@ def chat(
             f"{result_contract}"
         )
         try:
-            raw = sdf.chat(retry_prompt, **kwargs)
+            raw = agent.chat(retry_prompt, **kwargs)
         except Exception as exc:
             raise RuntimeError(_friendly_error(exc)) from exc
         result = _unwrap_result(raw)
 
     _raise_if_error_response(result)
-    summary = _build_summary(result, getattr(sdf, "last_code_executed", None))
+    summary = _build_summary(result, getattr(agent, "last_code_executed", None))
     return result, summary
+
+
+def _unique_table_name(file_name: str, index: int, used: set[str]) -> str:
+    stem = re.sub(r"\.[^.]+$", "", file_name)
+    safe = re.sub(r"[^0-9A-Za-z_]", "_", stem).strip("_") or f"file_{index}"
+    if safe[0].isdigit():
+        safe = f"t_{safe}"
+    candidate = safe
+    suffix = 1
+    while candidate in used:
+        candidate = f"{safe}_{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _multi_file_inventory(named_dfs: list[tuple[str, pd.DataFrame]]) -> str:
+    lines = ["제공된 파일 목록:"]
+    used: set[str] = set()
+    for index, (file_name, df) in enumerate(named_dfs):
+        table = _unique_table_name(file_name, index, used)
+        used.add(table)
+        cols = ", ".join(str(c) for c in list(df.columns)[:12])
+        more = "" if len(df.columns) <= 12 else f" 외 {len(df.columns) - 12}개"
+        lines.append(
+            f"- dfs[{index}] 테이블명={table} / 파일={file_name} / "
+            f"{len(df):,}행 × {len(df.columns)}열 / 컬럼: {cols}{more}"
+        )
+    return "\n".join(lines)
 
 
 def prepare_dataframe_for_ai(df: pd.DataFrame) -> pd.DataFrame:

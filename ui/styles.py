@@ -38,9 +38,21 @@ APP_CSS = """
         padding-top: 1.25rem;
     }
 
-    #MainMenu, footer, header[data-testid="stHeader"] {
+    /* 메뉴/푸터만 숨기고, 사이드바 토글은 남긴다 */
+    #MainMenu, footer {
         visibility: hidden;
-        height: 0;
+    }
+
+    header[data-testid="stHeader"] {
+        background: transparent !important;
+    }
+
+    /* 사이드바가 접혀도 다시 열 수 있게 */
+    [data-testid="stSidebarCollapsed"],
+    [data-testid="stSidebarCollapseButton"] {
+        visibility: visible !important;
+        display: flex !important;
+        z-index: 999 !important;
     }
 
     .block-container {

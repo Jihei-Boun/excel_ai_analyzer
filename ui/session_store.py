@@ -10,6 +10,12 @@ RECOMMENDED_PROMPTS = (
     "범주형 컬럼별 행 개수를 표로 보여줘",
     "숫자형 컬럼들의 기초 통계를 보여줘",
 )
+MULTI_FILE_PROMPTS = (
+    "각 파일의 행 수와 컬럼 목록을 비교해줘",
+    "두 파일에서 공통으로 있는 컬럼을 알려줘",
+    "각 파일의 숫자형 컬럼 합계를 표로 비교해줘",
+    "두 파일을 공통 키로 병합한 결과를 보여줘",
+)
 QUICK_OPERATIONS = (
     ("합계", "sum"),
     ("평균", "mean"),
@@ -34,8 +40,11 @@ def init_session_state() -> None:
         "file_frames": {},
         "active_file_id": None,
         "active_file_ids": [],
+        "preview_file_id": None,
+        "analysis_mode": "single",  # "single" | "multi"
         "uploader_nonce": 0,
         "selected_df": None,
+        "analysis_filter_df": None,
         "operation_result": None,
         "chat_messages": [],
         "ollama_base_url": "http://localhost:11434",
@@ -47,8 +56,27 @@ def init_session_state() -> None:
         "pending_analysis_prompt": "",
         "chat_input_nonce": 0,
         "last_filter_summary": "",
+        "analysis_context_label": None,
         "_df_sanitized": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+
+def reset_work_state(*, clear_chat: bool = True) -> None:
+    """분석 결과·연산 상태를 초기화한다. clear_chat=True면 대화도 비운다."""
+    st.session_state.selected_df = None
+    st.session_state.analysis_filter_df = None
+    st.session_state.operation_result = None
+    st.session_state.work_target = "원본 df"
+    st.session_state.active_operation = None
+    st.session_state.last_filter_summary = ""
+    st.session_state.analysis_context_label = None
+    if clear_chat:
+        st.session_state.chat_messages = []
+        st.session_state.pending_prompt = ""
+        st.session_state.pending_analysis_prompt = ""
+        st.session_state.chat_input_nonce = (
+            st.session_state.get("chat_input_nonce", 0) + 1
+        )
