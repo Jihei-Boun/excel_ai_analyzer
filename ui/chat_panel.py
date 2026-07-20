@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import io
 
 import pandas as pd
@@ -109,10 +110,42 @@ def _render_chat_history() -> None:
             )
 
         attached = message.get("dataframe")
-        if isinstance(attached, pd.DataFrame) and not attached.empty:
+        list_values = message.get("list_values")
+        if list_values:
+            _render_list_result(
+                list_values,
+                message.get("list_label"),
+                attached if isinstance(attached, pd.DataFrame) else None,
+            )
+        elif isinstance(attached, pd.DataFrame) and not attached.empty:
             height = min(520, max(120, 38 * (min(len(attached), 15) + 1)))
             st.dataframe(
                 for_display(attached),
+                use_container_width=True,
+                hide_index=True,
+                height=height,
+            )
+
+
+def _render_list_result(
+    values: list[str],
+    label: str | None,
+    full_df: pd.DataFrame | None,
+) -> None:
+    """단일 컬럼 리스트 요청 결과를 불릿 목록으로 표시한다."""
+    title = f"{label} · {len(values)}개" if label else f"{len(values)}개 항목"
+    st.caption(title)
+    items = "".join(f"<li>{html.escape(value)}</li>" for value in values)
+    st.markdown(
+        f'<ul class="list-result">{items}</ul>',
+        unsafe_allow_html=True,
+    )
+
+    if full_df is not None and not full_df.empty and len(full_df.columns) > 1:
+        with st.expander("전체 데이터 보기", expanded=False):
+            height = min(360, max(120, 38 * (min(len(full_df), 12) + 1)))
+            st.dataframe(
+                for_display(full_df),
                 use_container_width=True,
                 hide_index=True,
                 height=height,

@@ -275,10 +275,15 @@ def _fill_hierarchical_labels(series: pd.Series) -> pd.Series:
     return pd.Series(filled, index=series.index, dtype="string")
 
 
-def _is_total_label(value: object) -> bool:
+def is_total_label(value: object) -> bool:
+    """합계·소계·총계 등 집계 행 라벨인지 확인한다."""
     if _is_blank(value):
         return False
     return bool(_TOTAL_LABEL_RE.fullmatch(str(value).strip()))
+
+
+def _is_total_label(value: object) -> bool:
+    return is_total_label(value)
 
 
 def _is_blank(value: object) -> bool:

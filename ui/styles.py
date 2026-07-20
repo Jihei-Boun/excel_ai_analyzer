@@ -189,6 +189,21 @@ APP_CSS = """
         margin: 0.35rem 0 0.65rem 0;
     }
 
+    .list-result {
+        margin: 0.35rem 0 0.65rem 0;
+        padding: 0.55rem 0.85rem 0.55rem 1.35rem;
+        background: rgba(15, 23, 42, 0.55);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 0.84rem;
+        line-height: 1.55;
+        color: var(--text);
+    }
+
+    .list-result li {
+        margin: 0.12rem 0;
+    }
+
     .result-box {
         background: var(--surface);
         border: 1px solid var(--border);

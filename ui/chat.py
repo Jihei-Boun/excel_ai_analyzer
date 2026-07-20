@@ -22,6 +22,7 @@ from core.analyzer import (
     split_frames_by_source,
 )
 from core.excel_loader import sanitize_dataframe
+from core.result_format import exclude_aggregate_rows, to_list_display
 from ui.upload import get_active_named_frames, get_analysis_df, is_multi_analysis_mode
 
 
@@ -36,10 +37,11 @@ def process_user_prompt(prompt: str, *, user_already_added: bool = False) -> Non
 
         with st.spinner(f"{len(named_frames)}개 파일 동시 분석 중..."):
             try:
-                reply, extra_df = _run_multi_prompt(prompt, named_frames)
+                reply, extra_df, extra_meta = _run_multi_prompt(prompt, named_frames)
             except Exception as exc:
                 reply = f"오류가 발생했습니다: {exc}"
                 extra_df = None
+                extra_meta = {}
                 st.session_state.operation_result = None
     else:
         df: pd.DataFrame | None = get_analysis_df()
@@ -64,13 +66,15 @@ def process_user_prompt(prompt: str, *, user_already_added: bool = False) -> Non
 
         with st.spinner("분석 중..."):
             try:
-                reply, extra_df = _run_prompt(prompt, df)
+                reply, extra_df, extra_meta = _run_prompt(prompt, df)
             except Exception as exc:
                 reply = f"오류가 발생했습니다: {exc}"
                 extra_df = None
+                extra_meta = {}
                 st.session_state.operation_result = None
 
     message: dict = {"role": "assistant", "content": reply}
+    message.update(extra_meta)
     if extra_df is not None:
         message["dataframe"] = extra_df
     st.session_state.chat_messages.append(message)
@@ -80,7 +84,7 @@ def process_user_prompt(prompt: str, *, user_already_added: bool = False) -> Non
 def _run_prompt(
     prompt: str,
     df: pd.DataFrame,
-) -> tuple[str, pd.DataFrame | None]:
+) -> tuple[str, pd.DataFrame | None, dict]:
     base_url = st.session_state.ollama_base_url
     model = st.session_state.ollama_model
     source = _resolve_analysis_source(df, prompt)
@@ -95,12 +99,13 @@ def _run_prompt(
     if contextual is not None:
         table, summary = contextual
         # 집계 결과는 채팅에만 붙이고, 선택/필터 데이터는 유지한다.
-        return _store_dataframe_result(
+        reply, result = _store_dataframe_result(
             table,
             summary,
             keep_as_filter=False,
             replace_selection=False,
         )
+        return reply, result, {}
 
     result, summary = run_analysis(
         source,
@@ -125,13 +130,15 @@ def _run_prompt(
     if isinstance(result, pd.DataFrame):
         result = result.reset_index(drop=True)
         _update_context_from_filter(df, prompt, result)
+        result, summary, meta = _postprocess_table_result(result, prompt, summary)
         is_filter = detect_aggregate_op(prompt) is None
-        return _store_dataframe_result(
+        reply, stored = _store_dataframe_result(
             result,
             summary,
             keep_as_filter=is_filter,
             replace_selection=True,
         )
+        return reply, stored, meta
 
     # 숫자만 온 경우에도 맥락 요약 표로 변환
     if detect_aggregate_op(prompt) is not None:
@@ -142,16 +149,37 @@ def _run_prompt(
             context_label=context_label,
         )
         if table is not None:
-            return _store_dataframe_result(
+            reply, stored = _store_dataframe_result(
                 table,
                 summary or f"{context_label or '합계'} 집계 결과",
                 keep_as_filter=False,
                 replace_selection=False,
             )
+            return reply, stored, {}
 
     st.session_state.operation_result = result
     st.session_state.active_operation = "PandasAI"
-    return summary, None
+    return summary, None, {}
+
+
+def _postprocess_table_result(
+    result: pd.DataFrame,
+    prompt: str,
+    summary: str,
+) -> tuple[pd.DataFrame, str, dict]:
+    """집계 행 제거·리스트 표시 메타를 적용한다."""
+    meta: dict = {}
+    if detect_aggregate_op(prompt) is None:
+        result, excluded = exclude_aggregate_rows(result, prompt)
+        if excluded:
+            summary = f"{summary} · 합계·소계 {excluded}행 제외"
+
+    list_info = to_list_display(result, prompt)
+    if list_info is not None:
+        meta["list_values"] = list_info[0]
+        meta["list_label"] = list_info[1]
+
+    return result, summary, meta
 
 
 def _store_dataframe_result(
@@ -230,7 +258,7 @@ def _resolve_context_label(source: pd.DataFrame, prompt: str) -> str | None:
 def _run_multi_prompt(
     prompt: str,
     named_frames: list[tuple[str, pd.DataFrame]],
-) -> tuple[str, pd.DataFrame | None]:
+) -> tuple[str, pd.DataFrame | None, dict]:
     base_url = st.session_state.ollama_base_url
     model = st.session_state.ollama_model
     prepared = [(name, sanitize_dataframe(df)) for name, df in named_frames]
@@ -245,12 +273,13 @@ def _run_multi_prompt(
         )
         if contextual is not None:
             table, summary = contextual
-            return _store_dataframe_result(
+            reply, stored = _store_dataframe_result(
                 table,
                 summary,
                 keep_as_filter=False,
                 replace_selection=False,
             )
+            return reply, stored, {}
 
     result, summary = run_multi_analysis(
         prepared,
@@ -264,16 +293,18 @@ def _run_multi_prompt(
         is_filter = detect_aggregate_op(prompt) is None
         if is_filter:
             _update_context_from_filter(result, prompt, result)
-        return _store_dataframe_result(
+        result, summary, meta = _postprocess_table_result(result, prompt, summary)
+        reply, stored = _store_dataframe_result(
             result,
             summary,
             keep_as_filter=is_filter,
             replace_selection=True,
         )
+        return reply, stored, meta
 
     st.session_state.operation_result = result
     st.session_state.active_operation = "PandasAI (다중)"
-    return summary, None
+    return summary, None, {}
 
 
 def _resolve_multi_aggregate_source(
