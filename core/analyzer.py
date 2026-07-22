@@ -6,6 +6,7 @@ import re
 
 import pandas as pd
 
+from core.chart_utils import generate_fallback_chart, generate_multi_file_chart
 from core.pandasai_config import chat, chat_multi, prepare_dataframe_for_ai
 
 _COMPLEX_KEYWORDS = (
@@ -52,27 +53,34 @@ def run_analysis(
     *,
     base_url: str,
     model: str,
-) -> tuple[object, str]:
+) -> tuple[object, str, dict]:
     """DataFrame과 사용자 요청을 PandasAI에 전달해 결과를 반환한다."""
     if not prompt.strip():
         raise ValueError("분석 요청을 입력해 주세요.")
 
-    output_type = "dataframe" if _expects_dataframe(prompt) else None
+    output_type = _resolve_output_type(prompt)
 
-    # 단순 리스트 요청은 LLM이 간헐적으로 None을 반환하므로 직접 DataFrame으로 만든다.
-    if output_type == "dataframe" and _is_list_request(prompt):
-        seed = _build_list_seed_frame(df, prompt)
-        if seed is not None and not seed.empty:
-            return seed, f"리스트 결과: {len(seed):,}행"
+    # 차트는 LLM matplotlib(한글 깨짐) 대신 자체 렌더러를 우선 사용한다.
+    if output_type == "plot":
+        chart_path = generate_fallback_chart(df, prompt)
+        if chart_path:
+            return None, "차트 결과를 생성했습니다.", {"chart_path": chart_path}
 
-    # 병합 셀·분류 필터처럼 단순 목록 요청은 LLM보다 값 일치가 안정적이다.
+    # 값 필터를 리스트 시드보다 먼저 적용한다 (예: 비용명 121만).
     if output_type == "dataframe" and not _is_complex_analysis(prompt):
         direct = _filter_by_mentioned_value(df, prompt)
         if direct is not None and not direct.empty:
             return (
                 direct,
                 f"데이터 값 일치 결과: {len(direct):,}행",
+                {},
             )
+
+    # 값 제약이 없을 때만 컬럼 전체 리스트 시드 사용
+    if output_type == "dataframe" and _is_list_request(prompt):
+        seed = _build_list_seed_frame(df, prompt)
+        if seed is not None and not seed.empty:
+            return seed, f"리스트 결과: {len(seed):,}행", {}
 
     query = (
         "사용자의 요청을 현재 DataFrame의 실제 컬럼명과 데이터 타입에 맞춰 "
@@ -82,6 +90,7 @@ def run_analysis(
         "반복된 상위 분류 값은 원본의 빈 상세 행을 분석용으로 채운 값이므로 "
         "같은 분류의 모든 행을 필터링할 때 사용하세요.\n"
         "'리스트', '목록', '표', '보여줘' 요청은 반드시 DataFrame으로 반환하세요.\n"
+        "차트·그래프·시각화 요청은 plot type으로 차트를 저장하고 경로를 반환하세요.\n"
         "합계·총합·평균 등 집계 요청도 가능하면 "
         "행 라벨(분류명)과 컬럼명·집계값으로 된 작은 DataFrame으로 반환하세요.\n"
         "예: 열이 ['', '계획예산']이고 행이 ['연구활동비', 12345] 형태.\n"
@@ -89,7 +98,7 @@ def run_analysis(
         f"사용자 요청: {prompt}"
     )
     try:
-        result, summary = chat(
+        result, summary, meta = chat(
             df,
             query,
             base_url=base_url,
@@ -97,12 +106,17 @@ def run_analysis(
             output_type=output_type,
         )
     except RuntimeError:
+        if output_type == "plot":
+            chart_path = generate_fallback_chart(df, prompt)
+            if chart_path:
+                return None, "차트 결과를 생성했습니다.", {"chart_path": chart_path}
         if output_type == "dataframe":
             fallback = _filter_by_mentioned_value(df, prompt)
             if fallback is not None and not fallback.empty:
                 return (
                     fallback,
                     f"데이터 값 일치 결과: {len(fallback):,}행",
+                    {},
                 )
         raise
 
@@ -117,8 +131,18 @@ def run_analysis(
             return (
                 fallback,
                 f"데이터 값 일치 결과: {len(fallback):,}행",
+                {},
             )
-    return result, summary
+
+    if output_type == "plot" and not meta.get("chart_path"):
+        # 결과가 요약 표면 그걸로, 아니면 원본 df로 차트 생성
+        chart_source = result if isinstance(result, pd.DataFrame) and not result.empty else df
+        chart_path = generate_fallback_chart(chart_source, prompt)
+        if chart_path:
+            meta = {**meta, "chart_path": chart_path}
+            summary = "차트 결과를 생성했습니다."
+
+    return result, summary, meta
 
 
 def run_multi_analysis(
@@ -127,14 +151,42 @@ def run_multi_analysis(
     *,
     base_url: str,
     model: str,
-) -> tuple[object, str]:
+) -> tuple[object, str, dict]:
     """여러 DataFrame을 SmartDatalake로 동시에 분석한다."""
     if len(named_dfs) < 2:
         raise ValueError("동시 분석에는 파일 2개 이상이 필요합니다.")
     if not prompt.strip():
         raise ValueError("분석 요청을 입력해 주세요.")
 
-    output_type = "dataframe" if _expects_dataframe(prompt) else None
+    output_type = _resolve_output_type(prompt)
+
+    # 차트는 자체 렌더러를 우선 사용한다 (한글·값 라벨·축 포맷 보장).
+    if output_type == "plot":
+        chart_path = generate_multi_file_chart(named_dfs, prompt)
+        if chart_path:
+            return None, "차트 결과를 생성했습니다.", {"chart_path": chart_path}
+
+    metric_aggregate = is_metric_aggregate_request(prompt, named_dfs=named_dfs)
+    if output_type == "dataframe" and metric_aggregate:
+        contextual = build_multi_context_aggregate_table(named_dfs, prompt)
+        if contextual is not None:
+            table, summary = contextual
+            return table, summary, {}
+
+    # 값 필터를 리스트 시드보다 먼저 적용한다.
+    if output_type == "dataframe" and not _is_complex_analysis(prompt):
+        direct = _filter_multi_by_mentioned_value(named_dfs, prompt)
+        if direct is not None and not direct.empty:
+            file_count = (
+                direct["출처파일"].nunique()
+                if "출처파일" in direct.columns
+                else len(named_dfs)
+            )
+            return (
+                direct,
+                f"데이터 값 일치 결과: {len(direct):,}행 ({file_count}개 파일)",
+                {},
+            )
 
     if output_type == "dataframe" and _is_list_request(prompt):
         list_parts: list[pd.DataFrame] = []
@@ -148,17 +200,7 @@ def run_multi_analysis(
         if list_parts:
             merged = pd.concat(list_parts, ignore_index=True)
             file_count = merged["출처파일"].nunique() if "출처파일" in merged.columns else 0
-            return merged, f"리스트 결과: {len(merged):,}행 ({file_count}개 파일)"
-
-    # 분류값 목록처럼 단순 요청은 파일별 값 일치 후 합친다.
-    if output_type == "dataframe" and not _is_complex_analysis(prompt):
-        direct = _filter_multi_by_mentioned_value(named_dfs, prompt)
-        if direct is not None and not direct.empty:
-            file_count = direct["출처파일"].nunique() if "출처파일" in direct.columns else len(named_dfs)
-            return (
-                direct,
-                f"데이터 값 일치 결과: {len(direct):,}행 ({file_count}개 파일)",
-            )
+            return merged, f"리스트 결과: {len(merged):,}행 ({file_count}개 파일)", {}
 
     file_names = ", ".join(name for name, _ in named_dfs)
     query = (
@@ -169,12 +211,13 @@ def run_multi_analysis(
         "반복된 상위 분류 값은 원본의 빈 상세 행을 분석용으로 채운 값이므로 "
         "같은 분류의 모든 행을 필터링할 때 사용하세요.\n"
         "'리스트', '목록', '표', '보여줘' 요청은 반드시 DataFrame으로 반환하세요.\n"
+        "차트·그래프·시각화 요청은 plot type으로 차트를 저장하고 경로를 반환하세요.\n"
         "단일 계산만 숫자나 문자열로 반환하세요.\n"
         f"분석 대상 파일: {file_names}\n"
         f"사용자 요청: {prompt}"
     )
     try:
-        result, summary = chat_multi(
+        result, summary, meta = chat_multi(
             named_dfs,
             query,
             base_url=base_url,
@@ -182,7 +225,11 @@ def run_multi_analysis(
             output_type=output_type,
         )
     except RuntimeError:
-        if output_type == "dataframe":
+        if output_type == "plot" and named_dfs:
+            chart_path = generate_multi_file_chart(named_dfs, prompt)
+            if chart_path:
+                return None, "차트 결과를 생성했습니다.", {"chart_path": chart_path}
+        if output_type == "dataframe" and not metric_aggregate:
             fallback = _filter_multi_by_mentioned_value(named_dfs, prompt)
             if fallback is not None and not fallback.empty:
                 file_count = (
@@ -193,7 +240,13 @@ def run_multi_analysis(
                 return (
                     fallback,
                     f"데이터 값 일치 결과: {len(fallback):,}행 ({file_count}개 파일)",
+                    {},
                 )
+        if output_type == "dataframe" and metric_aggregate:
+            contextual = build_multi_context_aggregate_table(named_dfs, prompt)
+            if contextual is not None:
+                table, summary = contextual
+                return table, summary, {}
         raise
 
     if (
@@ -201,18 +254,37 @@ def run_multi_analysis(
         and isinstance(result, pd.DataFrame)
         and result.empty
     ):
-        fallback = _filter_multi_by_mentioned_value(named_dfs, prompt)
-        if fallback is not None and not fallback.empty:
-            file_count = (
-                fallback["출처파일"].nunique()
-                if "출처파일" in fallback.columns
-                else len(named_dfs)
-            )
-            return (
-                fallback,
-                f"데이터 값 일치 결과: {len(fallback):,}행 ({file_count}개 파일)",
-            )
-    return result, summary
+        if metric_aggregate:
+            contextual = build_multi_context_aggregate_table(named_dfs, prompt)
+            if contextual is not None:
+                table, summary = contextual
+                return table, summary, {}
+        elif output_type == "dataframe":
+            fallback = _filter_multi_by_mentioned_value(named_dfs, prompt)
+            if fallback is not None and not fallback.empty:
+                file_count = (
+                    fallback["출처파일"].nunique()
+                    if "출처파일" in fallback.columns
+                    else len(named_dfs)
+                )
+                return (
+                    fallback,
+                    f"데이터 값 일치 결과: {len(fallback):,}행 ({file_count}개 파일)",
+                    {},
+                )
+
+    if output_type == "plot" and not meta.get("chart_path") and named_dfs:
+        if isinstance(result, pd.DataFrame) and not result.empty:
+            chart_path = generate_fallback_chart(result, prompt)
+        else:
+            chart_path = None
+        if not chart_path:
+            chart_path = generate_multi_file_chart(named_dfs, prompt)
+        if chart_path:
+            meta = {**meta, "chart_path": chart_path}
+            summary = "차트 결과를 생성했습니다."
+
+    return result, summary, meta
 
 
 def _filter_multi_by_mentioned_value(
@@ -231,6 +303,34 @@ def _filter_multi_by_mentioned_value(
     if not parts:
         return None
     return pd.concat(parts, ignore_index=True)
+
+
+_CHART_KEYWORDS = (
+    "차트",
+    "그래프",
+    "막대그래프",
+    "원그래프",
+    "시각화",
+    "chart",
+    "plot",
+    "graph",
+    "bar chart",
+)
+
+
+def _expects_plot(prompt: str) -> bool:
+    """차트·그래프 시각화 요청인지 판별한다."""
+    lowered = prompt.lower()
+    return any(keyword in lowered for keyword in _CHART_KEYWORDS)
+
+
+def _resolve_output_type(prompt: str) -> str | None:
+    """요청에 맞는 PandasAI output_type을 고른다. 차트는 plot을 우선한다."""
+    if _expects_plot(prompt):
+        return "plot"
+    if _expects_dataframe(prompt):
+        return "dataframe"
+    return None
 
 
 def _expects_dataframe(prompt: str) -> bool:
@@ -293,52 +393,178 @@ def _filter_by_mentioned_value(
     df: pd.DataFrame,
     prompt: str,
 ) -> pd.DataFrame | None:
-    """요청에 명시된 실제 셀 값으로 행을 찾는 범용 폴백."""
+    """요청에 명시된 실제 셀 값으로 행을 찾는 범용 폴백.
+
+    문자·숫자 컬럼 모두 검색한다. 숫자 코드(121 등)는 앞뒤가 숫자가 아닐 때만 매칭한다.
+    """
     prepared = prepare_dataframe_for_ai(df)
     normalized_prompt = _normalize_text(prompt)
     preferred_columns = _mentioned_columns(prepared, normalized_prompt)
-    matches: list[tuple[int, str, object]] = []
+    matches: list[tuple[int, int, str, object]] = []
 
     search_columns = preferred_columns or list(prepared.columns)
-    for column in search_columns:
-        series = prepared[column]
-        if not (pd.api.types.is_string_dtype(series) or series.dtype == object):
-            continue
-        for value in series.dropna().unique():
-            text = str(value).strip()
-            if not text:
-                continue
-            normalized = _normalize_text(text)
-            if len(normalized) >= 2 and normalized in normalized_prompt:
-                matches.append((len(normalized), column, value))
+    _collect_value_matches(prepared, search_columns, normalized_prompt, matches)
 
     if not matches and preferred_columns:
-        # 컬럼은 언급됐지만 값 매칭이 없으면 전체 컬럼으로 재시도
-        for column in prepared.columns:
-            if column in preferred_columns:
-                continue
-            series = prepared[column]
-            if not (pd.api.types.is_string_dtype(series) or series.dtype == object):
-                continue
-            for value in series.dropna().unique():
-                text = str(value).strip()
-                if not text:
-                    continue
-                normalized = _normalize_text(text)
-                if len(normalized) >= 2 and normalized in normalized_prompt:
-                    matches.append((len(normalized), column, value))
+        other_columns = [c for c in prepared.columns if c not in preferred_columns]
+        _collect_value_matches(prepared, other_columns, normalized_prompt, matches)
 
     if not matches:
         return None
 
-    longest = max(length for length, _, _ in matches)
+    # exact(1) 우선, 그다음 매칭 문자열 길이
+    best_exact = max(exact for exact, _, _, _ in matches)
+    candidates = [m for m in matches if m[0] == best_exact]
+    longest = max(length for _, length, _, _ in candidates)
+
     mask = pd.Series(False, index=prepared.index)
-    for length, column, value in matches:
-        if length == longest:
-            mask |= prepared[column].astype(str) == str(value)
+    for exact, length, column, value in candidates:
+        if exact != best_exact or length != longest:
+            continue
+        mask |= _column_equals(prepared[column], value)
 
     result = prepared.loc[mask]
     return result.reset_index(drop=True) if not result.empty else None
+
+
+def _collect_value_matches(
+    df: pd.DataFrame,
+    columns: list,
+    normalized_prompt: str,
+    matches: list[tuple[int, int, str, object]],
+) -> None:
+    for column in columns:
+        series = df[column]
+        for value in series.dropna().unique():
+            text = _cell_match_text(value)
+            if not text:
+                continue
+            normalized = _normalize_text(text)
+            if _is_aggregate_label_false_positive(normalized, normalized_prompt, df):
+                continue
+            if not _value_mentioned_in_prompt(normalized, normalized_prompt):
+                continue
+            exact = 1 if _is_exact_value_mention(normalized, normalized_prompt) else 0
+            matches.append((exact, len(normalized), str(column), value))
+
+
+def _cell_match_text(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (int, float)):
+        number = float(value)
+        if number.is_integer():
+            return str(int(number))
+        return str(value).strip()
+    try:
+        import numpy as np
+
+        if isinstance(value, (np.integer, np.floating)):
+            number = float(value)
+            if number.is_integer():
+                return str(int(number))
+            return str(value).strip()
+    except ImportError:
+        pass
+    return str(value).strip()
+
+
+def _value_mentioned_in_prompt(normalized_value: str, normalized_prompt: str) -> bool:
+    if not normalized_value:
+        return False
+    if normalized_value.isdigit():
+        return bool(
+            re.search(
+                rf"(?<!\d){re.escape(normalized_value)}(?!\d)",
+                normalized_prompt,
+            )
+        )
+    return len(normalized_value) >= 2 and normalized_value in normalized_prompt
+
+
+def _prompt_requests_total_rows(normalized_prompt: str) -> bool:
+    """'합계 행만'처럼 집계 라벨 행 자체를 요청하는지."""
+    markers = (
+        "합계행",
+        "합계만",
+        "합계줄",
+        "소계행",
+        "소계만",
+        "총계행",
+        "합계인",
+        "합계가",
+        "합계를",
+        "소계를",
+        "합계표",
+        "소계표",
+    )
+    return any(marker in normalized_prompt for marker in markers)
+
+
+def _is_aggregate_label_false_positive(
+    normalized_value: str,
+    normalized_prompt: str,
+    df: pd.DataFrame,
+) -> bool:
+    """컬럼명(실행예산_합계)에만 있는 '합계'를 셀 값 매칭에서 제외한다."""
+    from core.pandasai_config import is_total_label
+
+    if _prompt_requests_total_rows(normalized_prompt):
+        return False
+
+    compact = normalized_value.replace(" ", "")
+    if not is_total_label(compact):
+        return False
+
+    for column in df.columns:
+        col_norm = _normalize_text(str(column))
+        if compact not in col_norm or col_norm not in normalized_prompt:
+            continue
+        remainder = normalized_prompt.replace(col_norm, "", 1)
+        if compact not in remainder:
+            return True
+    return False
+
+
+def is_metric_aggregate_request(
+    prompt: str,
+    df: pd.DataFrame | None = None,
+    *,
+    named_dfs: list[tuple[str, pd.DataFrame]] | None = None,
+) -> bool:
+    """수치 컬럼에 대한 합계·평균 등 집계 요청인지 (차트 요청 포함)."""
+    if _match_aggregate_op(prompt) is None:
+        return False
+    probe = df
+    if probe is None and named_dfs:
+        probe = next((frame for _, frame in named_dfs if frame is not None and not frame.empty), None)
+    if probe is None or probe.empty:
+        return False
+    return find_mentioned_numeric_column(probe, prompt) is not None
+
+
+def _is_exact_value_mention(normalized_value: str, normalized_prompt: str) -> bool:
+    """'비용명이 121인'처럼 값이 독립 토큰으로 쓰였는지."""
+    if normalized_value.isdigit():
+        return bool(
+            re.search(
+                rf"(?<!\d){re.escape(normalized_value)}(?!\d)",
+                normalized_prompt,
+            )
+        )
+    return normalized_value in normalized_prompt
+
+
+def _column_equals(series: pd.Series, value: object) -> pd.Series:
+    target = _cell_match_text(value)
+    return series.map(_cell_match_text) == target
 
 
 def _mentioned_columns(df: pd.DataFrame, normalized_prompt: str) -> list[str]:
@@ -371,51 +597,108 @@ _AGGREGATE_OPS = (
     ("min", "min"),
     ("총합", "sum"),
     ("총 합", "sum"),
+    ("종합", "sum"),
     ("합계", "sum"),
-    ("합을", "sum"),
-    ("합쳐", "sum"),
+    ("합산", "sum"),
     ("sum", "sum"),
     ("total", "sum"),
 )
 
 
-def detect_aggregate_op(prompt: str) -> str | None:
-    """프롬프트에서 집계 연산 종류를 찾는다. 없으면 None."""
+def _match_aggregate_op(prompt: str) -> str | None:
+    """프롬프트에서 집계 연산 종류를 찾는다 (차트 요청 포함)."""
     lowered = prompt.lower()
     normalized = _normalize_text(prompt)
-    for keyword, op in _AGGREGATE_OPS:
-        if keyword.lower() in lowered or _normalize_text(keyword) in normalized:
+    for keyword, op in sorted(_AGGREGATE_OPS, key=lambda item: len(item[0]), reverse=True):
+        key_l = keyword.lower()
+        key_n = _normalize_text(keyword)
+        if key_l in lowered or key_n in normalized:
             return op
     return None
 
 
+def detect_aggregate_op(prompt: str) -> str | None:
+    """프롬프트에서 집계 연산 종류를 찾는다. 없으면 None.
+
+    차트 요청은 집계 단축 경로가 아닌 시각화 경로로 보내기 위해 None을 반환한다.
+    """
+    if _expects_plot(prompt):
+        return None
+    return _match_aggregate_op(prompt)
+
+
 def extract_matched_value(df: pd.DataFrame, prompt: str) -> str | None:
     """요청 문구에 등장하는 실제 셀 값(가장 긴 일치)을 반환한다."""
+    detail = extract_matched_detail(df, prompt)
+    return detail[1] if detail else None
+
+
+def extract_matched_detail(df: pd.DataFrame, prompt: str) -> tuple[str, str] | None:
+    """요청 문구에 등장하는 실제 셀 값과 컬럼명을 (컬럼, 값)으로 반환한다."""
     prepared = prepare_dataframe_for_ai(df)
     normalized_prompt = _normalize_text(prompt)
     preferred_columns = _mentioned_columns(prepared, normalized_prompt)
-    matches: list[tuple[int, object]] = []
+    matches: list[tuple[int, int, str, object]] = []
 
     search_columns = preferred_columns or list(prepared.columns)
-    for column in search_columns:
-        series = prepared[column]
-        if not (pd.api.types.is_string_dtype(series) or series.dtype == object):
-            continue
-        for value in series.dropna().unique():
-            text = str(value).strip()
-            if not text:
-                continue
-            normalized = _normalize_text(text)
-            if len(normalized) >= 2 and normalized in normalized_prompt:
-                matches.append((len(normalized), text))
+    _collect_value_matches(prepared, search_columns, normalized_prompt, matches)
+    if not matches and preferred_columns:
+        other_columns = [c for c in prepared.columns if c not in preferred_columns]
+        _collect_value_matches(prepared, other_columns, normalized_prompt, matches)
 
     if not matches:
         return None
-    longest = max(length for length, _ in matches)
-    for length, text in matches:
-        if length == longest:
-            return text
+
+    best_exact = max(exact for exact, _, _, _ in matches)
+    candidates = [m for m in matches if m[0] == best_exact]
+    longest = max(length for _, length, _, _ in candidates)
+    for exact, length, column, value in candidates:
+        if exact == best_exact and length == longest:
+            return column, _cell_match_text(value)
     return None
+
+
+def build_filter_summary(
+    prompt: str,
+    result_df: pd.DataFrame,
+    full_df: pd.DataFrame | None = None,
+    *,
+    file_count: int | None = None,
+) -> str | None:
+    """필터 결과를 채팅용 한 줄 요약으로 만든다.
+
+    예: ``연구활동비 · 42행 · 예산과목 일치``
+    """
+    if result_df is None or result_df.empty:
+        return None
+
+    parts: list[str] = []
+    label = infer_context_label(
+        prompt=prompt,
+        result_df=result_df,
+        full_df=full_df,
+    )
+    if label:
+        parts.append(str(label))
+
+    parts.append(f"{len(result_df):,}행")
+
+    search_df = full_df if full_df is not None and not full_df.empty else result_df
+    detail = extract_matched_detail(search_df, prompt) if prompt else None
+    if detail:
+        column, value = detail
+        if label and _normalize_text(value) == _normalize_text(str(label)):
+            parts.append(f"{column} 일치")
+        else:
+            parts.append(f"{column}={value}")
+
+    resolved_files = file_count
+    if resolved_files is None and "출처파일" in result_df.columns:
+        resolved_files = int(result_df["출처파일"].nunique())
+    if resolved_files and resolved_files > 1:
+        parts.append(f"{resolved_files}개 파일")
+
+    return " · ".join(parts) if parts else None
 
 
 def find_mentioned_column(df: pd.DataFrame, prompt: str) -> str | None:
@@ -609,7 +892,7 @@ def build_context_aggregate_table(
         ----|----------|----------
         연구활동비 | 12345    | 67890
     """
-    op = detect_aggregate_op(prompt)
+    op = _match_aggregate_op(prompt)
     if op is None or df is None or df.empty:
         return None
 
@@ -623,9 +906,21 @@ def build_context_aggregate_table(
     summary_parts: list[str] = []
 
     for metric_col in metric_cols:
-        series = pd.to_numeric(df[metric_col], errors="coerce")
-        value = reduce(series)
-        if pd.isna(value):
+        col = _resolve_metric_column(df, metric_col)
+        if col is None:
+            continue
+        from core.pandasai_config import (
+            exclude_total_rows,
+            prepare_dataframe_for_ai,
+            sum_metric_excluding_totals,
+        )
+
+        if op == "sum":
+            value = sum_metric_excluding_totals(df, col)
+        else:
+            work = exclude_total_rows(prepare_dataframe_for_ai(df))
+            value = reduce(pd.to_numeric(work[col], errors="coerce"))
+        if value is None or pd.isna(value):
             continue
         row[str(metric_col)] = value
         summary_parts.append(f"{metric_col} {op_name}: {value:,.0f}")
@@ -652,7 +947,7 @@ def build_multi_context_aggregate_table(
         5예실대비표.xlsx | 79977000
         4예실대비표.xlsx | 46410000
     """
-    op = detect_aggregate_op(prompt)
+    op = _match_aggregate_op(prompt)
     if op is None or not named_dfs:
         return None
 
@@ -681,14 +976,16 @@ def build_multi_context_aggregate_table(
             continue
         # 단일파일 요약 표와 동일하게 첫 열은 라벨, 나머지는 수치 컬럼
         row_label = f"{ctx} · {file_name}" if ctx and ctx != "합계" else file_name
-        row: dict[str, object] = {"": row_label}
+        row: dict[str, object] = {"출처파일": row_label}
         file_bits: list[str] = []
         for metric_col in metric_cols:
             col = _resolve_metric_column(df, metric_col)
             if col is None:
                 continue
-            value = reduce(pd.to_numeric(df[col], errors="coerce"))
-            if pd.isna(value):
+            from core.pandasai_config import sum_metric_excluding_totals
+
+            value = sum_metric_excluding_totals(df, col)
+            if value is None:
                 continue
             row[str(metric_col)] = value
             file_bits.append(f"{metric_col} {op_name}: {value:,.0f}")
@@ -701,8 +998,8 @@ def build_multi_context_aggregate_table(
         return None
 
     table = pd.DataFrame(rows)
-    # 열 순서: 라벨 → 요청한 수치 컬럼 순
-    ordered = [""] + [c for c in metric_cols if c in table.columns]
+    # 열 순서: 출처파일 → 요청한 수치 컬럼 순
+    ordered = ["출처파일"] + [c for c in metric_cols if c in table.columns]
     extra = [c for c in table.columns if c not in ordered]
     table = table[ordered + extra]
 

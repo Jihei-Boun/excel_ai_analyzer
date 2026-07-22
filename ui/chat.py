@@ -7,24 +7,54 @@ import streamlit as st
 
 from core.analyzer import (
     _expects_dataframe,
+    _expects_plot,
     _filter_by_mentioned_value,
     _filter_multi_by_mentioned_value,
     _is_complex_analysis,
     _normalize_text,
     build_context_aggregate_table,
+    build_filter_summary,
     build_multi_context_aggregate_table,
     detect_aggregate_op,
     extract_matched_value,
     infer_context_label,
+    is_metric_aggregate_request,
     run_analysis,
     run_multi_analysis,
     scalar_to_context_table,
     split_frames_by_source,
 )
+from core.chart_utils import generate_fallback_chart
 from core.excel_loader import sanitize_dataframe
 from core.result_format import exclude_aggregate_rows, to_list_display
 from ui.upload import get_active_named_frames, get_analysis_df, is_multi_analysis_mode
 
+
+
+
+def _merge_analysis_meta(meta: dict, analysis_meta: dict | None) -> dict:
+    """PandasAI/라우팅 메타(code, chart_path)를 채팅 메시지 메타에 합친다."""
+    if not analysis_meta:
+        return meta
+    for key in ("code", "chart_path"):
+        value = analysis_meta.get(key)
+        if value:
+            meta[key] = value
+    return meta
+
+
+def _attach_filter_summary(
+    meta: dict,
+    *,
+    prompt: str,
+    result: pd.DataFrame,
+    full_df: pd.DataFrame | None,
+) -> dict:
+    summary = build_filter_summary(prompt, result, full_df)
+    if summary:
+        meta["filter_summary"] = summary
+        st.session_state.last_filter_summary = summary
+    return meta
 
 def process_user_prompt(prompt: str, *, user_already_added: bool = False) -> None:
     if is_multi_analysis_mode():
@@ -91,23 +121,24 @@ def _run_prompt(
     context_label = _resolve_context_label(source, prompt)
 
     # 필터된 목록 위에서 합계/평균 등을 요청하면 요약 표로 바로 응답
-    contextual = build_context_aggregate_table(
-        source,
-        prompt,
-        context_label=context_label,
-    )
-    if contextual is not None:
-        table, summary = contextual
-        # 집계 결과는 채팅에만 붙이고, 선택/필터 데이터는 유지한다.
-        reply, result = _store_dataframe_result(
-            table,
-            summary,
-            keep_as_filter=False,
-            replace_selection=False,
+    # (차트 요청은 detect_aggregate_op가 None이라 여기로 오지 않음)
+    if not _expects_plot(prompt):
+        contextual = build_context_aggregate_table(
+            source,
+            prompt,
+            context_label=context_label,
         )
-        return reply, result, {}
+        if contextual is not None:
+            table, summary = contextual
+            reply, result = _store_dataframe_result(
+                table,
+                summary,
+                keep_as_filter=False,
+                replace_selection=False,
+            )
+            return reply, result, {}
 
-    result, summary = run_analysis(
+    result, summary, analysis_meta = run_analysis(
         source,
         prompt,
         base_url=base_url,
@@ -120,12 +151,18 @@ def _run_prompt(
         and source is not df
         and len(df) > 0
     ):
-        result, summary = run_analysis(
+        result, summary, analysis_meta = run_analysis(
             df,
             prompt,
             base_url=base_url,
             model=model,
         )
+
+    if analysis_meta.get("chart_path"):
+        meta = _merge_analysis_meta({}, analysis_meta)
+        st.session_state.operation_result = None
+        st.session_state.active_operation = None
+        return summary or "차트 결과를 생성했습니다.", None, meta
 
     if isinstance(result, pd.DataFrame):
         result = result.reset_index(drop=True)
@@ -136,7 +173,15 @@ def _run_prompt(
             summary,
             source_df=source,
         )
+        meta = _merge_analysis_meta(meta, analysis_meta)
         is_filter = detect_aggregate_op(prompt) is None
+        if is_filter:
+            meta = _attach_filter_summary(
+                meta,
+                prompt=prompt,
+                result=result,
+                full_df=df,
+            )
         reply, stored = _store_dataframe_result(
             result,
             summary,
@@ -144,6 +189,12 @@ def _run_prompt(
             replace_selection=True,
         )
         return reply, stored, meta
+
+    meta = _merge_analysis_meta({}, analysis_meta)
+    if meta.get("chart_path"):
+        st.session_state.operation_result = None
+        st.session_state.active_operation = None
+        return summary or "차트 결과를 생성했습니다.", None, meta
 
     # 숫자만 온 경우에도 맥락 요약 표로 변환
     if detect_aggregate_op(prompt) is not None:
@@ -160,11 +211,11 @@ def _run_prompt(
                 keep_as_filter=False,
                 replace_selection=False,
             )
-            return reply, stored, {}
+            return reply, stored, meta
 
     st.session_state.operation_result = result
     st.session_state.active_operation = "PandasAI"
-    return summary, None, {}
+    return summary, None, meta
 
 
 def _postprocess_table_result(
@@ -229,6 +280,10 @@ def _update_context_from_filter(
     label = infer_context_label(prompt=prompt, result_df=result, full_df=full_df)
     if label:
         st.session_state.analysis_context_label = label
+    summary = build_filter_summary(prompt, result, full_df)
+    if summary:
+        st.session_state.last_filter_summary = summary
+    elif label:
         st.session_state.last_filter_summary = label
 
 
@@ -272,8 +327,24 @@ def _run_multi_prompt(
     model = st.session_state.ollama_model
     prepared = [(name, sanitize_dataframe(df)) for name, df in named_frames]
 
-    # 집계: 이전 필터(연구활동비 등) 기준으로 파일별 요약 표
-    if detect_aggregate_op(prompt) is not None:
+    # 파일별 수치 집계 차트: 표와 동일한 필터·집계 결과를 사용한다
+    if _expects_plot(prompt) and is_metric_aggregate_request(prompt, named_dfs=prepared):
+        source_named, context_label = _resolve_multi_aggregate_source(prepared, prompt)
+        contextual = build_multi_context_aggregate_table(
+            source_named,
+            prompt,
+            context_label=context_label,
+        )
+        if contextual is not None:
+            table, summary = contextual
+            chart_path = generate_fallback_chart(table, prompt)
+            if chart_path:
+                st.session_state.operation_result = None
+                st.session_state.active_operation = None
+                return summary or "차트 결과를 생성했습니다.", None, {"chart_path": chart_path}
+
+    # 집계: 이전 필터 기준 파일별 요약 표 (차트 요청 제외)
+    if not _expects_plot(prompt) and detect_aggregate_op(prompt) is not None:
         source_named, context_label = _resolve_multi_aggregate_source(prepared, prompt)
         contextual = build_multi_context_aggregate_table(
             source_named,
@@ -290,12 +361,18 @@ def _run_multi_prompt(
             )
             return reply, stored, {}
 
-    result, summary = run_multi_analysis(
+    result, summary, analysis_meta = run_multi_analysis(
         prepared,
         prompt,
         base_url=base_url,
         model=model,
     )
+
+    if analysis_meta.get("chart_path"):
+        meta = _merge_analysis_meta({}, analysis_meta)
+        st.session_state.operation_result = None
+        st.session_state.active_operation = None
+        return summary or "차트 결과를 생성했습니다.", None, meta
 
     if isinstance(result, pd.DataFrame):
         result = result.reset_index(drop=True)
@@ -316,6 +393,14 @@ def _run_multi_prompt(
             summary,
             source_df=multi_source,
         )
+        meta = _merge_analysis_meta(meta, analysis_meta)
+        if is_filter:
+            meta = _attach_filter_summary(
+                meta,
+                prompt=prompt,
+                result=result,
+                full_df=multi_source,
+            )
         reply, stored = _store_dataframe_result(
             result,
             summary,
@@ -324,9 +409,15 @@ def _run_multi_prompt(
         )
         return reply, stored, meta
 
+    meta = _merge_analysis_meta({}, analysis_meta)
+    if meta.get("chart_path"):
+        st.session_state.operation_result = None
+        st.session_state.active_operation = None
+        return summary, None, meta
+
     st.session_state.operation_result = result
     st.session_state.active_operation = "PandasAI (다중)"
-    return summary, None, {}
+    return summary, None, meta
 
 
 def _resolve_multi_aggregate_source(
@@ -336,16 +427,19 @@ def _resolve_multi_aggregate_source(
     """집계에 쓸 파일별 데이터와 행 맥락 라벨을 결정한다."""
     context_label = st.session_state.get("analysis_context_label")
     filter_df = st.session_state.get("analysis_filter_df")
+    metric_aggregate = is_metric_aggregate_request(prompt, named_dfs=prepared)
 
     # 프롬프트에 새 분류값이 있으면 그걸로 다시 필터 (이전 필터와 다르면)
-    prompt_filtered = _filter_multi_by_mentioned_value(prepared, prompt)
+    prompt_filtered = None
     prompt_label = None
-    if prompt_filtered is not None and not prompt_filtered.empty:
-        prompt_label = infer_context_label(
-            prompt=prompt,
-            result_df=prompt_filtered,
-            full_df=None,
-        ) or extract_matched_value(prompt_filtered, prompt)
+    if not metric_aggregate:
+        prompt_filtered = _filter_multi_by_mentioned_value(prepared, prompt)
+        if prompt_filtered is not None and not prompt_filtered.empty:
+            prompt_label = infer_context_label(
+                prompt=prompt,
+                result_df=prompt_filtered,
+                full_df=None,
+            ) or extract_matched_value(prompt_filtered, prompt)
 
     reuse_filter = (
         filter_df is not None

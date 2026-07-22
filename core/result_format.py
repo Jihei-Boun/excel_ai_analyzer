@@ -143,11 +143,15 @@ def to_list_display(
         code_col = None
 
     group_col = _list_group_column(prepared, prompt, item_col, source_col=source_col)
+    # 분류 컬럼이 없어도 여러 파일이면 출처파일로 묶는다 (파일별 리스트).
+    if group_col is None and _wants_file_grouped_list(prepared, prompt, source_col=source_col):
+        group_col = source_col
+
     if code_col is None:
         code_col = _list_code_column(
             prepared,
             item_col,
-            group_col=group_col,
+            group_col=group_col if group_col != source_col else None,
             source_col=source_col,
         )
 
@@ -312,7 +316,12 @@ def _build_grouped_list(
     source_col: str,
 ) -> dict[str, list[str]] | None:
     multi_source = source_col in df.columns and df[source_col].nunique() > 1
-    group_labels = _forward_fill_group_labels(df[group_col])
+    group_by_source = group_col == source_col
+    group_labels = (
+        [_clean_cell_text(v) for v in df[group_col].tolist()]
+        if group_by_source
+        else _forward_fill_group_labels(df[group_col])
+    )
     groups: dict[str, list[str]] = {}
     seen_pairs: set[tuple[str, str]] = set()
 
@@ -322,7 +331,7 @@ def _build_grouped_list(
             continue
 
         group_name = group_text
-        if multi_source:
+        if multi_source and not group_by_source:
             file_name = _clean_cell_text(row.get(source_col))
             if file_name:
                 group_name = f"{file_name} · {group_text}"
@@ -469,6 +478,17 @@ def _list_group_column(
     return others[0] if len(others) == 1 else None
 
 
+def _wants_file_grouped_list(
+    df: pd.DataFrame,
+    prompt: str,
+    *,
+    source_col: str,
+) -> bool:
+    """여러 파일이 합쳐진 리스트는 출처파일로 묶어 보여준다."""
+    del prompt  # 멀티파일 리스트는 항상 파일 단위로 표시
+    return source_col in df.columns and df[source_col].nunique(dropna=True) > 1
+
+
 def _list_item_column(
     df: pd.DataFrame,
     prompt: str,
@@ -476,26 +496,58 @@ def _list_item_column(
     source_col: str,
 ) -> str | None:
     mentioned = find_mentioned_column(df, prompt)
-    if mentioned and mentioned in df.columns:
+    text_columns = _text_columns(df, source_col=source_col)
+    detail_columns = [
+        column for column in text_columns if not _is_group_like_column(column)
+    ]
+    item_hint_columns = [
+        column
+        for column in df.columns
+        if column != source_col and _column_name_matches(column, _ITEM_COLUMN_HINTS)
+    ]
+
+    # 금액 컬럼이 언급돼도 리스트 항목은 비용명/항목 쪽을 우선한다.
+    # 필터로 값이 거의 고정된 컬럼(예: 비용명=121만)은 목록 항목으로 쓰지 않는다.
+    if (
+        mentioned
+        and mentioned in df.columns
+        and not _is_amount_like_column(mentioned)
+        and df[mentioned].nunique(dropna=True) > 1
+    ):
         return mentioned
 
-    text_columns = _text_columns(df, source_col=source_col)
-    detail_columns = [column for column in text_columns if not _is_group_like_column(column)]
+    if item_hint_columns:
+        # 코드·명칭 쌍이면 명칭(오른쪽) 우선. 값이 다양한 컬럼을 선호.
+        ranked = sorted(
+            item_hint_columns,
+            key=lambda col: (
+                0 if pd.api.types.is_numeric_dtype(df[col]) else 1,
+                df[col].nunique(dropna=True),
+            ),
+            reverse=True,
+        )
+        for column in ranked:
+            if df[column].nunique(dropna=True) > 1 or len(ranked) == 1:
+                return column
+        return ranked[0]
+
     if detail_columns:
+        for column in reversed(detail_columns):
+            if df[column].nunique(dropna=True) > 1:
+                return column
         return detail_columns[-1]
 
-    for column in df.columns:
-        if column == source_col:
-            continue
-        if _column_name_matches(column, _ITEM_COLUMN_HINTS):
-            return column
+    if mentioned and mentioned in df.columns and not _is_amount_like_column(mentioned):
+        return mentioned
 
     numeric_columns = [
         column
         for column in df.columns
-        if column != source_col and pd.api.types.is_numeric_dtype(df[column])
+        if column != source_col
+        and pd.api.types.is_numeric_dtype(df[column])
+        and not _is_amount_like_column(column)
     ]
-    if len(numeric_columns) == 1 and text_columns:
+    if len(numeric_columns) == 1 and not text_columns:
         return numeric_columns[0]
 
     if len(text_columns) == 1:

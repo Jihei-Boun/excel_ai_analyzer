@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import base64
 import html
 import io
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 from ui.chat import process_user_prompt
-from ui.display import for_display
+from ui.display import render_dataframe
 from ui.session_store import MULTI_FILE_PROMPTS, RECOMMENDED_PROMPTS
 from ui.upload import (
     get_active_named_frames,
@@ -98,6 +100,7 @@ def _render_chat_history() -> None:
                     st.rerun()
         return
 
+    show_code = bool(st.session_state.get("show_analysis_code"))
     for message in messages:
         role = message["role"]
         css = "chat-user" if role == "user" else "chat-assistant"
@@ -108,6 +111,14 @@ def _render_chat_history() -> None:
                 f'<div class="filter-ok">✓ {message["filter_summary"]}</div>',
                 unsafe_allow_html=True,
             )
+
+        chart_path = message.get("chart_path")
+        if chart_path:
+            path = Path(str(chart_path))
+            if path.is_file():
+                _render_chart_image(path)
+            else:
+                st.caption(f"차트 파일을 찾을 수 없습니다: {path.name}")
 
         attached = message.get("dataframe")
         list_values = message.get("list_values")
@@ -121,12 +132,25 @@ def _render_chat_history() -> None:
             )
         elif isinstance(attached, pd.DataFrame) and not attached.empty:
             height = min(520, max(120, 38 * (min(len(attached), 15) + 1)))
-            st.dataframe(
-                for_display(attached),
-                use_container_width=True,
-                hide_index=True,
-                height=height,
-            )
+            render_dataframe(attached, hide_index=True, height=height)
+
+        code = message.get("code")
+        if show_code and code:
+            with st.expander("실행 코드", expanded=False):
+                st.code(code, language="python")
+
+
+def _render_chart_image(path: Path) -> None:
+    """st.image 툴바(검은 네모)를 피하기 위해 HTML로 차트를 표시한다."""
+    suffix = path.suffix.lower().lstrip(".") or "png"
+    if suffix == "jpg":
+        suffix = "jpeg"
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    st.markdown(
+        f'<img class="chart-image" alt="chart" '
+        f'src="data:image/{suffix};base64,{encoded}" />',
+        unsafe_allow_html=True,
+    )
 
 
 def _render_list_result(
@@ -166,12 +190,7 @@ def _render_list_result(
     if full_df is not None and not full_df.empty and len(full_df.columns) > 1:
         with st.expander("전체 데이터 보기", expanded=False):
             height = min(360, max(120, 38 * (min(len(full_df), 12) + 1)))
-            st.dataframe(
-                for_display(full_df),
-                use_container_width=True,
-                hide_index=True,
-                height=height,
-            )
+            render_dataframe(full_df, hide_index=True, height=height)
 
 
 def _process_pending_analysis() -> None:
@@ -199,22 +218,12 @@ def _render_selected_result() -> None:
         if isinstance(attached, pd.DataFrame) and not _same_frame(attached, display_df):
             st.caption(f"선택 데이터(필터 유지) · {len(display_df):,}행")
             height = min(360, max(120, 38 * (min(len(display_df), 10) + 1)))
-            st.dataframe(
-                for_display(display_df.head(10)),
-                use_container_width=True,
-                hide_index=True,
-                height=height,
-            )
+            render_dataframe(display_df.head(10), hide_index=True, height=height)
             return
 
     st.caption(f"표 결과 · {len(display_df):,}행")
     height = min(560, max(140, 38 * (min(len(display_df), 18) + 1)))
-    st.dataframe(
-        for_display(display_df),
-        use_container_width=True,
-        hide_index=True,
-        height=height,
-    )
+    render_dataframe(display_df, hide_index=True, height=height)
 
 
 def _same_frame(left: pd.DataFrame, right: pd.DataFrame) -> bool:
@@ -236,9 +245,8 @@ def _render_operation_result() -> None:
     label = st.session_state.get("active_operation", "result")
     if isinstance(result, pd.DataFrame):
         st.caption(f"연산 결과 · {label}")
-        st.dataframe(
-            for_display(result),
-            use_container_width=True,
+        render_dataframe(
+            result,
             hide_index=True,
             height=min(220, max(100, 38 * (len(result) + 1))),
         )

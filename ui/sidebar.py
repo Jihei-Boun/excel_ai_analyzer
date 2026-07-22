@@ -51,6 +51,13 @@ def render_sidebar() -> None:
         )
         st.session_state.theme = _THEME_VALUES[chosen_label]
 
+        st.markdown('<p class="sidebar-label">분석 상세</p>', unsafe_allow_html=True)
+        st.session_state.show_analysis_code = st.checkbox(
+            "실행 코드 표시",
+            value=bool(st.session_state.get("show_analysis_code", False)),
+            help="PandasAI가 생성·실행한 코드를 채팅에서 확인합니다.",
+        )
+
         st.markdown('<p class="sidebar-label">연결</p>', unsafe_allow_html=True)
 
         st.session_state.ollama_base_url = st.text_input(
@@ -68,8 +75,8 @@ def render_sidebar() -> None:
 
         models = _fetch_ollama_models(st.session_state.ollama_base_url)
         model_options = models or [st.session_state.ollama_model]
-
-        st.session_state.ollama_model = st.selectbox(
+        # selectbox는 Streamlit 다크 테마 잔여로 라이트에서 검게 남는 경우가 있어 radio 사용
+        st.session_state.ollama_model = st.radio(
             "분석 모델",
             model_options,
             index=_model_index(model_options, st.session_state.ollama_model),

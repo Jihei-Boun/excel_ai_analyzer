@@ -11,3 +11,18 @@ serverPort = 8502
 
 [client]
 toolbarMode = "minimal"
+
+# Streamlit 네이티브 위젯(dataframe 등)용 테마.
+# 사이드바 다크/라이트 토글은 ui/styles.py에서 별도 적용.
+[theme]
+base = "light"
+primaryColor = "#2563eb"
+backgroundColor = "#f7f8fa"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#111827"
+
+[theme.dark]
+primaryColor = "#3b82f6"
+backgroundColor = "#0c1017"
+secondaryBackgroundColor = "#151b27"
+textColor = "#e8edf5"

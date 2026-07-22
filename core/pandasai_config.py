@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+from core.chart_utils import charts_dir, materialize_chart
 
 try:
     from pandasai import SmartDataframe, SmartDatalake
@@ -25,12 +28,18 @@ _SAFE_CODE_RULES = (
     "- 데이터에 있는 분류명과 정확히 일치하는 요청은 해당 컬럼의 동등 비교를 사용하세요.\n"
     "- result의 type은 dataframe, number, string, plot 중 하나만 사용하세요.\n"
     "- 목록 결과는 Python list가 아니라 dataframe type의 DataFrame 또는 Series로 반환하세요.\n"
+    "- 차트 요청은 matplotlib로 그린 뒤 plt.savefig로 png 파일을 저장하고 "
+    'result = {"type": "plot", "value": "저장된파일경로.png"} 형식으로 반환하세요.\n'
+    "- plt.show()만 호출하지 마세요. 반드시 savefig로 파일을 저장하세요.\n"
 )
 
 _TOTAL_LABEL_RE = re.compile(
     r"^(?:소\s*계|합\s*계|총\s*계|sub\s*total|grand\s*total|total)$",
     flags=re.IGNORECASE,
 )
+
+_CHARTS_DIR = charts_dir()
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp"}
 
 
 def create_llm(base_url: str, model: str) -> Any:
@@ -49,10 +58,13 @@ def create_llm(base_url: str, model: str) -> Any:
 
 
 def _pandasai_config(base_url: str, model: str) -> dict[str, Any]:
+    _CHARTS_DIR.mkdir(parents=True, exist_ok=True)
     return {
         "llm": create_llm(base_url, model),
         "enable_cache": False,
-        "save_charts": False,
+        "save_charts": True,
+        "save_charts_path": str(_CHARTS_DIR),
+        "open_charts": False,
         "save_logs": False,
         "verbose": False,
         "max_retries": 1,
@@ -119,8 +131,8 @@ def chat(
     base_url: str,
     model: str,
     output_type: str | None = None,
-) -> tuple[Any, str]:
-    """PandasAI로 질의를 실행하고 (결과, 요약)을 반환한다."""
+) -> tuple[Any, str, dict[str, Any]]:
+    """PandasAI로 질의를 실행하고 (결과, 요약, 메타)을 반환한다."""
     prepared = prepare_dataframe_for_ai(df)
     safe_prompt = f"{_SAFE_CODE_RULES}\n{prompt}"
     sdf = create_smart_dataframe(prepared, base_url=base_url, model=model)
@@ -134,7 +146,7 @@ def chat_multi(
     base_url: str,
     model: str,
     output_type: str | None = None,
-) -> tuple[Any, str]:
+) -> tuple[Any, str, dict[str, Any]]:
     """여러 파일을 SmartDatalake로 동시에 분석한다."""
     inventory = _multi_file_inventory(named_dfs)
     safe_prompt = (
@@ -153,7 +165,7 @@ def _run_chat_session(
     safe_prompt: str,
     *,
     output_type: str | None = None,
-) -> tuple[Any, str]:
+) -> tuple[Any, str, dict[str, Any]]:
     kwargs: dict[str, Any] = {}
     if output_type:
         kwargs["output_type"] = output_type
@@ -163,13 +175,19 @@ def _run_chat_session(
     except Exception as exc:
         raise RuntimeError(_friendly_error(exc)) from exc
 
-    result = _unwrap_result(raw)
+    result, meta = _unwrap_result(raw)
     if _is_retryable_response_error(result):
         if output_type == "dataframe":
             result_contract = (
                 '마지막 줄에서 반드시 result = {"type": "dataframe", '
                 '"value": result_df} 형식으로 반환하세요.\n'
                 "result_df는 pandas DataFrame 또는 Series여야 합니다."
+            )
+        elif output_type == "plot":
+            result_contract = (
+                '마지막 줄에서 반드시 result = {"type": "plot", '
+                '"value": chart_path} 형식으로 반환하세요.\n'
+                "chart_path는 저장된 차트 이미지 파일 경로여야 합니다."
             )
         else:
             result_contract = (
@@ -186,11 +204,26 @@ def _run_chat_session(
             raw = agent.chat(retry_prompt, **kwargs)
         except Exception as exc:
             raise RuntimeError(_friendly_error(exc)) from exc
-        result = _unwrap_result(raw)
+        result, meta = _unwrap_result(raw)
 
     _raise_if_error_response(result)
-    summary = _build_summary(result, getattr(agent, "last_code_executed", None))
-    return result, summary
+    code = getattr(agent, "last_code_executed", None)
+    if code:
+        meta["code"] = code
+
+    # ResponseParser가 value만 반환하므로 last_result의 plot dict도 확인한다.
+    last_result = getattr(agent, "last_result", None)
+    if not meta.get("chart_path") and isinstance(last_result, dict):
+        if str(last_result.get("type", "")).lower() == "plot":
+            chart_path = materialize_chart(last_result.get("value"))
+            if chart_path:
+                meta["chart_path"] = chart_path
+
+    chart_path = meta.get("chart_path") or materialize_chart(result)
+    if chart_path:
+        meta["chart_path"] = chart_path
+    summary = _build_summary(result, code, meta)
+    return result, summary, meta
 
 
 def _unique_table_name(file_name: str, index: int, used: set[str]) -> str:
@@ -233,6 +266,37 @@ def prepare_dataframe_for_ai(df: pd.DataFrame) -> pd.DataFrame:
         if str(out[col].dtype) == "string":
             out[col] = out[col].fillna("").astype(object)
     return out
+
+
+def exclude_total_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """합계·소계·총계 행을 제거한다 (모든 문자열 컬럼 검사)."""
+    if df is None or df.empty:
+        return df
+
+    exclude_mask = pd.Series(False, index=df.index)
+    for column in df.columns:
+        if pd.api.types.is_numeric_dtype(df[column]):
+            continue
+        exclude_mask |= df[column].map(is_total_label)
+
+    if not exclude_mask.any():
+        return df
+    return df.loc[~exclude_mask].reset_index(drop=True)
+
+
+def sum_metric_excluding_totals(df: pd.DataFrame, metric_col: str) -> float | None:
+    """소계/합계 행을 제외하고 수치 컬럼 합계를 구한다."""
+    if df is None or df.empty or metric_col not in df.columns:
+        return None
+
+    work = exclude_total_rows(prepare_dataframe_for_ai(df))
+    if work.empty:
+        return None
+
+    total = pd.to_numeric(work[metric_col], errors="coerce").sum(skipna=True)
+    if pd.isna(total):
+        return None
+    return float(total)
 
 
 def _is_hierarchical_column(series: pd.Series) -> bool:
@@ -360,18 +424,38 @@ def _is_retryable_response_error(result: Any) -> bool:
     )
 
 
-def _unwrap_result(raw: Any) -> Any:
+def _unwrap_result(raw: Any) -> tuple[Any, dict[str, Any]]:
+    meta: dict[str, Any] = {}
     if isinstance(raw, dict) and "value" in raw:
-        return raw["value"]
+        if str(raw.get("type", "")).lower() == "plot":
+            chart_path = materialize_chart(raw.get("value"))
+            if chart_path:
+                meta["chart_path"] = chart_path
+        return raw["value"], meta
     if SmartDataframe is not None and isinstance(raw, SmartDataframe):
         try:
-            return raw.dataframe
+            return raw.dataframe, meta
         except Exception:
-            return raw
-    return raw
+            return raw, meta
+    chart_path = materialize_chart(raw)
+    if chart_path:
+        meta["chart_path"] = chart_path
+    return raw, meta
 
 
-def _build_summary(result: Any, code: str | None) -> str:
+def _coerce_chart_path(value: Any) -> str | None:
+    """하위 호환용 — materialize_chart로 위임한다."""
+    return materialize_chart(value)
+
+
+def _build_summary(
+    result: Any,
+    code: str | None,
+    meta: dict[str, Any] | None = None,
+) -> str:
+    meta = meta or {}
+    if meta.get("chart_path"):
+        return "차트 결과를 생성했습니다."
     if isinstance(result, pd.DataFrame):
         return f"PandasAI 결과: {len(result):,}행 × {len(result.columns)}열"
     if _is_number(result):

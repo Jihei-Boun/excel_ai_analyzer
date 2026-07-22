@@ -7,14 +7,25 @@ from pathlib import Path
 
 import pandas as pd
 
-_UNNAMED_HEADER_RE = re.compile(r"^Unnamed:\s*\d+$", re.IGNORECASE)
+
+_UNNAMED_HEADER_RE = re.compile(r"^Unnamed(\s*:\s*\d+)?(_level_\d+)?$", re.IGNORECASE)
+_UNNAMED_TOKEN_RE = re.compile(r"^Unnamed", re.IGNORECASE)
 _MERGED_SUFFIX_RE = re.compile(r"^(.+)_(\d+)$")
+_COMPOUND_HEADER_RE = re.compile(r"^(.+)_(.+)$")
 
 
 def load_excel(path: str | Path, *, sheet_name: str | int = 0) -> pd.DataFrame:
     """엑셀 파일을 읽고 기본 전처리를 적용한다."""
-    df = pd.read_excel(path, sheet_name=sheet_name)
-    df = _apply_merged_header_names(path, sheet_name, df)
+    excel_path = Path(path)
+    header_depth = _detect_header_depth(excel_path, sheet_name)
+
+    if header_depth >= 2:
+        df = pd.read_excel(excel_path, sheet_name=sheet_name, header=[0, 1])
+        df = _flatten_two_level_headers(excel_path, sheet_name, df)
+    else:
+        df = pd.read_excel(excel_path, sheet_name=sheet_name)
+        df = _apply_merged_header_names(excel_path, sheet_name, df)
+
     return sanitize_dataframe(df)
 
 
@@ -44,9 +55,17 @@ def find_merged_header_pair(
 
 
 def merged_header_base(name: str) -> str:
-    """'비용명_2'처럼 병합 헤더 접미사가 붙은 컬럼명의 기본 이름을 반환한다."""
-    match = _MERGED_SUFFIX_RE.fullmatch(str(name))
-    return match.group(1) if match else str(name)
+    """병합/복합 헤더 컬럼명의 상위 이름을 반환한다.
+
+    예: '실행예산_2' → '실행예산', '실행예산_이월예산' → '실행예산'
+    """
+    text = str(name)
+    match = _MERGED_SUFFIX_RE.fullmatch(text)
+    if match:
+        return match.group(1)
+    if "_" in text:
+        return text.split("_", 1)[0]
+    return text
 
 
 def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
@@ -56,6 +75,8 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 def _preprocess(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = _flatten_multiindex_names(df.columns)
     df.columns = _propagate_unnamed_headers(df.columns)
     df.columns = _unique_column_names(df.columns)
     df = df.dropna(how="all").reset_index(drop=True)
@@ -64,6 +85,205 @@ def _preprocess(df: pd.DataFrame) -> pd.DataFrame:
         df[col] = _coerce_column(df[col])
 
     return df
+
+
+def _detect_header_depth(path: Path, sheet_name: str | int) -> int:
+    """2단 헤더(상위 병합 + 하위 세부분류)면 2, 아니면 1."""
+    if path.suffix.lower() not in {".xlsx", ".xlsm"}:
+        return 1
+
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        return 1
+
+    try:
+        workbook = load_workbook(path, read_only=False, data_only=True)
+        worksheet = (
+            workbook.worksheets[sheet_name]
+            if isinstance(sheet_name, int)
+            else workbook[sheet_name]
+        )
+        max_col = worksheet.max_column or 0
+        if max_col < 1:
+            workbook.close()
+            return 1
+
+        row1 = [_cell_text(worksheet.cell(1, col).value) for col in range(1, max_col + 1)]
+        row2 = [_cell_text(worksheet.cell(2, col).value) for col in range(1, max_col + 1)]
+
+        # 1행 병합 값을 구간에 반영한 뒤 판별
+        for merge_range in worksheet.merged_cells.ranges:
+            if (
+                merge_range.min_row == 1
+                and merge_range.max_row == 1
+                and merge_range.max_col > merge_range.min_col
+            ):
+                value = _cell_text(
+                    worksheet.cell(merge_range.min_row, merge_range.min_col).value
+                )
+                if not value:
+                    continue
+                for col in range(merge_range.min_col, merge_range.max_col + 1):
+                    index = col - 1
+                    if 0 <= index < len(row1):
+                        row1[index] = value
+
+        workbook.close()
+    except Exception:
+        return 1
+
+    meaningful_children = sum(
+        1
+        for parent, child in zip(row1, row2)
+        if child
+        and not _is_unnamed_header(child)
+        and not _looks_like_data_value(child)
+        and (not parent or parent != child)
+    )
+    # 상위 헤더가 있고 하위에 서로 다른 세부분류가 2개 이상이면 2단 헤더
+    if meaningful_children >= 2:
+        return 2
+    return 1
+
+
+def _flatten_two_level_headers(
+    path: Path,
+    sheet_name: str | int,
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """openpyxl로 1·2행을 읽어 parent_child 형태의 컬럼명을 만든다."""
+    parents, children = _read_header_rows(path, sheet_name, expected_cols=len(df.columns))
+    if not parents:
+        df = df.copy()
+        df.columns = _flatten_multiindex_names(df.columns)
+        return df
+
+    # pandas MultiIndex 길이보다 openpyxl 열이 길/짧을 수 있어 맞춤
+    width = len(df.columns)
+    parents = _pad_or_trim(parents, width)
+    children = _pad_or_trim(children, width)
+    parents = _forward_fill_names(parents)
+
+    names: list[str] = []
+    for parent, child in zip(parents, children):
+        names.append(_compose_header_name(parent, child))
+
+    result = df.copy()
+    result.columns = names
+    return result
+
+
+def _read_header_rows(
+    path: Path,
+    sheet_name: str | int,
+    *,
+    expected_cols: int,
+) -> tuple[list[str], list[str]]:
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        return [], []
+
+    try:
+        workbook = load_workbook(path, read_only=False, data_only=True)
+        worksheet = (
+            workbook.worksheets[sheet_name]
+            if isinstance(sheet_name, int)
+            else workbook[sheet_name]
+        )
+        max_col = max(expected_cols, worksheet.max_column or expected_cols)
+        parents = [_cell_text(worksheet.cell(1, col).value) for col in range(1, max_col + 1)]
+        children = [_cell_text(worksheet.cell(2, col).value) for col in range(1, max_col + 1)]
+
+        # 1행 병합 셀 값을 병합 구간에 전파
+        for merge_range in worksheet.merged_cells.ranges:
+            if merge_range.min_row != 1 or merge_range.max_row != 1:
+                continue
+            value = _cell_text(worksheet.cell(merge_range.min_row, merge_range.min_col).value)
+            if not value:
+                continue
+            for col in range(merge_range.min_col, merge_range.max_col + 1):
+                index = col - 1
+                if 0 <= index < len(parents):
+                    parents[index] = value
+
+        workbook.close()
+        return parents[:expected_cols], children[:expected_cols]
+    except Exception:
+        return [], []
+
+
+def _compose_header_name(parent: str, child: str) -> str:
+    parent = parent.strip()
+    child = child.strip()
+    parent_ok = bool(parent) and not _is_unnamed_header(parent)
+    child_ok = (
+        bool(child)
+        and not _is_unnamed_header(child)
+        and not _looks_like_data_value(child)
+    )
+
+    if parent_ok and child_ok:
+        if parent == child:
+            return parent
+        # 이미 parent_child 형태면 그대로
+        if child.startswith(f"{parent}_"):
+            return child
+        return f"{parent}_{child}"
+    if parent_ok:
+        return parent
+    if child_ok:
+        return child
+    return parent or child or "column"
+
+
+def _flatten_multiindex_names(columns: pd.Index) -> list[str]:
+    if not isinstance(columns, pd.MultiIndex):
+        return [str(column) for column in columns]
+
+    level0 = [_clean_header_token(value) for value in columns.get_level_values(0)]
+    level1 = [_clean_header_token(value) for value in columns.get_level_values(1)]
+    level0 = _forward_fill_names(level0)
+    return [_compose_header_name(parent, child) for parent, child in zip(level0, level1)]
+
+
+def _clean_header_token(value: object) -> str:
+    text = _cell_text(value)
+    if _is_unnamed_header(text) or _UNNAMED_TOKEN_RE.match(text):
+        return ""
+    return text
+
+
+def _forward_fill_names(names: list[str]) -> list[str]:
+    filled: list[str] = []
+    last = ""
+    for name in names:
+        text = name.strip()
+        if text and not _is_unnamed_header(text):
+            last = text
+            filled.append(text)
+        else:
+            filled.append(last)
+    return filled
+
+
+def _pad_or_trim(values: list[str], width: int) -> list[str]:
+    if len(values) >= width:
+        return values[:width]
+    return values + [""] * (width - len(values))
+
+
+def _looks_like_data_value(text: str) -> bool:
+    """헤더가 아니라 본문 값처럼 보이면 True."""
+    cleaned = text.replace(",", "").replace(" ", "")
+    if not cleaned:
+        return False
+    try:
+        float(cleaned)
+        return True
+    except ValueError:
+        return False
 
 
 def _apply_merged_header_names(
@@ -132,7 +352,9 @@ def _is_unnamed_header(name: str) -> bool:
         return True
     if name.startswith("column_"):
         return True
-    return bool(_UNNAMED_HEADER_RE.fullmatch(name))
+    if _UNNAMED_HEADER_RE.fullmatch(name):
+        return True
+    return bool(_UNNAMED_TOKEN_RE.match(name))
 
 
 def _unique_column_names(columns: pd.Index) -> list[str]:
@@ -208,3 +430,7 @@ def _cell_to_text(value: object) -> str:
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return str(value).strip()
+
+
+def _cell_text(value: object) -> str:
+    return _cell_to_text(value)
