@@ -46,6 +46,7 @@ def init_session_state() -> None:
         "last_filter_summary": "",
         "analysis_context_label": None,
         "_df_sanitized": False,
+        "theme": "dark",  # "dark" | "light"
     }
     for key, value in defaults.items():
         if key not in st.session_state:

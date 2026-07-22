@@ -40,10 +40,7 @@ def render_header() -> None:
                 reset_work_state(clear_chat=True)
                 st.rerun()
 
-    st.markdown(
-        '<hr style="border:none;border-top:1px solid #2a3347;margin:0 0 1rem 0;">',
-        unsafe_allow_html=True,
-    )
+    st.markdown('<hr class="app-divider">', unsafe_allow_html=True)
 
 
 def _file_status_label() -> str:

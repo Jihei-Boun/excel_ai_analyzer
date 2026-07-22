@@ -24,8 +24,33 @@ def _check_ollama(base_url: str) -> bool:
         return False
 
 
+_THEME_LABELS = {"dark": "다크", "light": "라이트"}
+_THEME_VALUES = {"다크": "dark", "라이트": "light"}
+
+
+def sync_theme_from_widget() -> None:
+    """위젯 상태가 있으면 테마를 먼저 동기화한다 (스타일 주입 전)."""
+    label = st.session_state.get("theme_radio")
+    if label in _THEME_VALUES:
+        st.session_state.theme = _THEME_VALUES[label]
+
+
 def render_sidebar() -> None:
     with st.sidebar:
+        st.markdown('<p class="sidebar-label">외형</p>', unsafe_allow_html=True)
+        current = st.session_state.get("theme", "dark")
+        if current not in _THEME_LABELS:
+            current = "dark"
+        chosen_label = st.radio(
+            "테마",
+            options=list(_THEME_LABELS.values()),
+            index=list(_THEME_LABELS).index(current),
+            horizontal=True,
+            label_visibility="collapsed",
+            key="theme_radio",
+        )
+        st.session_state.theme = _THEME_VALUES[chosen_label]
+
         st.markdown('<p class="sidebar-label">연결</p>', unsafe_allow_html=True)
 
         st.session_state.ollama_base_url = st.text_input(
