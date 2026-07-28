@@ -37,6 +37,16 @@ def english_numeric() -> pd.DataFrame:
     return pd.DataFrame({"Region": ["Seoul", "Busan"], "Revenue": [1000, 2000]})
 
 
+def sales_with_dates() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "판매일": pd.to_datetime(["2026-01-01", "2026-01-02", "2026-01-03"]),
+            "매출": [200000, 300000, 400000],
+            "지역": ["서울", "부산", "서울"],
+        }
+    )
+
+
 def no_total_rows() -> pd.DataFrame:
     return pd.DataFrame({"항목": ["A", "B", "C"], "금액": [10, 20, 30]})
 
@@ -186,3 +196,10 @@ def test_english_numeric_uses_generic_path() -> None:
     assert "문자형 컬럼 상위 값 (`Region`)" in text
     assert "전체 예산" not in text
     assert "예실대비표" not in text
+
+
+def test_datetime_column_is_excluded_from_numeric_stats() -> None:
+    text = build_file_summary(sales_with_dates(), file_name="sales_date.xlsx")
+    assert "수치형 컬럼: 1개" in text
+    assert "`매출`: 합 900,000 / 최소 200,000 / 최대 400,000" in text
+    assert "`판매일`: 합" not in text

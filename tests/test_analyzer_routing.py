@@ -406,3 +406,17 @@ def test_groupby_execution_total_not_sum_expense_codes() -> None:
     assert table["집행계_합계"].tolist() == [10_990_230, 5_523_600]
     assert 322 not in table["집행계_합계"].tolist()
     assert "10,990,230" in summary
+
+
+def test_groupby_shortcut_skips_topn_ranking_prompt() -> None:
+    """'상위 N개 ...'는 강제 그룹합이 아니라 일반 분석 경로로 보낸다."""
+    from core.analyzer import build_groupby_aggregate_table
+
+    df = pd.DataFrame(
+        {
+            "지역": ["서울", "서울", "부산", "대전"],
+            "매출": [100000, 200000, 300000, 400000],
+        }
+    )
+    result = build_groupby_aggregate_table(df, "상위 3개 매출 지역 보여줘")
+    assert result is None

@@ -996,7 +996,12 @@ def build_groupby_aggregate_table(
     if group_col is None or df is None or df.empty or group_col not in df.columns:
         return None
 
-    op = _match_aggregate_op(prompt) or "sum"
+    op = _match_aggregate_op(prompt)
+    # "상위 3개 매출 지역" 같은 랭킹 요청은 강제 그룹 합산하지 않고
+    # 일반 분석(필터/정렬/LLM) 경로로 넘긴다.
+    if op is None and not _is_explicit_groupby_prompt(prompt):
+        return None
+    op = op or "sum"
     metric_cols = [
         col
         for col in find_mentioned_numeric_columns(df, prompt)
@@ -1080,6 +1085,16 @@ def build_groupby_aggregate_table(
     if len(summary_bits) > SUMMARY_RANKING_BITS:
         summary += f" 외 {len(summary_bits) - SUMMARY_RANKING_BITS}개"
     return table, summary
+
+
+def _is_explicit_groupby_prompt(prompt: str) -> bool:
+    normalized = _normalize_text(prompt)
+    return (
+        "별" in prompt
+        or "그룹" in prompt
+        or "groupby" in normalized
+        or "groupby" in prompt.lower()
+    )
 
 
 def _is_budget_footer_label(value: object) -> bool:

@@ -26,7 +26,8 @@ def build_generic_summary(
     numeric_cols = [
         col
         for col in df.columns
-        if pd.to_numeric(df[col], errors="coerce").notna().any()
+        if not pd.api.types.is_datetime64_any_dtype(df[col])
+        and pd.to_numeric(df[col], errors="coerce").notna().any()
     ]
     text_cols = [col for col in df.columns if col not in numeric_cols]
 
