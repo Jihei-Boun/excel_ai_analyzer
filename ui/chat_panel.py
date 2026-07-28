@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import html
 import io
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -104,11 +105,19 @@ def _render_chat_history() -> None:
     for message in messages:
         role = message["role"]
         css = "chat-user" if role == "user" else "chat-assistant"
-        st.markdown(f'<div class="{css}">{message["content"]}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="{css}">{_format_chat_html(message["content"])}</div>',
+            unsafe_allow_html=True,
+        )
 
         if message.get("filter_summary"):
             st.markdown(
                 f'<div class="filter-ok">✓ {message["filter_summary"]}</div>',
+                unsafe_allow_html=True,
+            )
+        if message.get("filter_note"):
+            st.markdown(
+                f'<div class="filter-ok">↻ {html.escape(str(message["filter_note"]))}</div>',
                 unsafe_allow_html=True,
             )
 
@@ -138,6 +147,38 @@ def _render_chat_history() -> None:
         if show_code and code:
             with st.expander("실행 코드", expanded=False):
                 st.code(code, language="python")
+
+
+def _format_chat_html(content: object) -> str:
+    """채팅 본문을 HTML로 안전하게 변환한다 (줄바꿈·강조·목록)."""
+    text = html.escape(str(content or ""))
+    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+
+    lines = text.split("\n")
+    rendered: list[str] = []
+    in_list = False
+    for line in lines:
+        bullet = re.match(r"^[\*\-•]\s+(.*)$", line)
+        heading = re.match(r"^###\s+(.*)$", line)
+        if bullet:
+            if not in_list:
+                rendered.append("<ul>")
+                in_list = True
+            rendered.append(f"<li>{bullet.group(1)}</li>")
+            continue
+        if in_list:
+            rendered.append("</ul>")
+            in_list = False
+        if heading:
+            rendered.append(f"<div><strong>{heading.group(1)}</strong></div>")
+        elif line.strip() == "":
+            rendered.append("<br>")
+        else:
+            rendered.append(f"{line}<br>")
+    if in_list:
+        rendered.append("</ul>")
+    return "".join(rendered)
 
 
 def _render_chart_image(path: Path) -> None:

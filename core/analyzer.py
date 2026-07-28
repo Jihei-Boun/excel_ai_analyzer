@@ -7,6 +7,7 @@ import re
 import pandas as pd
 
 from core.chart_utils import generate_fallback_chart, generate_multi_file_chart
+from core.excel_loader import find_merged_header_pair, merged_header_base
 from core.pandasai_config import chat, chat_multi, prepare_dataframe_for_ai
 
 _COMPLEX_KEYWORDS = (
@@ -65,6 +66,20 @@ def run_analysis(
         chart_path = generate_fallback_chart(df, prompt)
         if chart_path:
             return None, "차트 결과를 생성했습니다.", {"chart_path": chart_path}
+
+    # 파일 요약은 LLM 없이 규칙 기반으로 작성한다.
+    from core.file_summary import build_file_summary, is_summary_request
+
+    if is_summary_request(prompt):
+        summary = build_file_summary(df)
+        return None, summary, {}
+
+    # '비용명별 실행예산 합계' 등 그룹 집계는 LLM 전에 처리한다.
+    if output_type != "plot":
+        grouped = build_groupby_aggregate_table(df, prompt)
+        if grouped is not None:
+            table, summary = grouped
+            return table, summary, {}
 
     # 값 필터를 리스트 시드보다 먼저 적용한다 (예: 비용명 121만).
     if output_type == "dataframe" and not _is_complex_analysis(prompt):
@@ -165,6 +180,12 @@ def run_multi_analysis(
         chart_path = generate_multi_file_chart(named_dfs, prompt)
         if chart_path:
             return None, "차트 결과를 생성했습니다.", {"chart_path": chart_path}
+
+    from core.file_summary import build_multi_file_summary, is_summary_request
+
+    if is_summary_request(prompt):
+        summary = build_multi_file_summary(named_dfs)
+        return None, summary, {}
 
     metric_aggregate = is_metric_aggregate_request(prompt, named_dfs=named_dfs)
     if output_type == "dataframe" and metric_aggregate:
@@ -385,6 +406,8 @@ def _build_list_seed_frame(df: pd.DataFrame, prompt: str) -> pd.DataFrame | None
 
 def _is_complex_analysis(prompt: str) -> bool:
     """집계·순위·시각화처럼 단순 값 필터로 해결할 수 없는 요청인지 판별한다."""
+    if detect_aggregate_op(prompt) is not None:
+        return True
     lowered = prompt.lower()
     return any(keyword in lowered for keyword in _COMPLEX_KEYWORDS)
 
@@ -396,30 +419,45 @@ def _filter_by_mentioned_value(
     """요청에 명시된 실제 셀 값으로 행을 찾는 범용 폴백.
 
     문자·숫자 컬럼 모두 검색한다. 숫자 코드(121 등)는 앞뒤가 숫자가 아닐 때만 매칭한다.
+    셀 값이 프롬프트에 그대로 없어도, '인건비' → '내부인건비'처럼
+    프롬프트 핵심어가 셀 값에 포함되면 매칭한다.
     """
     prepared = prepare_dataframe_for_ai(df)
     normalized_prompt = _normalize_text(prompt)
+    prompt_tokens = _filter_tokens_from_prompt(prompt)
     preferred_columns = _mentioned_columns(prepared, normalized_prompt)
     matches: list[tuple[int, int, str, object]] = []
 
     search_columns = preferred_columns or list(prepared.columns)
-    _collect_value_matches(prepared, search_columns, normalized_prompt, matches)
+    _collect_value_matches(
+        prepared,
+        search_columns,
+        normalized_prompt,
+        prompt_tokens,
+        matches,
+    )
 
     if not matches and preferred_columns:
         other_columns = [c for c in prepared.columns if c not in preferred_columns]
-        _collect_value_matches(prepared, other_columns, normalized_prompt, matches)
+        _collect_value_matches(
+            prepared,
+            other_columns,
+            normalized_prompt,
+            prompt_tokens,
+            matches,
+        )
 
     if not matches:
         return None
 
-    # exact(1) 우선, 그다음 매칭 문자열 길이
-    best_exact = max(exact for exact, _, _, _ in matches)
-    candidates = [m for m in matches if m[0] == best_exact]
+    # priority 높은 것 우선, 그다음 매칭 키 길이
+    best_priority = max(priority for priority, _, _, _ in matches)
+    candidates = [m for m in matches if m[0] == best_priority]
     longest = max(length for _, length, _, _ in candidates)
 
     mask = pd.Series(False, index=prepared.index)
-    for exact, length, column, value in candidates:
-        if exact != best_exact or length != longest:
+    for priority, length, column, value in candidates:
+        if priority != best_priority or length != longest:
             continue
         mask |= _column_equals(prepared[column], value)
 
@@ -427,10 +465,48 @@ def _filter_by_mentioned_value(
     return result.reset_index(drop=True) if not result.empty else None
 
 
+def resolve_filter_source(
+    full_df: pd.DataFrame,
+    filtered_df: pd.DataFrame | None,
+    prompt: str,
+    *,
+    keep_filter_for_aggregate: bool = True,
+) -> tuple[pd.DataFrame, bool]:
+    """필터된 데이터에 요청 값이 없으면 원본으로 되돌려 (source, reset)을 반환한다.
+
+    reset=True이면 호출 측에서 필터 세션 상태를 비워야 한다.
+    """
+    if full_df is None or full_df.empty:
+        return full_df, False
+
+    if keep_filter_for_aggregate and detect_aggregate_op(prompt) is not None:
+        if filtered_df is not None and len(filtered_df) > 0:
+            return filtered_df, False
+        return full_df, False
+
+    if _expects_plot(prompt):
+        if filtered_df is not None and len(filtered_df) > 0:
+            return filtered_df, False
+        return full_df, False
+
+    if filtered_df is None or len(filtered_df) == 0:
+        return full_df, False
+
+    on_filtered = _filter_by_mentioned_value(filtered_df, prompt)
+    on_full = _filter_by_mentioned_value(full_df, prompt)
+    if (on_filtered is None or on_filtered.empty) and (
+        on_full is not None and not on_full.empty
+    ):
+        return full_df, True
+
+    return filtered_df, False
+
+
 def _collect_value_matches(
     df: pd.DataFrame,
     columns: list,
     normalized_prompt: str,
+    prompt_tokens: list[str],
     matches: list[tuple[int, int, str, object]],
 ) -> None:
     for column in columns:
@@ -442,11 +518,65 @@ def _collect_value_matches(
             normalized = _normalize_text(text)
             if _is_aggregate_label_false_positive(normalized, normalized_prompt, df):
                 continue
-            if not _value_mentioned_in_prompt(normalized, normalized_prompt):
+            scored = _score_value_prompt_match(
+                normalized,
+                normalized_prompt,
+                prompt_tokens,
+            )
+            if scored is None:
                 continue
-            exact = 1 if _is_exact_value_mention(normalized, normalized_prompt) else 0
-            matches.append((exact, len(normalized), str(column), value))
+            priority, key_length = scored
+            matches.append((priority, key_length, str(column), value))
 
+
+def _score_value_prompt_match(
+    normalized_value: str,
+    normalized_prompt: str,
+    prompt_tokens: list[str],
+) -> tuple[int, int] | None:
+    """(priority, key_length). priority: 2=완전일치, 1=값이 프롬프트에 포함, 0=토큰이 값에 포함."""
+    if not normalized_value:
+        return None
+
+    if normalized_value.isdigit():
+        if not re.search(
+            rf"(?<!\d){re.escape(normalized_value)}(?!\d)",
+            normalized_prompt,
+        ):
+            return None
+        return (2, len(normalized_value))
+
+    if len(normalized_value) >= 2 and normalized_value in normalized_prompt:
+        priority = 2 if _is_exact_value_mention(normalized_value, normalized_prompt) else 1
+        return (priority, len(normalized_value))
+
+    # '인건비' → '내부인건비' 처럼 프롬프트 핵심어가 셀 값에 포함된 경우
+    best_token_len = 0
+    for token in prompt_tokens:
+        if len(token) < 2 or len(token) > len(normalized_value):
+            continue
+        if token == normalized_value:
+            return (2, len(token))
+        if token in normalized_value:
+            best_token_len = max(best_token_len, len(token))
+    if best_token_len >= 2:
+        return (0, best_token_len)
+    return None
+
+
+def _filter_tokens_from_prompt(prompt: str) -> list[str]:
+    """필터 검색용 핵심 토큰을 프롬프트에서 뽑는다."""
+    text = prompt.strip()
+    text = re.split(r"[,\n.?!]", text)[0]
+    for noise in sorted(_PROMPT_NOISE, key=len, reverse=True):
+        text = re.sub(re.escape(noise), " ", text, flags=re.IGNORECASE)
+    tokens = re.findall(r"[0-9A-Za-z가-힣]+", text)
+    normalized_tokens = [_normalize_text(token) for token in tokens]
+    return [
+        token
+        for token in normalized_tokens
+        if len(token) >= 2 and token not in {_normalize_text(n) for n in _PROMPT_NOISE}
+    ]
 
 def _cell_match_text(value: object) -> str:
     if value is None:
@@ -609,6 +739,17 @@ def _match_aggregate_op(prompt: str) -> str | None:
     """프롬프트에서 집계 연산 종류를 찾는다 (차트 요청 포함)."""
     lowered = prompt.lower()
     normalized = _normalize_text(prompt)
+    # '실행예산의 합', '집행계 합'처럼 '합' 단독 표현도 합계로 인식한다.
+    # (종합/통합처럼 단어 내부의 '합'은 제외)
+    if re.search(r"(?:^|[\s(])합(?:계|산)?(?:을|를|은|는|이|가)?(?:$|[\s)])", prompt):
+        return "sum"
+    if re.search(r"의\s*합(?:계|산)?(?:을|를|은|는|이|가)?", prompt):
+        return "sum"
+    if re.search(r"별\s*합(?:계|산)?(?:을|를|은|는|이|가)?", prompt):
+        return "sum"
+    if re.search(r"(?:^|[^가-힣a-z0-9])합(?:계|산)?(?:을|를|은|는|이|가)$", normalized):
+        return "sum"
+
     for keyword, op in sorted(_AGGREGATE_OPS, key=lambda item: len(item[0]), reverse=True):
         key_l = keyword.lower()
         key_n = _normalize_text(keyword)
@@ -637,23 +778,36 @@ def extract_matched_detail(df: pd.DataFrame, prompt: str) -> tuple[str, str] | N
     """요청 문구에 등장하는 실제 셀 값과 컬럼명을 (컬럼, 값)으로 반환한다."""
     prepared = prepare_dataframe_for_ai(df)
     normalized_prompt = _normalize_text(prompt)
+    prompt_tokens = _filter_tokens_from_prompt(prompt)
     preferred_columns = _mentioned_columns(prepared, normalized_prompt)
     matches: list[tuple[int, int, str, object]] = []
 
     search_columns = preferred_columns or list(prepared.columns)
-    _collect_value_matches(prepared, search_columns, normalized_prompt, matches)
+    _collect_value_matches(
+        prepared,
+        search_columns,
+        normalized_prompt,
+        prompt_tokens,
+        matches,
+    )
     if not matches and preferred_columns:
         other_columns = [c for c in prepared.columns if c not in preferred_columns]
-        _collect_value_matches(prepared, other_columns, normalized_prompt, matches)
+        _collect_value_matches(
+            prepared,
+            other_columns,
+            normalized_prompt,
+            prompt_tokens,
+            matches,
+        )
 
     if not matches:
         return None
 
-    best_exact = max(exact for exact, _, _, _ in matches)
-    candidates = [m for m in matches if m[0] == best_exact]
+    best_priority = max(priority for priority, _, _, _ in matches)
+    candidates = [m for m in matches if m[0] == best_priority]
     longest = max(length for _, length, _, _ in candidates)
-    for exact, length, column, value in candidates:
-        if exact == best_exact and length == longest:
+    for priority, length, column, value in candidates:
+        if priority == best_priority and length == longest:
             return column, _cell_match_text(value)
     return None
 
@@ -714,46 +868,263 @@ def find_mentioned_numeric_column(df: pd.DataFrame, prompt: str) -> str | None:
 
 
 def find_mentioned_numeric_columns(df: pd.DataFrame, prompt: str) -> list[str]:
-    """프롬프트에 언급된 수치형 컬럼을 모두 찾는다 (긴 이름 우선, 부분문자열 중복 제거)."""
+    """프롬프트에 언급된 수치형 컬럼을 모두 찾는다 (금액 컬럼·합계열 우선)."""
     normalized_prompt = _normalize_text(prompt)
-    scored: list[tuple[int, str]] = []
+    group_col = find_groupby_column(df, prompt)
+    group_norms = set()
+    if group_col:
+        group_norms.add(_normalize_text(str(group_col)))
+        group_norms.add(_normalize_text(merged_header_base(str(group_col))))
+
+    scored: list[tuple[int, int, str]] = []
     for column in df.columns:
         coerced = pd.to_numeric(df[column], errors="coerce")
         if not coerced.notna().any() and not pd.api.types.is_numeric_dtype(df[column]):
             continue
-        normalized = _normalize_text(str(column))
-        if len(normalized) >= 2 and normalized in normalized_prompt:
-            scored.append((len(normalized), column))
+        col_name = str(column)
+        col_norm = _normalize_text(col_name)
+        if col_norm in group_norms or _normalize_text(merged_header_base(col_name)) in group_norms:
+            continue
 
-    if not scored:
-        # 언급이 없으면 프롬프트의 컬럼명 부분일치만 재시도 (기존 단일 컬럼 경로와 동일)
-        mentioned = _mentioned_columns(df, normalized_prompt)
-        for column in mentioned:
-            if column not in df.columns:
-                continue
-            coerced = pd.to_numeric(df[column], errors="coerce")
-            if coerced.notna().any() or pd.api.types.is_numeric_dtype(df[column]):
-                scored.append((len(_normalize_text(str(column))), column))
+        match_len = _column_prompt_match_length(col_name, normalized_prompt)
+        if match_len <= 0:
+            continue
+
+        amount_bonus = 100 if _is_amount_metric_column(col_name) else 0
+        total_bonus = 0
+        wants_total = any(k in normalized_prompt for k in ("합계", "합을", "합산", "의합", "총합"))
+        if wants_total and (
+            col_norm.endswith("합계") or col_norm.endswith("_합계")
+        ):
+            total_bonus = 50
+        code_penalty = -120 if _looks_like_code_metric_column(df, column) else 0
+        scored.append((amount_bonus + total_bonus + code_penalty, match_len, column))
 
     if not scored:
         return []
 
-    # 같은 길이면 프롬프트에 먼저 나온 컬럼을 앞에 둔다
-    def prompt_pos(column: str) -> int:
-        pos = normalized_prompt.find(_normalize_text(str(column)))
-        return pos if pos >= 0 else 10**9
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    best_score = scored[0][0]
+    top = [item for item in scored if item[0] == best_score]
+    top.sort(key=lambda item: item[1], reverse=True)
 
-    scored.sort(key=lambda item: (-item[0], prompt_pos(item[1])))
     selected: list[str] = []
-    selected_norms: list[str] = []
-    for _length, column in scored:
-        norm = _normalize_text(str(column))
-        # 이미 고른 더 긴 이름에 포함되면 건너뛴다 (예: 예산 ⊂ 계획예산)
-        if any(norm != prev and norm in prev for prev in selected_norms):
+    for _score, _match_len, column in top:
+        base = _normalize_text(merged_header_base(str(column)))
+        if any(base == _normalize_text(merged_header_base(prev)) for prev in selected):
             continue
         selected.append(column)
-        selected_norms.append(norm)
     return selected
+
+
+def find_groupby_column(df: pd.DataFrame, prompt: str) -> str | None:
+    """'비용명별', '비목분류 별로'처럼 그룹 기준 컬럼을 찾는다."""
+    if df is None or df.empty or not prompt:
+        return None
+
+    match = re.search(r"([0-9A-Za-z가-힣]+)\s*별(?:로)?", prompt)
+    if not match:
+        return None
+
+    key = match.group(1)
+    key_norm = _normalize_text(key)
+    if len(key_norm) < 2:
+        return None
+
+    # 병합 헤더 쌍이면 명칭(오른쪽)을 그룹 키로 쓴다 (비용명 코드 대신 비용명_2)
+    pair = find_merged_header_pair(df.columns, key)
+    if pair:
+        return pair[1]
+
+    exact: list[str] = []
+    partial: list[tuple[int, str]] = []
+    for column in df.columns:
+        name = str(column)
+        norm = _normalize_text(name)
+        base = _normalize_text(merged_header_base(name))
+        if norm == key_norm or base == key_norm:
+            exact.append(name)
+        elif key_norm in norm or key_norm in base:
+            partial.append((len(norm), name))
+
+    if exact:
+        # 문자 라벨 컬럼을 코드형 숫자 컬럼보다 선호
+        exact.sort(
+            key=lambda col: (
+                0 if pd.api.types.is_numeric_dtype(df[col]) else 1,
+                len(str(col)),
+            ),
+            reverse=True,
+        )
+        return exact[0]
+    if partial:
+        partial.sort(reverse=True)
+        return partial[0][1]
+    return None
+
+
+def build_groupby_aggregate_table(
+    df: pd.DataFrame,
+    prompt: str,
+) -> tuple[pd.DataFrame, str] | None:
+    """'비용명별 집행계 합계'처럼 그룹별 집계 표를 만든다.
+
+    '비목분류별 계획예산'처럼 합계 단어가 없어도 X별 Y 요청이면 합산으로 처리한다.
+    """
+    group_col = find_groupby_column(df, prompt)
+    if group_col is None or df is None or df.empty or group_col not in df.columns:
+        return None
+
+    op = _match_aggregate_op(prompt) or "sum"
+    metric_cols = [
+        col
+        for col in find_mentioned_numeric_columns(df, prompt)
+        if col != group_col and not _looks_like_code_metric_column(df, col)
+    ]
+    if not metric_cols:
+        return None
+
+    from core.pandasai_config import (
+        exclude_total_rows,
+        is_total_label,
+        prepare_dataframe_for_ai,
+        sum_metric_excluding_totals,
+    )
+
+    work = exclude_total_rows(prepare_dataframe_for_ai(df))
+    if work.empty or group_col not in work.columns:
+        return None
+
+    op_name, reduce = _aggregate_reducer(op)
+    rows: list[dict[str, object]] = []
+    summary_bits: list[str] = []
+
+    label_series = work[group_col].map(_cell_match_text)
+    work = work.copy()
+    work["_group_label"] = label_series
+    work = work[work["_group_label"].astype(bool)]
+    if work.empty:
+        return None
+
+    # 파일에 처음 등장하는 순서 유지 (가나다·금액 정렬 금지)
+    ordered_labels: list[str] = []
+    seen_labels: set[str] = set()
+    for label in work["_group_label"].tolist():
+        text = str(label)
+        if not text or text in seen_labels or is_total_label(text):
+            continue
+        if _is_budget_footer_label(text):
+            continue
+        seen_labels.add(text)
+        ordered_labels.append(text)
+
+    for label in ordered_labels:
+        group = work.loc[work["_group_label"] == label]
+        row: dict[str, object] = {str(group_col): label}
+        for metric_col in metric_cols:
+            resolved = _resolve_metric_column(group, metric_col) or metric_col
+            if resolved not in group.columns:
+                continue
+            if op == "sum":
+                value = sum_metric_excluding_totals(group, resolved)
+            else:
+                value = reduce(pd.to_numeric(group[resolved], errors="coerce"))
+            if value is None or pd.isna(value):
+                continue
+            row[str(metric_col)] = value
+        if len(row) <= 1:
+            continue
+        rows.append(row)
+
+    if not rows:
+        return None
+
+    table = pd.DataFrame(rows)
+    ordered = [str(group_col)] + [c for c in metric_cols if c in table.columns]
+    table = table[ordered + [c for c in table.columns if c not in ordered]].reset_index(drop=True)
+
+    for _, row in table.iterrows():
+        metric_parts = [
+            f"{col} {op_name}: {float(row[col]):,.0f}"
+            for col in metric_cols
+            if col in table.columns and pd.notna(row[col])
+        ]
+        if metric_parts:
+            summary_bits.append(f"{row[str(group_col)]} → " + " / ".join(metric_parts))
+
+    summary = f"{group_col}별 {op_name} — " + " | ".join(summary_bits[:8])
+    if len(summary_bits) > 8:
+        summary += f" 외 {len(summary_bits) - 8}개"
+    return table, summary
+
+
+def _is_budget_footer_label(value: object) -> bool:
+    """내부흡수액·외부유출액처럼 비목 집계에서 제외할 하단 요약 라벨인지."""
+    text = _cell_match_text(value)
+    if not text:
+        return False
+    compact = _normalize_text(text)
+    return compact in {"내부흡수액", "외부유출액"}
+
+
+def _column_prompt_match_length(column: str, normalized_prompt: str) -> int:
+    """컬럼명·세그먼트가 프롬프트에 있으면 매칭 길이를 반환한다."""
+    generic_parts = {"합계", "합", "계", "평균", "total", "sum", "avg", "mean"}
+    col_norm = _normalize_text(column)
+    if len(col_norm) >= 2 and col_norm in normalized_prompt:
+        return len(col_norm)
+
+    parts = [p for p in re.split(r"[_\s]+", str(column)) if p]
+    best = 0
+    for part in parts:
+        part_norm = _normalize_text(part)
+        if len(part_norm) < 2 or part_norm in generic_parts:
+            continue
+        if part_norm in normalized_prompt:
+            best = max(best, len(part_norm))
+
+    base = _normalize_text(merged_header_base(str(column)))
+    if len(base) >= 2 and base not in generic_parts and base in normalized_prompt:
+        best = max(best, len(base))
+    return best
+
+
+_AMOUNT_METRIC_HINTS = (
+    "예산",
+    "금액",
+    "합계",
+    "실적",
+    "집행",
+    "수량",
+    "단가",
+    "차액",
+    "잔액",
+    "누계",
+    "가집행",
+)
+
+
+def _is_amount_metric_column(name: str) -> bool:
+    normalized = _normalize_text(str(name))
+    return any(hint in normalized for hint in _AMOUNT_METRIC_HINTS)
+
+
+def _looks_like_code_metric_column(df: pd.DataFrame, column: object) -> bool:
+    """비용명(121, 201)처럼 코드성 수치 컬럼인지 판별한다."""
+    name = str(column)
+    if not pd.api.types.is_numeric_dtype(df[column]):
+        return False
+    norm = _normalize_text(name)
+    base = _normalize_text(merged_header_base(name))
+    code_hints = ("코드", "번호", "code", "비용명", "세목")
+    name_looks_code = any(hint in norm or hint == base for hint in code_hints)
+    if not name_looks_code:
+        return False
+    sample = pd.to_numeric(df[column], errors="coerce").dropna().head(20)
+    if sample.empty:
+        return True
+    ints = sample.map(lambda v: float(v).is_integer() and abs(float(v)) < 10_000)
+    return bool(ints.mean() > 0.8)
 
 
 def format_context_label(label: str | None) -> str:
@@ -897,7 +1268,17 @@ def build_context_aggregate_table(
         return None
 
     metric_cols = find_mentioned_numeric_columns(df, prompt)
+    # 코드성 수치(비용명 121 등)는 금액 합계에 쓰지 않는다.
+    metric_cols = [
+        col
+        for col in metric_cols
+        if not _looks_like_code_metric_column(df, col)
+    ]
     if not metric_cols:
+        return None
+
+    # '비용명별 …' 요청은 그룹 집계 경로를 우선한다.
+    if find_groupby_column(df, prompt) is not None:
         return None
 
     op_name, reduce = _aggregate_reducer(op)

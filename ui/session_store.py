@@ -5,10 +5,10 @@ from __future__ import annotations
 import streamlit as st
 
 RECOMMENDED_PROMPTS = (
+    "파일을 요약해줘",
     "각 컬럼의 데이터 타입과 결측치 개수를 알려줘",
     "첫 번째 숫자형 컬럼의 합계를 구해줘",
     "범주형 컬럼별 행 개수를 표로 보여줘",
-    "숫자형 컬럼들의 기초 통계를 보여줘",
 )
 MULTI_FILE_PROMPTS = (
     "각 파일의 행 수와 컬럼 목록을 비교해줘",
@@ -45,6 +45,8 @@ def init_session_state() -> None:
         "chat_input_nonce": 0,
         "last_filter_summary": "",
         "analysis_context_label": None,
+        "last_aggregate_df": None,
+        "last_analysis_prompt": "",
         "_df_sanitized": False,
         "theme": "dark",  # "dark" | "light"
         "show_analysis_code": False,
@@ -63,6 +65,8 @@ def reset_work_state(*, clear_chat: bool = True) -> None:
     st.session_state.active_operation = None
     st.session_state.last_filter_summary = ""
     st.session_state.analysis_context_label = None
+    st.session_state.last_aggregate_df = None
+    st.session_state.last_analysis_prompt = ""
     if clear_chat:
         st.session_state.chat_messages = []
         st.session_state.pending_prompt = ""

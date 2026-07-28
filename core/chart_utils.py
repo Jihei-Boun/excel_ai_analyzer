@@ -106,17 +106,22 @@ def generate_fallback_chart(df: pd.DataFrame, prompt: str = "") -> str | None:
 
     labels = work[cat_col].astype(str).fillna("")
     values = pd.to_numeric(work[num_col], errors="coerce")
-    plot_df = (
-        pd.DataFrame({"label": labels, "value": values, "_order": range(len(work))})
-        .dropna(subset=["value"])
-        .groupby("label", as_index=False)
-        .agg(value=("value", "sum"), _order=("_order", "min"))
-    )
+    plot_df = pd.DataFrame({"label": labels, "value": values, "_order": range(len(work))})
+    plot_df = plot_df.dropna(subset=["value"])
+
+    # 이미 집계된 표(행마다 다른 라벨)는 재합산하지 않는다
+    if plot_df["label"].nunique() == len(plot_df):
+        plot_df = plot_df.sort_values("_order").head(20)
+    else:
+        plot_df = (
+            plot_df.groupby("label", as_index=False)
+            .agg(value=("value", "sum"), _order=("_order", "min"))
+            .sort_values("_order")
+            .head(20)
+        )
     if plot_df.empty:
         return None
 
-    # 업로드·입력 순서 유지 (값 크기로 재정렬하지 않음)
-    plot_df = plot_df.sort_values("_order").head(20)
     x_labels = plot_df["label"].astype(str).tolist()
     y_values = plot_df["value"].astype(float).tolist()
 
@@ -274,11 +279,15 @@ def _pick_chart_columns(
     df: pd.DataFrame,
     prompt: str,
 ) -> tuple[str | None, str | None]:
-    normalized_prompt = re.sub(r"\s+", "", prompt).lower()
+    from core.analyzer import (
+        _looks_like_code_metric_column,
+        find_mentioned_numeric_columns,
+    )
 
     numeric_cols: list[str] = []
     for col in df.columns:
-        if pd.to_numeric(df[col], errors="coerce").notna().any():
+        coerced = pd.to_numeric(df[col], errors="coerce")
+        if coerced.notna().any() and not _looks_like_code_metric_column(df, col):
             numeric_cols.append(col)
 
     cat_cols = [
@@ -292,6 +301,14 @@ def _pick_chart_columns(
         )
     ]
 
+    # 프롬프트에 수치 컬럼이 있으면 우선
+    mentioned_nums = [
+        col for col in find_mentioned_numeric_columns(df, prompt) if col in numeric_cols
+    ]
+    num_col = mentioned_nums[0] if mentioned_nums else (numeric_cols[0] if numeric_cols else None)
+
+    normalized_prompt = re.sub(r"\s+", "", prompt).lower()
+
     def _mentioned(columns: list[str]) -> str | None:
         scored: list[tuple[int, str]] = []
         for column in columns:
@@ -303,11 +320,13 @@ def _pick_chart_columns(
         scored.sort(reverse=True)
         return scored[0][1]
 
-    num_col = _mentioned(numeric_cols) or (numeric_cols[0] if numeric_cols else None)
     cat_col = _mentioned(cat_cols) or (cat_cols[0] if cat_cols else None)
 
+    # 집계 표(범주 1열 + 금액 1열)면 첫 문자열·첫 금액 열
+    if len(numeric_cols) == 1 and cat_cols and num_col is None:
+        num_col = numeric_cols[0]
     if cat_col is None and num_col is not None:
-        for col in df.columns:
+        for col in cat_cols:
             if col != num_col:
                 cat_col = col
                 break

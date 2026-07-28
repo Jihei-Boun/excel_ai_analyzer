@@ -16,6 +16,7 @@ from core.analyzer import (
     detect_aggregate_op,
     extract_matched_detail,
     is_metric_aggregate_request,
+    resolve_filter_source,
 )
 
 
@@ -39,11 +40,13 @@ def test_list_and_complex_routing_flags() -> None:
     assert _is_list_request("항목 리스트로 뽑아줘") is True
     assert _expects_dataframe("표로 보여줘") is True
     assert _is_complex_analysis("상위 10개 정렬") is True
+    assert _is_complex_analysis("비용명별 실행예산의 합을 보여줘") is True
     assert _is_complex_analysis("연구활동비 보여줘") is False
 
 
 def test_detect_aggregate_op() -> None:
     assert detect_aggregate_op("계획예산 합계 구해줘") == "sum"
+    assert detect_aggregate_op("비용명별 실행예산의 합을 보여줘") == "sum"
     assert detect_aggregate_op("평균을 알려줘") == "mean"
     assert detect_aggregate_op("목록만 보여줘") is None
 
@@ -54,6 +57,10 @@ def test_chart_prompt_skips_aggregate_and_routes_to_plot() -> None:
     assert _resolve_output_type(prompt) == "plot"
     # '종합을' 안의 '합을' 오탐으로 집계 단축되면 안 됨
     assert detect_aggregate_op(prompt) is None
+
+
+def test_detect_aggregate_op_does_not_match_compound_words() -> None:
+    assert detect_aggregate_op("실행예산 통합표를 보여줘") is None
 
 
 def test_filter_by_mentioned_value_and_detail() -> None:
@@ -222,9 +229,131 @@ def test_chart_from_aggregate_table_uses_same_totals() -> None:
     assert path is not None
 
 
+def test_chart_follow_up_uses_aggregate_table_not_raw_codes() -> None:
+    """'차트로 보여줘' 후속 요청은 집계 표(계획예산)를 쓰고 비용명 코드를 쓰지 않는다."""
+    from core.analyzer import build_groupby_aggregate_table
+    from core.chart_utils import _pick_chart_columns
+
+    raw = pd.DataFrame(
+        {
+            "비목분류": ["내부인건비", "내부인건비", "연구활동비", "간접비"],
+            "비용명": [121, 201, 146, 123],
+            "비용명_2": ["내부인건비", "계약직내부인건비", "연구용SW", "간접비"],
+            "계획예산": [7_000_000, 10_914_000, 4_800_000, 10_839_000],
+        }
+    )
+    prior = "비목분류별 계획예산의 합을 보여줘"
+    grouped = build_groupby_aggregate_table(raw, prior)
+    assert grouped is not None
+    table, _ = grouped
+
+    cat, num = _pick_chart_columns(table, prior)
+    assert cat == "비목분류"
+    assert num == "계획예산"
+    assert table["계획예산"].max() > 1_000_000
+
+    # 원본+차트-only 프롬프트면 코드 컬럼을 고르지 않도록 집계 표를 써야 함
+    wrong_cat, wrong_num = _pick_chart_columns(raw, "차트로 보여줘")
+    assert wrong_num == "계획예산" or wrong_num != "비용명"
+
+
 def test_total_row_filter_still_works_when_explicitly_requested() -> None:
     df = _budget_sample_df()
     filtered = _filter_by_mentioned_value(df, "합계 행만 보여줘")
     assert filtered is not None
     assert len(filtered) == 1
     assert filtered.iloc[0]["비목분류"] == "합 계"
+
+
+def test_partial_value_match_ingunbi() -> None:
+    """'인건비'처럼 짧은 표현도 '내부인건비' 행에 매칭된다."""
+    df = pd.DataFrame(
+        {
+            "비목분류": ["내부인건비", "내부인건비", "연구활동비"],
+            "비용명_2": ["내부인건비", "계약직내부인건비", "국내여비"],
+            "집행계_합계": [100, 50, 10],
+        }
+    )
+    filtered = _filter_by_mentioned_value(df, "인건비만 보여줘")
+    assert filtered is not None
+    assert len(filtered) == 2
+    assert set(filtered["비용명_2"].tolist()) == {"내부인건비", "계약직내부인건비"}
+
+
+def test_resolve_filter_source_falls_back_to_full_data() -> None:
+    """이전 필터에 없는 값을 요청하면 원본 데이터로 전환한다."""
+    full = pd.DataFrame(
+        {
+            "비용명_2": ["국내여비", "내부인건비", "계약직내부인건비", "회의비"],
+            "비목분류": ["연구활동비", "내부인건비", "내부인건비", "연구활동비"],
+        }
+    )
+    filtered = full[full["비용명_2"] == "국내여비"].reset_index(drop=True)
+
+    source, reset = resolve_filter_source(full, filtered, "인건비만 보여줘")
+    assert reset is True
+    assert len(source) == len(full)
+
+    # 원본에서 실제로 인건비 행을 찾을 수 있어야 한다
+    found = _filter_by_mentioned_value(source, "인건비만 보여줘")
+    assert found is not None
+    assert len(found) == 2
+
+    # 집계 요청은 필터를 유지한다
+    source2, reset2 = resolve_filter_source(
+        full,
+        filtered,
+        "집행계_합계 합계 구해줘",
+    )
+    assert reset2 is False
+    assert len(source2) == 1
+
+
+def test_groupby_preserves_file_order() -> None:
+    """그룹 집계 결과는 파일 등장 순서를 유지한다 (가나다/금액 정렬 금지)."""
+    from core.analyzer import build_groupby_aggregate_table
+
+    df = pd.DataFrame(
+        {
+            "비목분류": [
+                "내부인건비",
+                "연구활동비",
+                "간접비",
+                "기타",
+                "내부흡수액",
+                "외부유출액",
+                "합 계",
+            ],
+            "계획예산": [100, 200, 50, 30, 100, 280, 380],
+        }
+    )
+    # '합계' 단어가 없어도 X별 Y 요청이면 파일 순서로 합산한다.
+    result = build_groupby_aggregate_table(df, "비목분류별 계획예산을 알려줘")
+    assert result is not None
+    table, _ = result
+    assert table["비목분류"].tolist() == ["내부인건비", "연구활동비", "간접비", "기타"]
+
+
+def test_groupby_execution_total_not_sum_expense_codes() -> None:
+    """'비용명별 집행계 합계'는 비용명 코드(121+201)가 아니라 집행계를 합산한다."""
+    from core.analyzer import build_groupby_aggregate_table, find_mentioned_numeric_columns
+
+    df = pd.DataFrame(
+        {
+            "비목분류": ["내부인건비", "내부인건비"],
+            "비용명": [121, 201],
+            "비용명_2": ["내부인건비", "계약직내부인건비"],
+            "집행계_합계": [10_990_230, 5_523_600],
+            "실행예산_합계": [22_828_822, 17_849_160],
+        }
+    )
+    prompt = "비용명별 집행계 합계를 알려줘"
+    assert find_mentioned_numeric_columns(df, prompt) == ["집행계_합계"]
+
+    result = build_groupby_aggregate_table(df, prompt)
+    assert result is not None
+    table, summary = result
+    assert list(table.columns) == ["비용명_2", "집행계_합계"]
+    assert table["집행계_합계"].tolist() == [10_990_230, 5_523_600]
+    assert 322 not in table["집행계_합계"].tolist()
+    assert "10,990,230" in summary

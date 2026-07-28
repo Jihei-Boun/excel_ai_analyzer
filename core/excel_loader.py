@@ -12,6 +12,16 @@ _UNNAMED_HEADER_RE = re.compile(r"^Unnamed(\s*:\s*\d+)?(_level_\d+)?$", re.IGNOR
 _UNNAMED_TOKEN_RE = re.compile(r"^Unnamed", re.IGNORECASE)
 _MERGED_SUFFIX_RE = re.compile(r"^(.+)_(\d+)$")
 _COMPOUND_HEADER_RE = re.compile(r"^(.+)_(.+)$")
+# 본문 날짜/일시 문자열 (헤더 하위분류와 구분)
+_DATE_VALUE_RE = re.compile(
+    r"^("
+    r"\d{4}[-/.]\d{1,2}[-/.]\d{1,2}"
+    r"(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?)?"
+    r"|"
+    r"\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}"
+    r"(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?)?"
+    r")$"
+)
 
 
 def load_excel(path: str | Path, *, sheet_name: str | int = 0) -> pd.DataFrame:
@@ -112,13 +122,15 @@ def _detect_header_depth(path: Path, sheet_name: str | int) -> int:
         row1 = [_cell_text(worksheet.cell(1, col).value) for col in range(1, max_col + 1)]
         row2 = [_cell_text(worksheet.cell(2, col).value) for col in range(1, max_col + 1)]
 
-        # 1행 병합 값을 구간에 반영한 뒤 판별
+        # 1행 가로 병합(상위 카테고리)이 있어야 2단 헤더 후보
+        has_parent_merge = False
         for merge_range in worksheet.merged_cells.ranges:
             if (
                 merge_range.min_row == 1
                 and merge_range.max_row == 1
                 and merge_range.max_col > merge_range.min_col
             ):
+                has_parent_merge = True
                 value = _cell_text(
                     worksheet.cell(merge_range.min_row, merge_range.min_col).value
                 )
@@ -133,6 +145,9 @@ def _detect_header_depth(path: Path, sheet_name: str | int) -> int:
     except Exception:
         return 1
 
+    if not has_parent_merge:
+        return 1
+
     meaningful_children = sum(
         1
         for parent, child in zip(row1, row2)
@@ -141,7 +156,7 @@ def _detect_header_depth(path: Path, sheet_name: str | int) -> int:
         and not _looks_like_data_value(child)
         and (not parent or parent != child)
     )
-    # 상위 헤더가 있고 하위에 서로 다른 세부분류가 2개 이상이면 2단 헤더
+    # 상위 병합 + 하위에 서로 다른 세부분류가 2개 이상이면 2단 헤더
     if meaningful_children >= 2:
         return 2
     return 1
@@ -276,9 +291,12 @@ def _pad_or_trim(values: list[str], width: int) -> list[str]:
 
 def _looks_like_data_value(text: str) -> bool:
     """헤더가 아니라 본문 값처럼 보이면 True."""
-    cleaned = text.replace(",", "").replace(" ", "")
-    if not cleaned:
+    stripped = text.strip()
+    if not stripped:
         return False
+    if _DATE_VALUE_RE.fullmatch(stripped):
+        return True
+    cleaned = stripped.replace(",", "").replace(" ", "")
     try:
         float(cleaned)
         return True
