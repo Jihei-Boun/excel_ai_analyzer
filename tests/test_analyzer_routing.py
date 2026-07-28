@@ -220,10 +220,24 @@ def test_chart_from_aggregate_table_uses_same_totals() -> None:
         (name, frame[frame["비목분류"] == "내부인건비"].reset_index(drop=True))
         for name, frame in named
     ]
-    result = build_multi_context_aggregate_table(filtered, prompt)
+    result = build_multi_context_aggregate_table(
+        filtered,
+        prompt,
+        context_label="내부인건비",
+    )
     assert result is not None
     table, _ = result
     assert table["실행예산_합계"].tolist() == [100, 200]
+    assert table["출처파일"].tolist() == [
+        "내부인건비 · 4예실.xlsx",
+        "내부인건비 · 5예실.xlsx",
+    ]
+
+    from core.chart_utils import _simplify_axis_labels
+
+    short, context = _simplify_axis_labels(table["출처파일"].astype(str).tolist())
+    assert context == "내부인건비"
+    assert short == ["4예실.xlsx", "5예실.xlsx"]
 
     path = generate_fallback_chart(table, prompt)
     assert path is not None
@@ -328,10 +342,45 @@ def test_groupby_preserves_file_order() -> None:
         }
     )
     # '합계' 단어가 없어도 X별 Y 요청이면 파일 순서로 합산한다.
-    result = build_groupby_aggregate_table(df, "비목분류별 계획예산을 알려줘")
+    result = build_groupby_aggregate_table(
+        df,
+        "비목분류별 계획예산을 알려줘",
+        use_budget_profile=True,
+    )
     assert result is not None
     table, _ = result
     assert table["비목분류"].tolist() == ["내부인건비", "연구활동비", "간접비", "기타"]
+
+
+def test_groupby_without_budget_profile_keeps_footer_labels() -> None:
+    """예산 표 모드 OFF면 footer 라벨도 그룹에 포함된다 (합계/소계만 제외)."""
+    from core.analyzer import build_groupby_aggregate_table
+
+    df = pd.DataFrame(
+        {
+            "비목분류": [
+                "내부인건비",
+                "연구활동비",
+                "내부흡수액",
+                "외부유출액",
+                "합 계",
+            ],
+            "계획예산": [100, 200, 100, 280, 380],
+        }
+    )
+    result = build_groupby_aggregate_table(
+        df,
+        "비목분류별 계획예산을 알려줘",
+        use_budget_profile=False,
+    )
+    assert result is not None
+    table, _ = result
+    assert table["비목분류"].tolist() == [
+        "내부인건비",
+        "연구활동비",
+        "내부흡수액",
+        "외부유출액",
+    ]
 
 
 def test_groupby_execution_total_not_sum_expense_codes() -> None:

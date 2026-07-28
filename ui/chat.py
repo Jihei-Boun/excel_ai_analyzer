@@ -41,6 +41,10 @@ from ui.upload import (
 )
 
 
+def _use_budget_profile() -> bool:
+    return bool(st.session_state.get("budget_table_mode", False))
+
+
 
 
 def _merge_analysis_meta(meta: dict, analysis_meta: dict | None) -> dict:
@@ -144,7 +148,11 @@ def _run_prompt(
     wants_table = _wants_table_and_chart(prompt)
 
     # 집계 표를 먼저 시도 (표+차트 동시 요청이면 표를 만든 뒤 차트도 생성)
-    grouped = build_groupby_aggregate_table(source, prompt)
+    grouped = build_groupby_aggregate_table(
+        source,
+        prompt,
+        use_budget_profile=_use_budget_profile(),
+    )
     if grouped is not None:
         table, summary = grouped
         _remember_aggregate_result(table, prompt)
@@ -202,6 +210,7 @@ def _run_prompt(
         prompt,
         base_url=base_url,
         model=model,
+        use_budget_profile=_use_budget_profile(),
     )
 
     if (
@@ -215,6 +224,7 @@ def _run_prompt(
             prompt,
             base_url=base_url,
             model=model,
+            use_budget_profile=_use_budget_profile(),
         )
         if isinstance(result, pd.DataFrame) and not result.empty:
             st.session_state.selected_df = None
@@ -395,7 +405,11 @@ def _run_multi_prompt(
 
     if is_summary_request(prompt):
         sheet_info = _multi_sheet_info(prepared)
-        reply = build_multi_file_summary(prepared, sheet_info=sheet_info)
+        reply = build_multi_file_summary(
+            prepared,
+            sheet_info=sheet_info,
+            use_budget_profile=_use_budget_profile(),
+        )
         st.session_state.operation_result = None
         st.session_state.active_operation = None
         return reply, None, {}
@@ -432,6 +446,7 @@ def _run_multi_prompt(
         prompt,
         base_url=base_url,
         model=model,
+        use_budget_profile=_use_budget_profile(),
     )
 
     if analysis_meta.get("chart_path"):
@@ -575,6 +590,7 @@ def _build_summary_reply(df: pd.DataFrame) -> str:
         sheet_name=current_sheet,
         sheet_names=list(sheet_names) if sheet_names else None,
         file_path=file_path,
+        use_budget_profile=_use_budget_profile(),
     )
 
 
@@ -678,7 +694,11 @@ def _resolve_chart_table(
 
     # 1) 같은 요청에 그룹·수치가 있으면 그대로 집계 후 차트
     if not _needs_chart_context(prompt, source):
-        grouped = build_groupby_aggregate_table(source, prompt)
+        grouped = build_groupby_aggregate_table(
+            source,
+            prompt,
+            use_budget_profile=_use_budget_profile(),
+        )
         if grouped is not None:
             return grouped[0], prompt
         contextual = build_context_aggregate_table(
@@ -705,7 +725,11 @@ def _resolve_chart_table(
     # 4) 직전 사용자 질문으로 다시 집계
     prior = _prior_user_analysis_prompt()
     if prior:
-        grouped = build_groupby_aggregate_table(source, prior)
+        grouped = build_groupby_aggregate_table(
+            source,
+            prior,
+            use_budget_profile=_use_budget_profile(),
+        )
         if grouped is not None:
             return grouped[0], prior
         contextual = build_context_aggregate_table(

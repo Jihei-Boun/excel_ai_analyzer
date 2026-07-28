@@ -5,10 +5,15 @@ from __future__ import annotations
 import requests
 import streamlit as st
 
+from core.constants import DEFAULT_OLLAMA_BASE_URL, OLLAMA_TIMEOUT_SEC
+
 
 def _fetch_ollama_models(base_url: str) -> list[str]:
     try:
-        response = requests.get(f"{base_url.rstrip('/')}/api/tags", timeout=5)
+        response = requests.get(
+            f"{base_url.rstrip('/')}/api/tags",
+            timeout=OLLAMA_TIMEOUT_SEC,
+        )
         response.raise_for_status()
         models = response.json().get("models", [])
         return [m["name"] for m in models if m.get("name")]
@@ -18,7 +23,10 @@ def _fetch_ollama_models(base_url: str) -> list[str]:
 
 def _check_ollama(base_url: str) -> bool:
     try:
-        response = requests.get(f"{base_url.rstrip('/')}/api/tags", timeout=5)
+        response = requests.get(
+            f"{base_url.rstrip('/')}/api/tags",
+            timeout=OLLAMA_TIMEOUT_SEC,
+        )
         return response.ok
     except requests.RequestException:
         return False
@@ -57,13 +65,18 @@ def render_sidebar() -> None:
             value=bool(st.session_state.get("show_analysis_code", False)),
             help="PandasAI가 생성·실행한 코드를 채팅에서 확인합니다.",
         )
+        st.session_state.budget_table_mode = st.checkbox(
+            "예산 표 모드",
+            value=bool(st.session_state.get("budget_table_mode", False)),
+            help="예실대비표 전용 요약·하단 요약행(내부흡수액·외부유출액) 제외를 사용합니다.",
+        )
 
         st.markdown('<p class="sidebar-label">연결</p>', unsafe_allow_html=True)
 
         st.session_state.ollama_base_url = st.text_input(
             "Ollama URL",
             value=st.session_state.ollama_base_url,
-            placeholder="http://localhost:11434",
+            placeholder=DEFAULT_OLLAMA_BASE_URL,
         )
 
         connected = _check_ollama(st.session_state.ollama_base_url)

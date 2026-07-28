@@ -7,6 +7,15 @@ import re
 import pandas as pd
 
 from core.chart_utils import generate_fallback_chart, generate_multi_file_chart
+from core.constants import (
+    AMOUNT_COLUMN_HINTS,
+    BUDGET_FOOTER_LABELS,
+    CODE_METRIC_ABS_MAX,
+    CODE_METRIC_INT_RATIO,
+    CODE_METRIC_NAME_HINTS,
+    CODE_METRIC_SAMPLE_SIZE,
+    SUMMARY_RANKING_BITS,
+)
 from core.excel_loader import find_merged_header_pair, merged_header_base
 from core.pandasai_config import chat, chat_multi, prepare_dataframe_for_ai
 
@@ -54,6 +63,7 @@ def run_analysis(
     *,
     base_url: str,
     model: str,
+    use_budget_profile: bool = False,
 ) -> tuple[object, str, dict]:
     """DataFrame과 사용자 요청을 PandasAI에 전달해 결과를 반환한다."""
     if not prompt.strip():
@@ -71,12 +81,16 @@ def run_analysis(
     from core.file_summary import build_file_summary, is_summary_request
 
     if is_summary_request(prompt):
-        summary = build_file_summary(df)
+        summary = build_file_summary(df, use_budget_profile=use_budget_profile)
         return None, summary, {}
 
     # '비용명별 실행예산 합계' 등 그룹 집계는 LLM 전에 처리한다.
     if output_type != "plot":
-        grouped = build_groupby_aggregate_table(df, prompt)
+        grouped = build_groupby_aggregate_table(
+            df,
+            prompt,
+            use_budget_profile=use_budget_profile,
+        )
         if grouped is not None:
             table, summary = grouped
             return table, summary, {}
@@ -166,6 +180,7 @@ def run_multi_analysis(
     *,
     base_url: str,
     model: str,
+    use_budget_profile: bool = False,
 ) -> tuple[object, str, dict]:
     """여러 DataFrame을 SmartDatalake로 동시에 분석한다."""
     if len(named_dfs) < 2:
@@ -184,7 +199,10 @@ def run_multi_analysis(
     from core.file_summary import build_multi_file_summary, is_summary_request
 
     if is_summary_request(prompt):
-        summary = build_multi_file_summary(named_dfs)
+        summary = build_multi_file_summary(
+            named_dfs,
+            use_budget_profile=use_budget_profile,
+        )
         return None, summary, {}
 
     metric_aggregate = is_metric_aggregate_request(prompt, named_dfs=named_dfs)
@@ -966,10 +984,13 @@ def find_groupby_column(df: pd.DataFrame, prompt: str) -> str | None:
 def build_groupby_aggregate_table(
     df: pd.DataFrame,
     prompt: str,
+    *,
+    use_budget_profile: bool = False,
 ) -> tuple[pd.DataFrame, str] | None:
     """'비용명별 집행계 합계'처럼 그룹별 집계 표를 만든다.
 
     '비목분류별 계획예산'처럼 합계 단어가 없어도 X별 Y 요청이면 합산으로 처리한다.
+    use_budget_profile=True이면 내부흡수액·외부유출액 등 예산 footer 행을 제외한다.
     """
     group_col = find_groupby_column(df, prompt)
     if group_col is None or df is None or df.empty or group_col not in df.columns:
@@ -1013,7 +1034,7 @@ def build_groupby_aggregate_table(
         text = str(label)
         if not text or text in seen_labels or is_total_label(text):
             continue
-        if _is_budget_footer_label(text):
+        if use_budget_profile and _is_budget_footer_label(text):
             continue
         seen_labels.add(text)
         ordered_labels.append(text)
@@ -1052,9 +1073,12 @@ def build_groupby_aggregate_table(
         if metric_parts:
             summary_bits.append(f"{row[str(group_col)]} → " + " / ".join(metric_parts))
 
-    summary = f"{group_col}별 {op_name} — " + " | ".join(summary_bits[:8])
-    if len(summary_bits) > 8:
-        summary += f" 외 {len(summary_bits) - 8}개"
+    summary = (
+        f"{group_col}별 {op_name} — "
+        + " | ".join(summary_bits[:SUMMARY_RANKING_BITS])
+    )
+    if len(summary_bits) > SUMMARY_RANKING_BITS:
+        summary += f" 외 {len(summary_bits) - SUMMARY_RANKING_BITS}개"
     return table, summary
 
 
@@ -1064,7 +1088,7 @@ def _is_budget_footer_label(value: object) -> bool:
     if not text:
         return False
     compact = _normalize_text(text)
-    return compact in {"내부흡수액", "외부유출액"}
+    return compact in {_normalize_text(label) for label in BUDGET_FOOTER_LABELS}
 
 
 def _column_prompt_match_length(column: str, normalized_prompt: str) -> int:
@@ -1089,24 +1113,9 @@ def _column_prompt_match_length(column: str, normalized_prompt: str) -> int:
     return best
 
 
-_AMOUNT_METRIC_HINTS = (
-    "예산",
-    "금액",
-    "합계",
-    "실적",
-    "집행",
-    "수량",
-    "단가",
-    "차액",
-    "잔액",
-    "누계",
-    "가집행",
-)
-
-
 def _is_amount_metric_column(name: str) -> bool:
     normalized = _normalize_text(str(name))
-    return any(hint in normalized for hint in _AMOUNT_METRIC_HINTS)
+    return any(hint in normalized for hint in AMOUNT_COLUMN_HINTS)
 
 
 def _looks_like_code_metric_column(df: pd.DataFrame, column: object) -> bool:
@@ -1116,15 +1125,22 @@ def _looks_like_code_metric_column(df: pd.DataFrame, column: object) -> bool:
         return False
     norm = _normalize_text(name)
     base = _normalize_text(merged_header_base(name))
-    code_hints = ("코드", "번호", "code", "비용명", "세목")
-    name_looks_code = any(hint in norm or hint == base for hint in code_hints)
+    name_looks_code = any(
+        hint in norm or hint == base for hint in CODE_METRIC_NAME_HINTS
+    )
     if not name_looks_code:
         return False
-    sample = pd.to_numeric(df[column], errors="coerce").dropna().head(20)
+    sample = (
+        pd.to_numeric(df[column], errors="coerce")
+        .dropna()
+        .head(CODE_METRIC_SAMPLE_SIZE)
+    )
     if sample.empty:
         return True
-    ints = sample.map(lambda v: float(v).is_integer() and abs(float(v)) < 10_000)
-    return bool(ints.mean() > 0.8)
+    ints = sample.map(
+        lambda v: float(v).is_integer() and abs(float(v)) < CODE_METRIC_ABS_MAX
+    )
+    return bool(ints.mean() > CODE_METRIC_INT_RATIO)
 
 
 def format_context_label(label: str | None) -> str:

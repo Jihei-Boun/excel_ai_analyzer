@@ -9,6 +9,11 @@ from typing import Any
 import pandas as pd
 
 from core.chart_utils import charts_dir, materialize_chart
+from core.constants import (
+    CODE_SUMMARY_LINE_LEN,
+    MULTI_FILE_INVENTORY_COLS,
+    PANDASAI_MAX_RETRIES,
+)
 
 try:
     from pandasai import SmartDataframe, SmartDatalake
@@ -67,7 +72,7 @@ def _pandasai_config(base_url: str, model: str) -> dict[str, Any]:
         "open_charts": False,
         "save_logs": False,
         "verbose": False,
-        "max_retries": 1,
+        "max_retries": PANDASAI_MAX_RETRIES,
         "use_error_correction_framework": True,
     }
 
@@ -245,8 +250,12 @@ def _multi_file_inventory(named_dfs: list[tuple[str, pd.DataFrame]]) -> str:
     for index, (file_name, df) in enumerate(named_dfs):
         table = _unique_table_name(file_name, index, used)
         used.add(table)
-        cols = ", ".join(str(c) for c in list(df.columns)[:12])
-        more = "" if len(df.columns) <= 12 else f" 외 {len(df.columns) - 12}개"
+        cols = ", ".join(str(c) for c in list(df.columns)[:MULTI_FILE_INVENTORY_COLS])
+        more = (
+            ""
+            if len(df.columns) <= MULTI_FILE_INVENTORY_COLS
+            else f" 외 {len(df.columns) - MULTI_FILE_INVENTORY_COLS}개"
+        )
         lines.append(
             f"- dfs[{index}] 테이블명={table} / 파일={file_name} / "
             f"{len(df):,}행 × {len(df.columns)}열 / 컬럼: {cols}{more}"
@@ -463,7 +472,7 @@ def _build_summary(
     if code:
         first_line = next((line.strip() for line in code.splitlines() if line.strip()), "")
         if first_line:
-            return f"PandasAI 실행 완료: {first_line[:80]}"
+            return f"PandasAI 실행 완료: {first_line[:CODE_SUMMARY_LINE_LEN]}"
     return "PandasAI 분석을 완료했습니다."
 
 

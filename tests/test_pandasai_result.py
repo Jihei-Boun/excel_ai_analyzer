@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from core.chart_utils import _format_axis_number, generate_fallback_chart, materialize_chart
+from core.chart_utils import (
+    _format_axis_number,
+    _simplify_axis_labels,
+    generate_fallback_chart,
+    materialize_chart,
+)
 from core.pandasai_config import _build_summary, _unwrap_result
 
 
@@ -121,6 +126,53 @@ def test_generate_fallback_chart_preserves_input_order() -> None:
             "실행예산_합계": [114_525_479, 187_090_387, 94_698_000],
         }
     )
+    path = generate_fallback_chart(df, "파일별 실행예산_합계 차트")
+    assert path is not None
+    assert Path(path).is_file()
+
+
+def test_simplify_axis_labels_strips_shared_context() -> None:
+    labels = [
+        "내부인건비 · 4예실대비표.xlsx",
+        "내부인건비 · 5예실대비표.xlsx",
+    ]
+    short, context = _simplify_axis_labels(labels)
+    assert context == "내부인건비"
+    assert short == ["4예실대비표.xlsx", "5예실대비표.xlsx"]
+
+
+def test_simplify_axis_labels_keeps_plain_filenames() -> None:
+    labels = ["4예실.xlsx", "5예실.xlsx"]
+    short, context = _simplify_axis_labels(labels)
+    assert context is None
+    assert short == labels
+
+
+def test_simplify_axis_labels_keeps_mixed_context() -> None:
+    labels = [
+        "내부인건비 · 4예실.xlsx",
+        "연구활동비 · 5예실.xlsx",
+    ]
+    short, context = _simplify_axis_labels(labels)
+    assert context is None
+    assert short == labels
+
+
+def test_generate_fallback_chart_with_context_labels() -> None:
+    """맥락이 붙은 출처파일 라벨도 차트를 만들고 X축은 단순화한다."""
+    df = pd.DataFrame(
+        {
+            "출처파일": [
+                "내부인건비 · 4예실대비표.xlsx",
+                "내부인건비 · 5예실대비표.xlsx",
+            ],
+            "실행예산_합계": [100, 200],
+        }
+    )
+    short, context = _simplify_axis_labels(df["출처파일"].astype(str).tolist())
+    assert context == "내부인건비"
+    assert short == ["4예실대비표.xlsx", "5예실대비표.xlsx"]
+
     path = generate_fallback_chart(df, "파일별 실행예산_합계 차트")
     assert path is not None
     assert Path(path).is_file()

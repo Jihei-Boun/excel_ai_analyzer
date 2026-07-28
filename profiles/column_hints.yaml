@@ -1,0 +1,59 @@
+# 범용 컬럼 역할 힌트 (항상 적용)
+# 도메인에 맞게 수정한 뒤 앱을 재시작하면 반영됩니다.
+
+group_column_hints:
+  - 비목분류
+  - 대분류
+  - 중분류
+  - 상위분류
+  - 카테고리
+  - category
+
+group_column_suffixes:
+  - 분류
+  - 구분
+
+group_column_exact:
+  - 비목
+  - 카테고리
+  - category
+  - 구분
+
+item_column_hints:
+  - 비용명
+  - 세목
+  - 계정
+  - 코드
+  - 항목
+  - 내역
+  - 명칭
+
+code_column_hints:
+  - 세목코드
+  - 비용코드
+  - 계정코드
+  - 항목코드
+  - 코드
+  - 세목
+  - 번호
+  - code
+
+code_metric_name_hints:
+  - 코드
+  - 번호
+  - code
+  - 비용명
+  - 세목
+
+amount_column_hints:
+  - 예산
+  - 금액
+  - 합계
+  - 실적
+  - 집행
+  - 수량
+  - 단가
+  - 차액
+  - 잔액
+  - 누계
+  - 가집행

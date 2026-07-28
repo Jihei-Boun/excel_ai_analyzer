@@ -10,8 +10,10 @@ from typing import Any
 
 import pandas as pd
 
-_CHARTS_DIR = Path(__file__).resolve().parent.parent / "exports" / "charts"
+from core.constants import CHART_MAX_CATEGORIES, CHARTS_DIR as _CHARTS_DIR
+
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp"}
+_CONTEXT_LABEL_SEP = " · "
 _DATA_URI_RE = re.compile(
     r"^data:image/(png|jpeg|jpg|gif|webp|svg\+xml);base64,(.+)$",
     re.IGNORECASE | re.DOTALL,
@@ -111,27 +113,28 @@ def generate_fallback_chart(df: pd.DataFrame, prompt: str = "") -> str | None:
 
     # 이미 집계된 표(행마다 다른 라벨)는 재합산하지 않는다
     if plot_df["label"].nunique() == len(plot_df):
-        plot_df = plot_df.sort_values("_order").head(20)
+        plot_df = plot_df.sort_values("_order").head(CHART_MAX_CATEGORIES)
     else:
         plot_df = (
             plot_df.groupby("label", as_index=False)
             .agg(value=("value", "sum"), _order=("_order", "min"))
             .sort_values("_order")
-            .head(20)
+            .head(CHART_MAX_CATEGORIES)
         )
     if plot_df.empty:
         return None
 
-    x_labels = plot_df["label"].astype(str).tolist()
+    raw_labels = plot_df["label"].astype(str).tolist()
+    x_labels, context = _simplify_axis_labels(raw_labels)
     y_values = plot_df["value"].astype(float).tolist()
 
     fig, ax = plt.subplots(figsize=(9, 5.2), facecolor="white")
     ax.set_facecolor("white")
     bars = ax.bar(x_labels, y_values, color="#2563eb", width=0.65)
 
-    title = f"{cat_col}별 {num_col}"
+    title, x_axis_label = _chart_title_and_xlabel(cat_col, num_col, context)
     ax.set_title(title, fontproperties=font_prop, fontsize=13, pad=12)
-    ax.set_xlabel(str(cat_col), fontproperties=font_prop, fontsize=11)
+    ax.set_xlabel(x_axis_label, fontproperties=font_prop, fontsize=11)
     ax.set_ylabel(str(num_col), fontproperties=font_prop, fontsize=11)
 
     ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_axis_number(value)))
@@ -273,6 +276,47 @@ def _format_axis_number(value: float | int) -> str:
     if abs(number - round(number)) < 1e-9:
         return f"{int(round(number)):,}"
     return f"{number:,.2f}"
+
+
+def _simplify_axis_labels(labels: list[str]) -> tuple[list[str], str | None]:
+    """``맥락 · 파일명`` 형태면 X축은 짧은 이름만, 공통 맥락은 제목용으로 반환.
+
+    표의 ``출처파일`` 열은 ``내부인건비 · 4예실대비표.xlsx``처럼 맥락을 포함하지만,
+    차트 X축은 파일명만 두고 맥락은 제목으로 옮긴다.
+    모든 라벨이 같은 맥락 접두사를 가질 때만 단순화한다.
+    """
+    if not labels:
+        return labels, None
+
+    parsed: list[tuple[str | None, str]] = []
+    for label in labels:
+        text = str(label).strip()
+        if _CONTEXT_LABEL_SEP in text:
+            ctx, short = text.split(_CONTEXT_LABEL_SEP, 1)
+            ctx, short = ctx.strip(), short.strip()
+            if ctx and short:
+                parsed.append((ctx, short))
+                continue
+        parsed.append((None, text))
+
+    contexts = {ctx for ctx, _ in parsed if ctx}
+    if len(contexts) == 1 and all(ctx is not None for ctx, _ in parsed):
+        return [short for _, short in parsed], next(iter(contexts))
+    return [str(label).strip() for label in labels], None
+
+
+def _chart_title_and_xlabel(
+    cat_col: str,
+    num_col: str,
+    context: str | None,
+) -> tuple[str, str]:
+    """맥락이 있으면 제목에 넣고, X축 라벨은 짧게 유지한다."""
+    if context:
+        title = f"{context} · {num_col}"
+        if cat_col in {"출처파일", "파일"}:
+            return title, "파일"
+        return title, str(cat_col)
+    return f"{cat_col}별 {num_col}", str(cat_col)
 
 
 def _pick_chart_columns(

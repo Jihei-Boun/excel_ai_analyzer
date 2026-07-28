@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import streamlit as st
 
+from core.constants import (
+    DEFAULT_OLLAMA_BASE_URL,
+    DEFAULT_OLLAMA_MODEL,
+)
+
 RECOMMENDED_PROMPTS = (
     "파일을 요약해줘",
     "각 컬럼의 데이터 타입과 결측치 개수를 알려줘",
@@ -35,8 +40,8 @@ def init_session_state() -> None:
         "analysis_filter_df": None,
         "operation_result": None,
         "chat_messages": [],
-        "ollama_base_url": "http://localhost:11434",
-        "ollama_model": "qwen2.5:7b",
+        "ollama_base_url": DEFAULT_OLLAMA_BASE_URL,
+        "ollama_model": DEFAULT_OLLAMA_MODEL,
         "ollama_connected": False,
         "work_target": "원본 df",
         "active_operation": None,
@@ -50,6 +55,7 @@ def init_session_state() -> None:
         "_df_sanitized": False,
         "theme": "dark",  # "dark" | "light"
         "show_analysis_code": False,
+        "budget_table_mode": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:

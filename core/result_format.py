@@ -7,6 +7,15 @@ from dataclasses import dataclass
 import pandas as pd
 
 from core.analyzer import find_mentioned_column, format_context_label
+from core.constants import (
+    AMOUNT_COLUMN_HINTS,
+    CODE_COLUMN_HINTS,
+    CODE_PAIR_SAMPLE_SIZE,
+    GROUP_COLUMN_EXACT,
+    GROUP_COLUMN_HINTS,
+    GROUP_COLUMN_SUFFIXES,
+    ITEM_COLUMN_HINTS,
+)
 from core.excel_loader import find_merged_header_pair, merged_header_base
 from core.pandasai_config import is_total_label, prepare_dataframe_for_ai
 
@@ -18,60 +27,6 @@ _LIST_DISPLAY_KEYWORDS = (
     "뽑아",
     "나열",
     "list",
-)
-
-_GROUP_COLUMN_HINTS = (
-    "비목분류",
-    "대분류",
-    "중분류",
-    "상위분류",
-    "카테고리",
-    "category",
-)
-
-_GROUP_COLUMN_SUFFIXES = (
-    "분류",
-    "구분",
-)
-
-_GROUP_COLUMN_EXACT = (
-    "비목",
-    "카테고리",
-    "category",
-    "구분",
-)
-
-_ITEM_COLUMN_HINTS = (
-    "비용명",
-    "세목",
-    "계정",
-    "코드",
-    "항목",
-    "내역",
-    "명칭",
-)
-
-_CODE_COLUMN_HINTS = (
-    "세목코드",
-    "비용코드",
-    "계정코드",
-    "항목코드",
-    "코드",
-    "세목",
-    "번호",
-    "code",
-)
-
-_AMOUNT_COLUMN_HINTS = (
-    "예산",
-    "금액",
-    "합계",
-    "실적",
-    "집행",
-    "수량",
-    "단가",
-    "차액",
-    "잔액",
 )
 
 
@@ -396,7 +351,7 @@ def _list_code_column(
         series = df[column]
         is_numeric = pd.api.types.is_numeric_dtype(series)
         name_score = 0
-        if _column_name_matches(column, _CODE_COLUMN_HINTS):
+        if _column_name_matches(column, CODE_COLUMN_HINTS):
             name_score = 20
         elif is_numeric:
             name_score = 5
@@ -405,7 +360,7 @@ def _list_code_column(
             continue
         if not is_numeric and name_score > 0:
             # 문자열이지만 코드명인 열(예: '121' 텍스트)도 허용
-            sample = series.dropna().head(8).map(_format_item_text)
+            sample = series.dropna().head(CODE_PAIR_SAMPLE_SIZE).map(_format_item_text)
             if sample.empty or not all(text.isdigit() for text in sample if text):
                 continue
 
@@ -422,7 +377,7 @@ def _list_code_column(
 
 def _is_amount_like_column(name: str) -> bool:
     normalized = str(name).replace(" ", "").lower()
-    return any(hint.lower() in normalized for hint in _AMOUNT_COLUMN_HINTS)
+    return any(hint.lower() in normalized for hint in AMOUNT_COLUMN_HINTS)
 
 
 def _forward_fill_group_labels(series: pd.Series) -> list[str]:
@@ -503,7 +458,7 @@ def _list_item_column(
     item_hint_columns = [
         column
         for column in df.columns
-        if column != source_col and _column_name_matches(column, _ITEM_COLUMN_HINTS)
+        if column != source_col and _column_name_matches(column, ITEM_COLUMN_HINTS)
     ]
 
     # 금액 컬럼이 언급돼도 리스트 항목은 비용명/항목 쪽을 우선한다.
@@ -567,11 +522,11 @@ def _text_columns(df: pd.DataFrame, *, source_col: str) -> list[str]:
 
 def _is_group_like_column(name: str) -> bool:
     normalized = str(name).replace(" ", "").lower()
-    if normalized in {hint.lower() for hint in _GROUP_COLUMN_EXACT}:
+    if normalized in {hint.lower() for hint in GROUP_COLUMN_EXACT}:
         return True
-    if any(hint.lower() in normalized for hint in _GROUP_COLUMN_HINTS):
+    if any(hint.lower() in normalized for hint in GROUP_COLUMN_HINTS):
         return True
-    return any(normalized.endswith(suffix) for suffix in _GROUP_COLUMN_SUFFIXES)
+    return any(normalized.endswith(suffix) for suffix in GROUP_COLUMN_SUFFIXES)
 
 
 def _column_name_matches(name: str, hints: tuple[str, ...]) -> bool:

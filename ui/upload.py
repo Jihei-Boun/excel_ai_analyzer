@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 
 from core.excel_loader import load_excel
-
-UPLOAD_DIR = Path(__file__).resolve().parents[1] / "data" / "uploads"
+from core.constants import UPLOAD_DIR
 
 
 def render_upload_section() -> None:

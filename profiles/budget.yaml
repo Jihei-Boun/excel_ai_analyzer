@@ -1,0 +1,63 @@
+# 예산 표 모드(ON)일 때만 사용하는 예실대비표 프로필
+
+detect_min_hits: 2
+
+column_hints:
+  - 계획예산
+  - 실행예산
+  - 예산잔액
+  - 집행계
+  - 당년도집행
+  - 가집행
+  - 비목분류
+
+item_column_candidates:
+  - 비용명_2
+  - 비용명
+  - 항목
+  - 세목
+  - 내역
+
+category_column_candidates:
+  - 비목분류
+  - 대분류
+  - 중분류
+  - 분류
+  - 구분
+
+budget_column_candidates:
+  - 실행예산_합계
+  - 계획예산
+  - 당년도예산
+  - 실행예산
+
+executed_column_candidates:
+  - 집행계_합계
+  - 당해누계
+  - 당년도집행
+  - 집행계
+
+remaining_column_candidates:
+  - 예산잔액_합계
+  - 예산잔액
+
+current_remaining_column_candidates:
+  - 예산잔액_당해잔액
+  - 당해잔액
+
+key_column_hints:
+  - 계획예산
+  - 실행예산
+  - 당년도집행
+  - 가집행금액
+  - 집행계
+  - 예산잔액
+
+# 하단 요약 행 (소계·합계와 별도로 집계에서 제외)
+footer_labels:
+  - 내부흡수액
+  - 외부유출액
+
+intro: >-
+  이 파일은 연구과제의 예산 계획, 집행 내역, 가집행 금액 및 잔액을
+  관리하는 예실대비표입니다.

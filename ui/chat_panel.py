@@ -20,6 +20,7 @@ from ui.upload import (
     get_analysis_file_name,
     is_multi_analysis_mode,
 )
+from core.constants import CHAT_EXAMPLE_LIMIT, CHAT_PREVIEW_ROWS
 
 
 def render_chat_panel() -> None:
@@ -94,7 +95,7 @@ def _render_chat_history() -> None:
         st.caption("아직 대화가 없습니다. 아래 예시로 시작해 보세요.")
         examples = MULTI_FILE_PROMPTS if is_multi_analysis_mode() else RECOMMENDED_PROMPTS
         cols = st.columns(2)
-        for idx, prompt in enumerate(examples[:4]):
+        for idx, prompt in enumerate(examples[:CHAT_EXAMPLE_LIMIT]):
             with cols[idx % 2]:
                 if st.button(prompt, key=f"ex_{idx}", use_container_width=True):
                     st.session_state.pending_prompt = prompt
@@ -259,7 +260,7 @@ def _render_selected_result() -> None:
         if isinstance(attached, pd.DataFrame) and not _same_frame(attached, display_df):
             st.caption(f"선택 데이터(필터 유지) · {len(display_df):,}행")
             height = min(360, max(120, 38 * (min(len(display_df), 10) + 1)))
-            render_dataframe(display_df.head(10), hide_index=True, height=height)
+            render_dataframe(display_df.head(CHAT_PREVIEW_ROWS), hide_index=True, height=height)
             return
 
     st.caption(f"표 결과 · {len(display_df):,}행")
