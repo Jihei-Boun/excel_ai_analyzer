@@ -10,10 +10,11 @@ serverAddress = "localhost"
 serverPort = 8502
 
 [client]
-toolbarMode = "minimal"
+# minimal이면 우측 상단 메뉴(설정·테마)가 숨겨짐 → viewer로 노출
+toolbarMode = "viewer"
 
-# Streamlit 네이티브 위젯(dataframe 등)용 테마.
-# 사이드바 다크/라이트 토글은 ui/styles.py에서 별도 적용.
+# Streamlit 네이티브 Light/Dark 테마.
+# 앱은 커스텀 CSS로 테마를 덮어쓰지 않으며, 설정(☰) 변경이 즉시 반영된다.
 [theme]
 base = "light"
 primaryColor = "#2563eb"

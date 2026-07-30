@@ -110,7 +110,6 @@ def init_session_state() -> None:
         "last_aggregate_df": None,
         "last_analysis_prompt": "",
         "_df_sanitized": False,
-        "theme": "dark",  # "dark" | "light"
         "show_analysis_code": False,
         "budget_table_mode": False,
     }

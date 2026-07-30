@@ -56,24 +56,40 @@ __all__ = [
 
 
 def render_upload_section() -> None:
-    st.markdown('<p class="panel-title">데이터</p>', unsafe_allow_html=True)
-    st.markdown(
-        '<p class="panel-desc">엑셀을 여러 개 올릴 수 있습니다. '
-        "분석할 파일은 왼쪽 사이드바에서, 미리보기는 아래에서 선택하세요.</p>",
-        unsafe_allow_html=True,
+    st.subheader("데이터")
+    st.caption(
+        "엑셀을 여러 개 올릴 수 있습니다. "
+        "분석할 파일은 왼쪽 사이드바에서, 미리보기는 아래에서 선택하세요."
     )
 
     uploaded_list = st.file_uploader(
-        "엑셀 업로드",
+        "엑셀 파일을 업로드하세요.",
         type=["xlsx", "xls"],
         accept_multiple_files=True,
-        label_visibility="collapsed",
         key=f"excel_uploader_{st.session_state.get('uploader_nonce', 0)}",
     )
+    # 업로더에서 X로 제거된 파일을 session_state와 맞춤 (빈 목록일 때는 건드리지 않음)
+    if uploaded_list and _prune_files_removed_in_uploader(uploaded_list):
+        st.rerun()
     if uploaded_list:
         _handle_uploads(uploaded_list)
 
     _render_file_list()
+
+
+def _prune_files_removed_in_uploader(uploaded_list) -> bool:
+    """업로더 칩(X)으로 빠진 파일을 session_state에서도 제거한다.
+
+    삭제 버튼 경로와 달리 위젯 value에 파일이 더 이상 없을 때 호출된다.
+    변경이 있으면 True.
+    """
+    widget_names = {uploaded.name for uploaded in uploaded_list}
+    changed = False
+    for meta in list(st.session_state.get("uploaded_files") or []):
+        if meta["id"] not in widget_names:
+            remove_file(meta["id"])
+            changed = True
+    return changed
 
 
 def _handle_uploads(uploaded_list) -> None:
@@ -85,7 +101,7 @@ def _handle_uploads(uploaded_list) -> None:
 
     for uploaded in uploaded_list:
         file_id = uploaded.name
-        # 삭제했다가 위젯에만 남은 파일은 다시 등록하지 않음
+        # 삭제 버튼으로 제거된 파일: 위젯에 칩이 남아 있어도 session에 다시 넣지 않음
         if file_id in excluded:
             continue
         if file_id in existing_ids:
@@ -173,10 +189,8 @@ def _render_file_list() -> None:
             sheet_note = ""
             if is_analysis and not multi_mode and len(sheets) >= 2:
                 sheet_note = f" · 시트 {len(sheets)}개"
-            st.markdown(
-                f'<p class="meta-line">{mark}{meta["name"]} · {meta["size"]}'
-                f"{suffix}{sheet_note}</p>",
-                unsafe_allow_html=True,
+            st.caption(
+                f'{mark}{meta["name"]} · {meta["size"]}{suffix}{sheet_note}'
             )
         with cols[1]:
             if st.button("삭제", key=f"del_{file_id}", use_container_width=True):

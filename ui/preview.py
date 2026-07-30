@@ -27,10 +27,7 @@ def render_preview_section() -> None:
         st.info("미리볼 파일을 선택하세요.")
         return
 
-    st.markdown(
-        f'<p class="meta-line">미리보기 · {meta["name"]}</p>',
-        unsafe_allow_html=True,
-    )
+    st.caption(f"미리보기 · {meta['name']}")
 
     if not st.session_state.get("_preview_sanitized_ids"):
         st.session_state._preview_sanitized_ids = set()
@@ -69,19 +66,23 @@ def render_preview_section() -> None:
             _switch_preview_sheet(preview_id, meta, selected)
             return
 
-    height = min(900, max(280, 38 * (len(df) + 1)))
-    column_labels = preview_column_labels(list(df.columns))
+    st.subheader("데이터 미리보기")
+    height = min(900, max(280, 38 * (min(len(df), 100) + 1)))
+    display_df = for_preview_display(df.head(100) if len(df) > 100 else df)
+    column_labels = preview_column_labels(list(display_df.columns))
     column_config = {
         column: st.column_config.Column(label=label)
         for column, label in column_labels.items()
     }
     render_dataframe(
-        for_preview_display(df),
+        display_df,
         height=height,
         hide_index=True,
         column_config=column_config,
         column_labels=column_labels,
     )
+    if len(df) > 100:
+        st.caption(f"상위 100행만 표시합니다. (전체 {len(df):,}행)")
     _render_summary_cards(df)
 
 
@@ -154,32 +155,18 @@ def _switch_preview_sheet(file_id: str, meta: dict, sheet_name: str) -> None:
 def _render_summary_cards(df) -> None:
     numeric_cols = df.select_dtypes(include="number").shape[1]
     string_cols = df.select_dtypes(include=["object", "string"]).shape[1]
-    completeness = (1 - df.isna().sum().sum() / max(df.size, 1)) * 100
+    missing = int(df.isna().sum().sum())
+    completeness = (1 - missing / max(df.size, 1)) * 100
 
-    st.markdown(
-        f"""
-        <div class="stat-grid">
-            <div class="stat-card">
-                <div class="label">총 행</div>
-                <div class="value">{len(df):,}</div>
-            </div>
-            <div class="stat-card">
-                <div class="label">총 열</div>
-                <div class="value">{len(df.columns)}</div>
-            </div>
-            <div class="stat-card">
-                <div class="label">수치형 컬럼</div>
-                <div class="value">{numeric_cols}</div>
-            </div>
-            <div class="stat-card">
-                <div class="label">문자형 컬럼</div>
-                <div class="value">{string_cols}</div>
-            </div>
-            <div class="stat-card">
-                <div class="label">데이터 완전성</div>
-                <div class="value">{completeness:.1f}%</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    with st.container(border=True):
+        c1, c2, c3, c4, c5 = st.columns(5)
+        with c1:
+            st.metric("총 행", f"{len(df):,}")
+        with c2:
+            st.metric("총 열", len(df.columns))
+        with c3:
+            st.metric("수치형 컬럼", numeric_cols)
+        with c4:
+            st.metric("문자형 컬럼", string_cols)
+        with c5:
+            st.metric("데이터 완전성", f"{completeness:.1f}%")

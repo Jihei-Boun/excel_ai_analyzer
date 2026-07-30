@@ -383,15 +383,16 @@ def remove_file(file_id: str) -> None:
     if isinstance(sanitized, set):
         sanitized.discard(file_id)
 
+    # 일부만 삭제: uploader key(nonce)는 올리지 않는다.
+    # 위젯에 남은 칩 중 삭제분은 _uploader_excluded_names로 표시만 숨긴다.
+    # (nonce를 올리면 남은 파일 칩까지 모두 사라져 UI/session이 어긋남)
     excluded = st.session_state.setdefault("_uploader_excluded_names", set())
     excluded.add(file_id)
 
     if not files:
-        # 전부 삭제된 경우에만 업로더 위젯을 리셋
+        # 마지막 파일까지 삭제한 경우에만 업로더 위젯을 초기화
         st.session_state.uploader_nonce = st.session_state.get("uploader_nonce", 0) + 1
         st.session_state._uploader_excluded_names = set()
-    # 일부만 삭제: 위젯은 유지 → 업로드 박스 안에 남은 파일 칩이 그대로 보임
-    # (삭제된 칩은 styles.py JS가 excluded 이름으로 숨김)
 
     if st.session_state.get("preview_file_id") == file_id:
         st.session_state.preview_file_id = files[-1]["id"] if files else None

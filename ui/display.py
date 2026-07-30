@@ -1,8 +1,7 @@
-"""표시용 DataFrame 헬퍼."""
+"""표시용 DataFrame 헬퍼 — Streamlit 네이티브 컴포넌트 사용."""
 
 from __future__ import annotations
 
-import html
 import re
 
 import pandas as pd
@@ -62,64 +61,57 @@ def render_dataframe(
     column_config: dict | None = None,
     column_labels: dict[str, str] | None = None,
 ) -> None:
-    """현재 테마 CSS 변수로 표를 그린다 (색상은 HTML에 넣지 않음).
-
-    st.dataframe(Glide 캔버스)은 Streamlit 네이티브 테마만 따르므로
-    앱 테마 토글과 어긋난다. 매 rerun마다 데이터만으로 HTML을 재생성한다.
-    """
+    """DataFrame을 Streamlit 네이티브 st.dataframe으로 표시한다."""
     display = for_display(df)
-    labels = dict(column_labels or {})
-    if column_config:
-        for key, config in column_config.items():
-            label = getattr(config, "label", None)
-            if label:
-                labels[str(key)] = str(label)
+    config = dict(column_config or {})
+    if column_labels:
+        for key, label in column_labels.items():
+            if key not in config:
+                config[key] = st.column_config.Column(label=label)
 
-    table_html = _app_html_table(
+    st.dataframe(
         display,
-        height=height,
-        labels=labels,
+        use_container_width=True,
         hide_index=hide_index,
+        height=max(120, int(height)),
+        column_config=config or None,
     )
-    if hasattr(st, "html"):
-        st.html(table_html)
-    else:
-        st.markdown(table_html, unsafe_allow_html=True)
 
 
-def _app_html_table(
-    df: pd.DataFrame,
-    *,
-    height: int,
-    labels: dict[str, str],
-    hide_index: bool,
-) -> str:
-    """색상 없는 HTML 표 — 스타일은 .app-df CSS 변수가 담당."""
-    columns = [str(col) for col in df.columns]
-    header_cells: list[str] = []
-    if not hide_index:
-        header_cells.append("<th></th>")
-    for col in columns:
-        title = html.escape(labels.get(col, col))
-        header_cells.append(f"<th>{title}</th>")
+def render_analysis_result(result: object) -> None:
+    """AI/연산 결과 타입별 네이티브 출력."""
+    if result is None:
+        st.warning("표시할 분석 결과가 없습니다.")
+        return
 
-    body_rows: list[str] = []
-    for idx, row in df.iterrows():
-        cells: list[str] = []
-        if not hide_index:
-            cells.append(f"<td>{html.escape(_format_cell_value(idx))}</td>")
-        for col in columns:
-            cells.append(f"<td>{html.escape(_format_cell_value(row[col]))}</td>")
-        body_rows.append(f"<tr>{''.join(cells)}</tr>")
+    if isinstance(result, pd.DataFrame):
+        render_dataframe(result, hide_index=True)
+        return
 
-    max_h = max(120, int(height))
-    return (
-        f'<div class="app-df-wrap" style="max-height:{max_h}px;overflow:auto;">'
-        f'<table class="app-df">'
-        f"<thead><tr>{''.join(header_cells)}</tr></thead>"
-        f"<tbody>{''.join(body_rows)}</tbody>"
-        f"</table></div>"
-    )
+    if isinstance(result, pd.Series):
+        render_dataframe(result.reset_index(), hide_index=True)
+        return
+
+    if isinstance(result, dict):
+        try:
+            render_dataframe(pd.DataFrame(result), hide_index=True)
+        except Exception:
+            st.json(result)
+        return
+
+    if isinstance(result, list):
+        try:
+            render_dataframe(pd.DataFrame(result), hide_index=True)
+        except Exception:
+            st.write(result)
+        return
+
+    # Plotly / Matplotlib 등은 호출 측에서 처리. 여기선 일반 값.
+    try:
+        display = f"{float(result):,.0f}"
+        st.metric("결과", display)
+    except (TypeError, ValueError):
+        st.write(result)
 
 
 def _normalize_numeric_series(series: pd.Series) -> pd.Series:

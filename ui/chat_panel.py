@@ -1,11 +1,8 @@
-"""우측 AI 분석 채팅 패널."""
+"""우측 AI 분석 채팅 패널 — Streamlit 네이티브 채팅/표 컴포넌트."""
 
 from __future__ import annotations
 
-import base64
-import html
 import io
-import re
 from pathlib import Path
 
 import pandas as pd
@@ -26,24 +23,18 @@ from core.constants import CHAT_EXAMPLE_LIMIT, CHAT_PREVIEW_ROWS
 
 
 def render_chat_panel() -> None:
-    st.markdown('<p class="panel-title">AI 분석</p>', unsafe_allow_html=True)
+    st.subheader("AI 분석")
     multi_mode = is_multi_analysis_mode()
     if multi_mode:
         active_names = [name for name, _ in get_active_named_frames()]
         unit = "시트" if is_multi_sheet_analysis() else "파일"
-        st.markdown(
-            '<p class="panel-desc">'
+        st.caption(
             f"선택된 {len(active_names)}개 {unit}를 동시에 분석합니다. "
             "비교·병합·교차 집계를 자연어로 요청하세요."
-            "</p>",
-            unsafe_allow_html=True,
         )
         st.caption(" · ".join(active_names))
     else:
-        st.markdown(
-            '<p class="panel-desc">현재 데이터에 원하는 분석을 자연어로 요청하세요.</p>',
-            unsafe_allow_html=True,
-        )
+        st.caption("현재 데이터에 원하는 분석을 자연어로 요청하세요.")
 
     _render_analysis_mode_setting()
     _render_chat_history()
@@ -114,99 +105,41 @@ def _render_chat_history() -> None:
     show_code = bool(st.session_state.get("show_analysis_code"))
     for message in messages:
         role = message["role"]
-        css = "chat-user" if role == "user" else "chat-assistant"
-        st.markdown(
-            f'<div class="{css}">{_format_chat_html(message["content"])}</div>',
-            unsafe_allow_html=True,
-        )
+        avatar = "user" if role == "user" else "assistant"
+        with st.chat_message(avatar):
+            st.markdown(str(message.get("content") or ""))
 
-        if message.get("filter_summary"):
-            st.markdown(
-                f'<div class="filter-ok">✓ {message["filter_summary"]}</div>',
-                unsafe_allow_html=True,
-            )
-        if message.get("filter_note"):
-            st.markdown(
-                f'<div class="filter-ok">↻ {html.escape(str(message["filter_note"]))}</div>',
-                unsafe_allow_html=True,
-            )
+            if message.get("filter_summary"):
+                st.success(f"✓ {message['filter_summary']}")
+            if message.get("filter_note"):
+                st.info(f"↻ {message['filter_note']}")
 
-        chart_path = message.get("chart_path")
-        if chart_path:
-            path = Path(str(chart_path))
-            if path.is_file():
-                _render_chart_image(path)
-            else:
-                st.caption(f"차트 파일을 찾을 수 없습니다: {path.name}")
+            chart_path = message.get("chart_path")
+            if chart_path:
+                path = Path(str(chart_path))
+                if path.is_file():
+                    st.image(str(path), use_container_width=True)
+                else:
+                    st.caption(f"차트 파일을 찾을 수 없습니다: {path.name}")
 
-        attached = message.get("dataframe")
-        list_values = message.get("list_values")
-        list_groups = message.get("list_groups")
-        if list_values:
-            _render_list_result(
-                list_values,
-                message.get("list_label"),
-                attached if isinstance(attached, pd.DataFrame) else None,
-                groups=list_groups if isinstance(list_groups, dict) else None,
-            )
-        elif isinstance(attached, pd.DataFrame) and not attached.empty:
-            height = min(520, max(120, 38 * (min(len(attached), 15) + 1)))
-            render_dataframe(attached, hide_index=True, height=height)
+            attached = message.get("dataframe")
+            list_values = message.get("list_values")
+            list_groups = message.get("list_groups")
+            if list_values:
+                _render_list_result(
+                    list_values,
+                    message.get("list_label"),
+                    attached if isinstance(attached, pd.DataFrame) else None,
+                    groups=list_groups if isinstance(list_groups, dict) else None,
+                )
+            elif isinstance(attached, pd.DataFrame) and not attached.empty:
+                height = min(520, max(120, 38 * (min(len(attached), 15) + 1)))
+                render_dataframe(attached, hide_index=True, height=height)
 
-        code = message.get("code")
-        if show_code and code:
-            with st.expander("실행 코드", expanded=False):
-                st.code(code, language="python")
-
-
-def _format_chat_html(content: object) -> str:
-    """채팅 본문을 HTML로 안전하게 변환한다 (줄바꿈·강조·목록)."""
-    text = html.escape(str(content or ""))
-    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
-    # Streamlit 네이티브 <code>는 다크 테마 잔여로 검은 박스가 되므로 커스텀 클래스를 쓴다.
-    text = re.sub(
-        r"`([^`]+)`",
-        r'<span class="chat-inline-code">\1</span>',
-        text,
-    )
-
-    lines = text.split("\n")
-    rendered: list[str] = []
-    in_list = False
-    for line in lines:
-        bullet = re.match(r"^[\*\-•]\s+(.*)$", line)
-        heading = re.match(r"^###\s+(.*)$", line)
-        if bullet:
-            if not in_list:
-                rendered.append("<ul>")
-                in_list = True
-            rendered.append(f"<li>{bullet.group(1)}</li>")
-            continue
-        if in_list:
-            rendered.append("</ul>")
-            in_list = False
-        if heading:
-            rendered.append(f"<div><strong>{heading.group(1)}</strong></div>")
-        elif line.strip() == "":
-            rendered.append("<br>")
-        else:
-            rendered.append(f"{line}<br>")
-    if in_list:
-        rendered.append("</ul>")
-    return "".join(rendered)
-
-
-def _render_chart_image(path: Path) -> None:
-    """st.image 툴바(검은 네모)를 피하기 위해 HTML로 차트를 표시한다."""
-    suffix = path.suffix.lower().lstrip(".") or "png"
-    if suffix == "jpg":
-        suffix = "jpeg"
-    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-    st.markdown(
-        f'<img class="chart-image" alt="chart" '
-        f'src="data:image/{suffix};base64,{encoded}" />',
-        unsafe_allow_html=True,
-    )
+            code = message.get("code")
+            if show_code and code:
+                with st.expander("실행 코드", expanded=False):
+                    st.code(code, language="python")
 
 
 def _render_list_result(
@@ -225,23 +158,13 @@ def _render_list_result(
             else f"{total}개 항목 · {len(groups)}개 분류"
         )
         st.caption(title)
-        parts: list[str] = []
         for group_name, items in groups.items():
-            parts.append(
-                f'<div class="list-group-name">{html.escape(group_name)}</div>'
-            )
-            parts.append('<ul class="list-result list-result-nested">')
-            parts.extend(f"<li>{html.escape(item)}</li>" for item in items)
-            parts.append("</ul>")
-        st.markdown("".join(parts), unsafe_allow_html=True)
+            st.markdown(f"**{group_name}**")
+            st.markdown("\n".join(f"- {item}" for item in items))
     else:
         title = f"{label} · {len(values)}개" if label else f"{len(values)}개 항목"
         st.caption(title)
-        items = "".join(f"<li>{html.escape(value)}</li>" for value in values)
-        st.markdown(
-            f'<ul class="list-result">{items}</ul>',
-            unsafe_allow_html=True,
-        )
+        st.markdown("\n".join(f"- {value}" for value in values))
 
     if full_df is not None and not full_df.empty and len(full_df.columns) > 1:
         with st.expander("전체 데이터 보기", expanded=False):
@@ -312,15 +235,7 @@ def _render_operation_result() -> None:
             display = f"{float(result):,.0f}"
         except (TypeError, ValueError):
             display = str(result)
-        st.markdown(
-            f"""
-            <div class="result-box">
-                <div class="label">결과 · {label}</div>
-                <div class="value">{display}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.metric(f"결과 · {label}", display)
         export_df = st.session_state.get("analysis_filter_df") or st.session_state.get(
             "selected_df"
         )
@@ -338,13 +253,15 @@ def _render_operation_result() -> None:
 
 
 def _render_chat_input() -> None:
-    st.markdown("---")
+    st.divider()
     default = st.session_state.pop("pending_prompt", "") or ""
     nonce = st.session_state.get("chat_input_nonce", 0)
     if default:
         nonce += 1
         st.session_state.chat_input_nonce = nonce
 
+    # 기존 form + text_area + 전송 버튼 유지
+    # (pending_prompt / pending_analysis_prompt / nonce 세션 로직 보존)
     with st.form("chat_prompt_form", clear_on_submit=True):
         prompt = st.text_area(
             "질문 입력",

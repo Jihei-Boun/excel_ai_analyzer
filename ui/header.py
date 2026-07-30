@@ -1,4 +1,4 @@
-"""상단 헤더."""
+"""상단 헤더 — Streamlit 네이티브 컴포넌트."""
 
 from __future__ import annotations
 
@@ -11,36 +11,21 @@ from ui.upload import get_active_named_frames, is_multi_analysis_mode
 def render_header() -> None:
     target = st.session_state.get("work_target", "원본 df")
     rows = _target_row_count()
+    file_label = _file_status_label()
 
-    left, right = st.columns([3, 2])
-    with left:
-        st.markdown(
-            f"""
-            <div class="app-header-left" style="margin-bottom:0.75rem;">
-                <div class="app-logo">EA</div>
-                <div>
-                    <p class="app-title">Excel AI Analyzer</p>
-                    <p class="app-subtitle">엑셀 데이터를 자연어로 분석합니다</p>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with right:
-        r1, r2 = st.columns([2.2, 1])
-        with r1:
-            file_label = _file_status_label()
-            st.markdown(
-                f'<div style="display:flex;justify-content:flex-end;padding-top:0.35rem;">'
-                f'<span class="status-pill">{file_label} · {target} · {rows:,}행</span></div>',
-                unsafe_allow_html=True,
-            )
-        with r2:
-            if st.button("초기화", use_container_width=True):
-                reset_work_state(clear_chat=True)
-                st.rerun()
+    title_col, action_col = st.columns([5, 1])
+    with title_col:
+        st.title("Excel AI Analyzer")
+        st.caption("엑셀 데이터를 자연어로 분석합니다")
+        st.caption(f"{file_label} · {target} · {rows:,}행")
+    with action_col:
+        # 제목 줄과 같은 높이에 두지 않고 버튼만 배치 (상단 툴바 겹침 방지)
+        st.write("")
+        if st.button("초기화", use_container_width=True):
+            reset_work_state(clear_chat=True)
+            st.rerun()
 
-    st.markdown('<hr class="app-divider">', unsafe_allow_html=True)
+    st.divider()
 
 
 def _file_status_label() -> str:

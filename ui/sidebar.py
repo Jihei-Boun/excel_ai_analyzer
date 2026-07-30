@@ -32,43 +32,9 @@ def _check_ollama(base_url: str) -> bool:
         return False
 
 
-_THEME_LABELS = {"dark": "다크", "light": "라이트"}
-_THEME_VALUES = {"다크": "dark", "라이트": "light"}
-
-
-def sync_theme_from_widget() -> None:
-    """위젯 상태가 있으면 테마를 먼저 동기화한다 (스타일 주입 전)."""
-    label = st.session_state.get("theme_radio")
-    if label in _THEME_VALUES:
-        st.session_state.theme = _THEME_VALUES[label]
-
-
-def _on_theme_change() -> None:
-    """라디오 변경 시 단일 theme 키만 갱신한다 (무한 rerun 없음)."""
-    label = st.session_state.get("theme_radio")
-    if label in _THEME_VALUES:
-        st.session_state.theme = _THEME_VALUES[label]
-
-
 def render_sidebar() -> None:
     with st.sidebar:
-        st.markdown('<p class="sidebar-label">외형</p>', unsafe_allow_html=True)
-        current = st.session_state.get("theme", "dark")
-        if current not in _THEME_LABELS:
-            current = "dark"
-            st.session_state.theme = current
-        chosen_label = st.radio(
-            "테마",
-            options=list(_THEME_LABELS.values()),
-            index=list(_THEME_LABELS).index(current),
-            horizontal=True,
-            label_visibility="collapsed",
-            key="theme_radio",
-            on_change=_on_theme_change,
-        )
-        st.session_state.theme = _THEME_VALUES[chosen_label]
-
-        st.markdown('<p class="sidebar-label">분석 상세</p>', unsafe_allow_html=True)
+        st.subheader("분석 상세")
         st.session_state.show_analysis_code = st.checkbox(
             "실행 코드 표시",
             value=bool(st.session_state.get("show_analysis_code", False)),
@@ -80,8 +46,7 @@ def render_sidebar() -> None:
             help="예실대비표 전용 요약·하단 요약행(내부흡수액·외부유출액) 제외를 사용합니다.",
         )
 
-        st.markdown('<p class="sidebar-label">연결</p>', unsafe_allow_html=True)
-
+        st.subheader("연결")
         st.session_state.ollama_base_url = st.text_input(
             "Ollama URL",
             value=st.session_state.ollama_base_url,
@@ -91,14 +56,13 @@ def render_sidebar() -> None:
         connected = _check_ollama(st.session_state.ollama_base_url)
         st.session_state.ollama_connected = connected
         if connected:
-            st.markdown('<div class="conn-ok">● Ollama 연결됨</div>', unsafe_allow_html=True)
+            st.success("Ollama 연결됨")
         else:
-            st.markdown('<p class="conn-fail">Ollama에 연결할 수 없습니다</p>', unsafe_allow_html=True)
+            st.error("Ollama에 연결할 수 없습니다")
 
         models = _fetch_ollama_models(st.session_state.ollama_base_url)
         model_options = models or [st.session_state.ollama_model]
-        # selectbox는 Streamlit 다크 테마 잔여로 라이트에서 검게 남는 경우가 있어 radio 사용
-        st.session_state.ollama_model = st.radio(
+        st.session_state.ollama_model = st.selectbox(
             "분석 모델",
             model_options,
             index=_model_index(model_options, st.session_state.ollama_model),
@@ -106,7 +70,7 @@ def render_sidebar() -> None:
 
         files = st.session_state.get("uploaded_files") or []
         if files:
-            st.markdown('<p class="sidebar-label">분석할 파일</p>', unsafe_allow_html=True)
+            st.subheader("분석할 파일")
             from ui.file_state import (
                 activate_file,
                 activate_files,
@@ -168,6 +132,11 @@ def render_sidebar() -> None:
 
             st.caption(f"{len(files)}개 업로드됨")
 
+        st.caption(
+            "테마 변경: 화면 우측 상단 ⋮(또는 ☰) → Settings → Theme 에서 "
+            "Light / Dark / Use system setting 을 선택하세요."
+        )
+
 
 def _render_sheet_multiselect(file_id: str) -> None:
     """단일 파일 모드에서 시트 다중 선택 UI."""
@@ -180,7 +149,7 @@ def _render_sheet_multiselect(file_id: str) -> None:
     if len(sheet_names) < 2:
         return
 
-    st.markdown('<p class="sidebar-label">분석할 시트</p>', unsafe_allow_html=True)
+    st.subheader("분석할 시트")
     current = get_active_sheet_names() or [meta.get("current_sheet") or sheet_names[0]]
     desired = [name for name in current if name in sheet_names]
     if not desired:
