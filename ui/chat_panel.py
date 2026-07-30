@@ -236,9 +236,9 @@ def _render_operation_result() -> None:
         except (TypeError, ValueError):
             display = str(result)
         st.metric(f"결과 · {label}", display)
-        export_df = st.session_state.get("analysis_filter_df") or st.session_state.get(
-            "selected_df"
-        )
+        export_df = st.session_state.get("analysis_filter_df")
+        if export_df is None:
+            export_df = st.session_state.get("selected_df")
 
     if export_df is not None and isinstance(export_df, pd.DataFrame):
         buffer = io.BytesIO()
