@@ -6,7 +6,8 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from core.analyzer import find_mentioned_column, format_context_label
+from core.column_match import find_mentioned_column
+from core.value_filter import format_context_label
 from core.constants import (
     AMOUNT_COLUMN_HINTS,
     CODE_COLUMN_HINTS,

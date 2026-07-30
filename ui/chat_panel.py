@@ -13,12 +13,14 @@ import streamlit as st
 
 from ui.chat import process_user_prompt
 from ui.display import render_dataframe
-from ui.session_store import MULTI_FILE_PROMPTS, RECOMMENDED_PROMPTS
+from ui.session_store import MULTI_FILE_PROMPTS, MULTI_SHEET_PROMPTS, RECOMMENDED_PROMPTS
 from ui.upload import (
     get_active_named_frames,
     get_analysis_df,
     get_analysis_file_name,
     is_multi_analysis_mode,
+    is_multi_file_analysis,
+    is_multi_sheet_analysis,
 )
 from core.constants import CHAT_EXAMPLE_LIMIT, CHAT_PREVIEW_ROWS
 
@@ -28,9 +30,10 @@ def render_chat_panel() -> None:
     multi_mode = is_multi_analysis_mode()
     if multi_mode:
         active_names = [name for name, _ in get_active_named_frames()]
+        unit = "시트" if is_multi_sheet_analysis() else "파일"
         st.markdown(
             '<p class="panel-desc">'
-            f"선택된 {len(active_names)}개 파일을 동시에 분석합니다. "
+            f"선택된 {len(active_names)}개 {unit}를 동시에 분석합니다. "
             "비교·병합·교차 집계를 자연어로 요청하세요."
             "</p>",
             unsafe_allow_html=True,
@@ -93,7 +96,13 @@ def _render_chat_history() -> None:
     messages = st.session_state.chat_messages
     if not messages:
         st.caption("아직 대화가 없습니다. 아래 예시로 시작해 보세요.")
-        examples = MULTI_FILE_PROMPTS if is_multi_analysis_mode() else RECOMMENDED_PROMPTS
+        examples = (
+            MULTI_SHEET_PROMPTS
+            if is_multi_sheet_analysis()
+            else MULTI_FILE_PROMPTS
+            if is_multi_file_analysis()
+            else RECOMMENDED_PROMPTS
+        )
         cols = st.columns(2)
         for idx, prompt in enumerate(examples[:CHAT_EXAMPLE_LIMIT]):
             with cols[idx % 2]:
@@ -154,7 +163,12 @@ def _format_chat_html(content: object) -> str:
     """채팅 본문을 HTML로 안전하게 변환한다 (줄바꿈·강조·목록)."""
     text = html.escape(str(content or ""))
     text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
-    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+    # Streamlit 네이티브 <code>는 다크 테마 잔여로 검은 박스가 되므로 커스텀 클래스를 쓴다.
+    text = re.sub(
+        r"`([^`]+)`",
+        r'<span class="chat-inline-code">\1</span>',
+        text,
+    )
 
     lines = text.split("\n")
     rendered: list[str] = []
@@ -351,7 +365,8 @@ def _render_chat_input() -> None:
             return
         if is_multi_analysis_mode():
             if len(get_active_named_frames()) < 2:
-                st.warning("동시 분석 모드에서는 파일 2개 이상을 선택하세요.")
+                unit = "시트" if is_multi_sheet_analysis() else "파일"
+                st.warning(f"동시 분석 모드에서는 {unit} 2개 이상을 선택하세요.")
                 return
         elif get_analysis_df() is None:
             st.warning("먼저 엑셀 파일을 업로드하세요.")

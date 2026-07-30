@@ -6,7 +6,12 @@ import streamlit as st
 
 from core.excel_loader import load_excel, sanitize_dataframe
 from ui.display import for_preview_display, preview_column_labels, render_dataframe
-from ui.upload import get_preview_context, set_preview_file
+from ui.file_state import (
+    get_preview_context,
+    is_multi_sheet_analysis,
+    set_preview_file,
+)
+from ui.session_store import clear_selection_and_operation
 
 
 def render_preview_section() -> None:
@@ -43,10 +48,18 @@ def render_preview_section() -> None:
     sheet_names = meta.get("sheet_names") or []
     current_sheet = meta.get("current_sheet")
     if len(sheet_names) > 1:
-        selected = st.selectbox(
-            "시트",
+        label = "미리볼 시트"
+        if (
+            preview_id == st.session_state.get("active_file_id")
+            and is_multi_sheet_analysis()
+        ):
+            label = "미리볼 시트 (분석 시트와 별개)"
+        selected = st.pills(
+            label,
             sheet_names,
-            index=sheet_names.index(current_sheet) if current_sheet in sheet_names else 0,
+            selection_mode="single",
+            default=current_sheet if current_sheet in sheet_names else sheet_names[0],
+            required=True,
             key=f"preview_sheet_{preview_id}",
         )
         if selected != current_sheet:
@@ -108,18 +121,29 @@ def _switch_preview_sheet(file_id: str, meta: dict, sheet_name: str) -> None:
     df = load_excel(path, sheet_name=sheet_name)
     meta["current_sheet"] = sheet_name
     st.session_state.setdefault("file_frames", {})[file_id] = df
+    st.session_state.setdefault("sheet_frames", {})[f"{file_id}::{sheet_name}"] = df
 
     sanitized_ids = st.session_state.setdefault("_preview_sanitized_ids", set())
     sanitized_ids.discard(file_id)
 
-    # 미리보는 파일이 곧 분석 대상이면 분석용 상태도 맞춤
+    # 미리보는 파일이 곧 분석 대상이면…
     if file_id == st.session_state.get("active_file_id"):
+        st.session_state.sheet_names = meta.get("sheet_names") or []
+        # 시트 동시 분석 중이면 미리보기만 바꾸고 분석 선택 시트는 유지
+        if is_multi_sheet_analysis():
+            st.rerun()
+            return
+        # 단일 시트 분석: 미리보기 시트 = 분석 시트
+        meta["active_sheets"] = [sheet_name]
         st.session_state.df = df
         st.session_state.current_sheet = sheet_name
-        st.session_state.sheet_names = meta.get("sheet_names") or []
         st.session_state._df_sanitized = True
-        st.session_state.selected_df = None
-        st.session_state.operation_result = None
+        clear_selection_and_operation()
+        # 사이드바 시트 multiselect는 위젯 생성 전에 맞춘다
+        st.session_state._pending_sidebar_sheets = {
+            "file_id": file_id,
+            "sheets": [sheet_name],
+        }
 
     st.rerun()
 

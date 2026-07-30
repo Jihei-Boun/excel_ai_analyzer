@@ -98,21 +98,21 @@ def render_sidebar() -> None:
         files = st.session_state.get("uploaded_files") or []
         if files:
             st.markdown('<p class="sidebar-label">분석할 파일</p>', unsafe_allow_html=True)
-            from ui.upload import (
+            from ui.file_state import (
                 activate_file,
                 activate_files,
                 get_active_named_frames,
-                is_multi_analysis_mode,
+                is_multi_file_analysis,
             )
 
             if len(files) >= 2:
                 st.caption(
-                    "동시 분석 모드"
-                    if is_multi_analysis_mode()
+                    "파일 동시 분석 모드"
+                    if is_multi_file_analysis()
                     else "단일 파일 모드"
                 )
 
-            if is_multi_analysis_mode():
+            if is_multi_file_analysis():
                 ids = [meta["id"] for meta in files]
                 labels = [meta["name"] for meta in files]
                 default = [
@@ -136,7 +136,7 @@ def render_sidebar() -> None:
                         st.rerun()
                     elif len(files) >= 2:
                         st.caption("동시 분석에는 파일 2개 이상을 선택하세요.")
-                st.caption(f"{len(get_active_named_frames())}개 동시 분석 중")
+                st.caption(f"{len(get_active_named_frames())}개 파일 동시 분석 중")
             else:
                 active_id = st.session_state.get("active_file_id")
                 label_by_id = {f["id"]: f["name"] for f in files}
@@ -155,8 +155,60 @@ def render_sidebar() -> None:
                     activate_file(chosen, reset_analysis=True, sync_mode_radio=False)
                     st.rerun()
                 st.caption("이 파일이 AI 분석 대상입니다")
+                _render_sheet_multiselect(chosen)
 
             st.caption(f"{len(files)}개 업로드됨")
+
+
+def _render_sheet_multiselect(file_id: str) -> None:
+    """단일 파일 모드에서 시트 다중 선택 UI."""
+    from ui.file_state import find_file, get_active_sheet_names, set_active_sheets
+
+    meta = find_file(file_id)
+    if meta is None:
+        return
+    sheet_names = list(meta.get("sheet_names") or [])
+    if len(sheet_names) < 2:
+        return
+
+    st.markdown('<p class="sidebar-label">분석할 시트</p>', unsafe_allow_html=True)
+    current = get_active_sheet_names() or [meta.get("current_sheet") or sheet_names[0]]
+    desired = [name for name in current if name in sheet_names]
+    if not desired:
+        desired = [sheet_names[0]]
+
+    # key만 쓰고 default는 쓰지 않는다 (Streamlit에서 값 불일치 원인).
+    widget_key = f"sidebar_sheets_{file_id}"
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = desired
+    else:
+        # 옵션에 없는 값 제거
+        stored = [
+            name
+            for name in (st.session_state.get(widget_key) or [])
+            if name in sheet_names
+        ]
+        if not stored:
+            st.session_state[widget_key] = desired
+        elif stored != st.session_state.get(widget_key):
+            st.session_state[widget_key] = stored
+
+    picked = st.multiselect(
+        "동시 분석할 시트",
+        options=sheet_names,
+        help="2개 이상 선택하면 시트별로 동시에 분석합니다. 미리보기는 아래에서 시트를 따로 볼 수 있습니다.",
+        key=widget_key,
+    )
+    if not picked:
+        st.caption("시트를 1개 이상 선택하세요.")
+        return
+    if list(picked) != list(current):
+        set_active_sheets(list(picked), file_id=file_id, reset_analysis=True)
+        st.rerun()
+    if len(picked) >= 2:
+        st.caption(f"시트 {len(picked)}개 동시 분석 중")
+    else:
+        st.caption(f"현재 시트: {picked[0]}")
 
 
 def _model_index(options: list[str], current: str) -> int:

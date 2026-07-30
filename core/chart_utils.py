@@ -189,7 +189,7 @@ def generate_multi_file_chart(
     if not named_dfs:
         return None
 
-    from core.analyzer import _resolve_metric_column, find_mentioned_numeric_column
+    from core.column_match import resolve_metric_column, find_mentioned_numeric_column
     from core.pandasai_config import sum_metric_excluding_totals
 
     probe = next((frame for _, frame in named_dfs if frame is not None and not frame.empty), None)
@@ -209,7 +209,7 @@ def generate_multi_file_chart(
     for name, frame in named_dfs:
         if frame is None or frame.empty:
             continue
-        resolved = _resolve_metric_column(frame, metric_col) or metric_col
+        resolved = resolve_metric_column(frame, metric_col) or metric_col
         total = sum_metric_excluding_totals(frame, resolved)
         if total is None:
             continue
@@ -323,15 +323,15 @@ def _pick_chart_columns(
     df: pd.DataFrame,
     prompt: str,
 ) -> tuple[str | None, str | None]:
-    from core.analyzer import (
-        _looks_like_code_metric_column,
+    from core.column_match import (
+        looks_like_code_metric_column,
         find_mentioned_numeric_columns,
     )
 
     numeric_cols: list[str] = []
     for col in df.columns:
         coerced = pd.to_numeric(df[col], errors="coerce")
-        if coerced.notna().any() and not _looks_like_code_metric_column(df, col):
+        if coerced.notna().any() and not looks_like_code_metric_column(df, col):
             numeric_cols.append(col)
 
     cat_cols = [

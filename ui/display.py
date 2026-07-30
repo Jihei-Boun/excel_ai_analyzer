@@ -67,7 +67,7 @@ def render_dataframe(
     """테마에 맞춰 표를 그린다.
 
     라이트 모드는 Streamlit 네이티브 dataframe(캔버스)이 다크 테마로 남는 경우가
-    있어, 우리가 직접 스타일한 HTML 표로 표시한다.
+    있어, 인라인 스타일 HTML 표로 표시한다.
     """
     display = for_display(df)
     labels = dict(column_labels or {})
@@ -78,10 +78,14 @@ def render_dataframe(
                 labels[str(key)] = str(label)
 
     if st.session_state.get("theme") == "light":
-        st.markdown(
-            _light_html_table(display, height=height, labels=labels, hide_index=hide_index),
-            unsafe_allow_html=True,
+        html_table = _light_html_table(
+            display, height=height, labels=labels, hide_index=hide_index
         )
+        # st.html은 마크다운 새니타이즈를 피해 인라인 스타일이 유지된다.
+        if hasattr(st, "html"):
+            st.html(html_table)
+        else:
+            st.markdown(html_table, unsafe_allow_html=True)
         return
 
     kwargs: dict = {
@@ -101,26 +105,51 @@ def _light_html_table(
     labels: dict[str, str],
     hide_index: bool,
 ) -> str:
+    # Streamlit 네이티브(다크) 테마 CSS가 덮어쓰지 않도록 인라인으로 고정한다.
+    th_style = (
+        "position:sticky;top:0;z-index:1;background:#f3f4f6!important;"
+        "color:#111827!important;-webkit-text-fill-color:#111827!important;"
+        "border-bottom:1px solid #d0d7e2;padding:0.45rem 0.6rem;"
+        "text-align:left;white-space:nowrap;font-weight:600;"
+    )
+    td_style = (
+        "background:#ffffff!important;color:#111827!important;"
+        "-webkit-text-fill-color:#111827!important;"
+        "border-bottom:1px solid #e5e7eb;padding:0.4rem 0.6rem;white-space:nowrap;"
+    )
+
     header_cells: list[str] = []
     if not hide_index:
-        header_cells.append("<th></th>")
+        header_cells.append(f'<th style="{th_style}"></th>')
     for column in df.columns:
         title = labels.get(str(column), str(column))
-        header_cells.append(f"<th>{html.escape(title)}</th>")
+        header_cells.append(
+            f'<th style="{th_style}">{html.escape(title)}</th>'
+        )
 
     body_rows: list[str] = []
-    for index, row in df.iterrows():
+    for row_i, (index, row) in enumerate(df.iterrows()):
+        row_bg = "#ffffff" if row_i % 2 == 0 else "#f9fafb"
+        cell_style = td_style.replace(
+            "background:#ffffff!important;",
+            f"background:{row_bg}!important;",
+        )
         cells: list[str] = []
         if not hide_index:
-            cells.append(f"<td>{html.escape(str(index))}</td>")
+            cells.append(
+                f'<td style="{cell_style}">{html.escape(str(index))}</td>'
+            )
         for column in df.columns:
             value = row[column]
-            cells.append(f"<td>{html.escape(_format_cell_value(value))}</td>")
+            cells.append(
+                f'<td style="{cell_style}">'
+                f"{html.escape(_format_cell_value(value))}</td>"
+            )
         body_rows.append(f"<tr>{''.join(cells)}</tr>")
 
     return f"""
 <div class="light-df-wrap" style="max-height:{height}px;overflow:auto;border:1px solid #d0d7e2;border-radius:8px;background:#ffffff;">
-  <table class="light-df">
+  <table class="light-df" style="width:100%;border-collapse:collapse;background:#ffffff;color:#111827;font-size:0.82rem;">
     <thead><tr>{''.join(header_cells)}</tr></thead>
     <tbody>{''.join(body_rows)}</tbody>
   </table>

@@ -81,12 +81,13 @@ def build_multi_file_summary(
     *,
     sheet_info: dict[str, dict] | None = None,
     use_budget_profile: bool = False,
+    unit_label: str = "파일",
 ) -> str:
-    """여러 파일을 짧게 이어서 요약한다."""
+    """여러 파일(또는 시트)을 짧게 이어서 요약한다."""
     if not named_dfs:
-        return "요약할 파일이 없습니다."
+        return f"요약할 {unit_label}이(가) 없습니다."
 
-    parts: list[str] = [f"선택된 파일 {len(named_dfs)}개를 요약합니다.\n"]
+    parts: list[str] = [f"선택된 {unit_label} {len(named_dfs)}개를 요약합니다.\n"]
     for name, frame in named_dfs:
         info = (sheet_info or {}).get(name) or {}
         block = build_file_summary(
