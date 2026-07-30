@@ -383,8 +383,15 @@ def remove_file(file_id: str) -> None:
     if isinstance(sanitized, set):
         sanitized.discard(file_id)
 
-    # 업로더 위젯을 리셋해 삭제 직후 동일 파일이 다시 추가되지 않게 함
-    st.session_state.uploader_nonce = st.session_state.get("uploader_nonce", 0) + 1
+    excluded = st.session_state.setdefault("_uploader_excluded_names", set())
+    excluded.add(file_id)
+
+    if not files:
+        # 전부 삭제된 경우에만 업로더 위젯을 리셋
+        st.session_state.uploader_nonce = st.session_state.get("uploader_nonce", 0) + 1
+        st.session_state._uploader_excluded_names = set()
+    # 일부만 삭제: 위젯은 유지 → 업로드 박스 안에 남은 파일 칩이 그대로 보임
+    # (삭제된 칩은 styles.py JS가 excluded 이름으로 숨김)
 
     if st.session_state.get("preview_file_id") == file_id:
         st.session_state.preview_file_id = files[-1]["id"] if files else None

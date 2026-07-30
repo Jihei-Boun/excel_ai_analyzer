@@ -54,13 +54,16 @@ def render_preview_section() -> None:
             and is_multi_sheet_analysis()
         ):
             label = "미리볼 시트 (분석 시트와 별개)"
-        selected = st.pills(
+        options = list(sheet_names)
+        default = current_sheet if current_sheet in options else options[0]
+        widget_key = f"preview_sheet_{preview_id}"
+        if st.session_state.get(widget_key) not in options:
+            st.session_state[widget_key] = default
+        selected = st.radio(
             label,
-            sheet_names,
-            selection_mode="single",
-            default=current_sheet if current_sheet in sheet_names else sheet_names[0],
-            required=True,
-            key=f"preview_sheet_{preview_id}",
+            options=options,
+            horizontal=True,
+            key=widget_key,
         )
         if selected != current_sheet:
             _switch_preview_sheet(preview_id, meta, selected)

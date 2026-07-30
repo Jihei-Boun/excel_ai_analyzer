@@ -10,6 +10,7 @@ from core.result_format import exclude_aggregate_rows, expects_list_display, to_
 def test_expects_list_display() -> None:
     assert expects_list_display("항목 리스트로 보여줘") is True
     assert expects_list_display("표로 보여줘") is False
+    assert expects_list_display("각 시트의 행 수와 컬럼 목록을 비교해줘") is False
 
 
 def test_exclude_aggregate_rows_removes_totals() -> None:

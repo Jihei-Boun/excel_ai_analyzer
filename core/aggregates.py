@@ -244,8 +244,9 @@ def build_multi_context_aggregate_table(
     prompt: str,
     *,
     context_label: str | None = None,
+    unit_label: str = "파일",
 ) -> tuple[pd.DataFrame, str] | None:
-    """다중 파일 집계를 파일별 행 · 수치 컬럼 열 요약 표로 만든다.
+    """다중 파일/시트 집계를 단위별 행 · 수치 컬럼 열 요약 표로 만든다.
 
     예::
                      | 계획예산
@@ -272,6 +273,13 @@ def build_multi_context_aggregate_table(
     if not metric_cols:
         return None
 
+    # 코드성 수치는 금액 합계에서 제외
+    metric_cols = [
+        col for col in metric_cols if not looks_like_code_metric_column(probe, col)
+    ]
+    if not metric_cols:
+        return None
+
     op_name, reduce = _aggregate_reducer(op)
     ctx = format_context_label(context_label)
     rows: list[dict[str, object]] = []
@@ -288,10 +296,20 @@ def build_multi_context_aggregate_table(
             col = resolve_metric_column(df, metric_col)
             if col is None:
                 continue
-            from core.pandasai_config import sum_metric_excluding_totals
+            from core.pandasai_config import (
+                exclude_total_rows,
+                prepare_dataframe_for_ai,
+                sum_metric_excluding_totals,
+            )
 
-            value = sum_metric_excluding_totals(df, col)
-            if value is None:
+            if op == "sum":
+                value = sum_metric_excluding_totals(df, col)
+            else:
+                work = exclude_total_rows(prepare_dataframe_for_ai(df))
+                if col not in work.columns:
+                    continue
+                value = reduce(pd.to_numeric(work[col], errors="coerce"))
+            if value is None or pd.isna(value):
                 continue
             row[str(metric_col)] = value
             file_bits.append(f"{metric_col} {op_name}: {value:,.0f}")
@@ -309,7 +327,7 @@ def build_multi_context_aggregate_table(
     extra = [c for c in table.columns if c not in ordered]
     table = table[ordered + extra]
 
-    prefix = f"{ctx} · 파일별" if ctx and ctx != "합계" else "파일별"
+    prefix = f"{ctx} · {unit_label}별" if ctx and ctx != "합계" else f"{unit_label}별"
     summary = f"{prefix} {op_name} — " + " | ".join(summary_parts)
     return table, summary
 

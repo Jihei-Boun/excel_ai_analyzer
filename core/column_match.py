@@ -122,6 +122,44 @@ def find_mentioned_column(df: pd.DataFrame, prompt: str) -> str | None:
     return mentioned[0] if mentioned else None
 
 
+_ALL_NUMERIC_PHRASES = (
+    "숫자형컬럼",
+    "수치형컬럼",
+    "숫자컬럼",
+    "수치컬럼",
+    "모든숫자형",
+    "전체숫자형",
+    "numericcolumn",
+    "numericcolumns",
+    "allnumeric",
+)
+
+
+def wants_all_numeric_metrics(prompt: str) -> bool:
+    """구체 컬럼명 없이 '숫자형 컬럼 합계'처럼 전 수치 컬럼을 요청했는지."""
+    if not prompt:
+        return False
+    compact = normalize_text(prompt)
+    return any(phrase in compact for phrase in _ALL_NUMERIC_PHRASES)
+
+
+def list_numeric_metric_columns(df: pd.DataFrame) -> list[str]:
+    """집계에 쓸 수치 컬럼 목록 (datetime·코드성 컬럼 제외)."""
+    if df is None or df.empty:
+        return []
+    selected: list[str] = []
+    for column in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[column]):
+            continue
+        coerced = pd.to_numeric(df[column], errors="coerce")
+        if not coerced.notna().any() and not pd.api.types.is_numeric_dtype(df[column]):
+            continue
+        if looks_like_code_metric_column(df, column):
+            continue
+        selected.append(column)
+    return selected
+
+
 def find_mentioned_numeric_column(df: pd.DataFrame, prompt: str) -> str | None:
     """프롬프트에 언급된 수치형 컬럼을 하나 찾는다."""
     columns = find_mentioned_numeric_columns(df, prompt)
@@ -129,7 +167,10 @@ def find_mentioned_numeric_column(df: pd.DataFrame, prompt: str) -> str | None:
 
 
 def find_mentioned_numeric_columns(df: pd.DataFrame, prompt: str) -> list[str]:
-    """프롬프트에 언급된 수치형 컬럼을 모두 찾는다 (금액 컬럼·합계열 우선)."""
+    """프롬프트에 언급된 수치형 컬럼을 모두 찾는다 (금액 컬럼·합계열 우선).
+
+    '숫자형 컬럼'처럼 전체를 요청하면 언급된 이름이 없을 때 전 수치 컬럼을 반환한다.
+    """
     normalized_prompt = normalize_text(prompt)
     group_col = find_groupby_column(df, prompt)
     group_norms = set()
@@ -162,6 +203,13 @@ def find_mentioned_numeric_columns(df: pd.DataFrame, prompt: str) -> list[str]:
         scored.append((amount_bonus + total_bonus + code_penalty, match_len, column))
 
     if not scored:
+        if wants_all_numeric_metrics(prompt):
+            return [
+                col
+                for col in list_numeric_metric_columns(df)
+                if normalize_text(str(col)) not in group_norms
+                and normalize_text(merged_header_base(str(col))) not in group_norms
+            ]
         return []
 
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)

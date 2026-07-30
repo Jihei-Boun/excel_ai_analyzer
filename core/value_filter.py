@@ -351,7 +351,11 @@ def is_metric_aggregate_request(
         probe = next((frame for _, frame in named_dfs if frame is not None and not frame.empty), None)
     if probe is None or probe.empty:
         return False
-    return find_mentioned_numeric_column(probe, prompt) is not None
+    if find_mentioned_numeric_column(probe, prompt) is not None:
+        return True
+    from core.column_match import list_numeric_metric_columns, wants_all_numeric_metrics
+
+    return wants_all_numeric_metrics(prompt) and bool(list_numeric_metric_columns(probe))
 
 
 def _is_exact_value_mention(normalized_value: str, normalized_prompt: str) -> bool:

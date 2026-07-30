@@ -78,12 +78,16 @@ def render_upload_section() -> None:
 
 def _handle_uploads(uploaded_list) -> None:
     existing_ids = {f["id"] for f in st.session_state.uploaded_files}
+    excluded = st.session_state.setdefault("_uploader_excluded_names", set())
     new_ids: list[str] = []
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
     for uploaded in uploaded_list:
         file_id = uploaded.name
+        # 삭제했다가 위젯에만 남은 파일은 다시 등록하지 않음
+        if file_id in excluded:
+            continue
         if file_id in existing_ids:
             continue
 
@@ -116,7 +120,9 @@ def _handle_uploads(uploaded_list) -> None:
         new_ids.append(file_id)
 
     if new_ids:
-        # 새 파일은 미리보기로도 열어 두고, 분석 대상은 기존 로직대로
+        # 새로 올린 이름은 제외 목록에서 제거
+        for file_id in new_ids:
+            excluded.discard(file_id)
         st.session_state.preview_file_id = new_ids[-1]
         st.session_state._pending_preview_radio = new_ids[-1]
         if len(st.session_state.get("uploaded_files") or []) >= 2:
@@ -128,13 +134,12 @@ def _handle_uploads(uploaded_list) -> None:
 
 
 def _render_file_list() -> None:
-    """업로드 목록만 표시. 분석 대상 선택은 사이드바에서 한다."""
+    """업로드 목록 + 삭제. 칩은 업로더 안에, 삭제는 여기서 처리."""
     files = st.session_state.get("uploaded_files") or []
     if not files:
         return
 
     multi_mode = is_multi_file_analysis()
-    # 단일 모드인데 활성 파일이 2개 이상이면 강제로 1개만 유지
     if not multi_mode and len(st.session_state.get("active_file_ids") or []) > 1:
         primary = st.session_state.get("active_file_id") or files[0]["id"]
         activate_file(primary, reset_analysis=False, sync_mode_radio=False)

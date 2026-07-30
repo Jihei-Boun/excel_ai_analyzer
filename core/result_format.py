@@ -42,10 +42,21 @@ class ListDisplayResult:
 
 def expects_list_display(prompt: str) -> bool:
     """단일 값 나열 형태로 보여줄 요청인지 판별한다."""
+    from core.schema_compare import is_schema_request
+    from core.text_normalize import normalize_text
+
+    if is_schema_request(prompt):
+        return False
     lowered = prompt.lower()
     if not any(keyword in lowered for keyword in _LIST_DISPLAY_KEYWORDS):
         return False
     if "표로" in lowered or "표 형" in lowered:
+        return False
+    compact = normalize_text(prompt)
+    # '컬럼 목록 비교'처럼 스키마 문맥의 '목록'만 있는 경우 제외
+    if ("컬럼목록" in compact or "열목록" in compact) and not any(
+        k in compact for k in ("리스트", "뽑아", "나열", "list")
+    ):
         return False
     return True
 

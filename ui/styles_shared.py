@@ -260,6 +260,26 @@ def shared_layout_css() -> str:
         border-radius: 8px;
         display: block;
     }
+
+    /* 업로더 안 파일 칩 — 깨진 아이콘/칩삭제만 숨김 (파일명은 유지) */
+    [data-testid="stFileChip"] > :first-child:not(:has([data-testid="stFileChipName"])),
+    [data-testid="stFileChipImagePreview"],
+    [data-testid="stFileChipDeleteBtn"],
+    [data-testid="stFileChipIconSpinner"],
+    [data-testid="stFileChipIconError"] {
+        display: none !important;
+    }
+
+    [data-testid="stFileChips"] {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 0.5rem !important;
+    }
+
+    [data-testid="stFileChip"] {
+        border-radius: 8px !important;
+        padding: 0.45rem 0.7rem !important;
+    }
 """
 
 

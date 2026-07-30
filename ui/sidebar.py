@@ -43,12 +43,20 @@ def sync_theme_from_widget() -> None:
         st.session_state.theme = _THEME_VALUES[label]
 
 
+def _on_theme_change() -> None:
+    """라디오 변경 시 단일 theme 키만 갱신한다 (무한 rerun 없음)."""
+    label = st.session_state.get("theme_radio")
+    if label in _THEME_VALUES:
+        st.session_state.theme = _THEME_VALUES[label]
+
+
 def render_sidebar() -> None:
     with st.sidebar:
         st.markdown('<p class="sidebar-label">외형</p>', unsafe_allow_html=True)
         current = st.session_state.get("theme", "dark")
         if current not in _THEME_LABELS:
             current = "dark"
+            st.session_state.theme = current
         chosen_label = st.radio(
             "테마",
             options=list(_THEME_LABELS.values()),
@@ -56,6 +64,7 @@ def render_sidebar() -> None:
             horizontal=True,
             label_visibility="collapsed",
             key="theme_radio",
+            on_change=_on_theme_change,
         )
         st.session_state.theme = _THEME_VALUES[chosen_label]
 

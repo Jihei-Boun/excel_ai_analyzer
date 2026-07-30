@@ -25,6 +25,7 @@ from core.prompt_intent import (
     detect_aggregate_op,
     wants_table_and_chart,
 )
+from core.schema_compare import build_schema_outcome, is_schema_request
 from core.result_format import exclude_aggregate_rows, to_list_display
 from core.text_normalize import _normalize_text
 from core.value_filter import (
@@ -265,7 +266,12 @@ def resolve_multi_aggregate_source(
         )
 
     if not context_label:
-        context_label = infer_context_label(prompt=prompt, result_df=None, full_df=None)
+        # 수치 컬럼 집계만이면 프롬프트 잔여 구('시트별숫자형컬럼비교' 등)를
+        # 행 라벨로 쓰지 않는다. 필터 맥락이 있을 때만 라벨을 붙인다.
+        if not metric_aggregate:
+            context_label = infer_context_label(
+                prompt=prompt, result_df=None, full_df=None
+            )
     return prepared, str(context_label) if context_label else None, None, context_label
 
 
@@ -289,6 +295,19 @@ def route_single_prompt(
         if reply is None:
             reply = build_file_summary(full_df, use_budget_profile=use_budget_profile)
         return SingleRouteOutcome(reply=reply, dataframe=None)
+
+    if is_schema_request(prompt):
+        reply, table = build_schema_outcome(
+            prompt,
+            [("현재 데이터", full_df)],
+            unit_label="대상",
+        )
+        return SingleRouteOutcome(
+            reply=reply,
+            dataframe=table,
+            keep_as_filter=False,
+            replace_selection=False,
+        )
 
     wants_plot = _expects_plot(prompt)
     wants_table = wants_table_and_chart(prompt)
@@ -481,6 +500,19 @@ def route_multi_prompt(
         )
         return SingleRouteOutcome(reply=reply, dataframe=None)
 
+    if is_schema_request(prompt):
+        reply, table = build_schema_outcome(
+            prompt,
+            prepared,
+            unit_label=unit_label,
+        )
+        return SingleRouteOutcome(
+            reply=reply,
+            dataframe=table,
+            keep_as_filter=False,
+            replace_selection=False,
+        )
+
     if detect_aggregate_op(prompt) is not None:
         source_named, agg_context, new_filter, new_label = resolve_multi_aggregate_source(
             prepared,
@@ -492,6 +524,7 @@ def route_multi_prompt(
             source_named,
             prompt,
             context_label=agg_context,
+            unit_label=unit_label,
         )
         if contextual is not None:
             table, summary = contextual

@@ -191,6 +191,59 @@ def test_build_multi_context_aggregate_table_sums_by_file() -> None:
     assert "파일별" in summary
 
 
+def test_build_multi_all_numeric_column_sums_by_sheet() -> None:
+    """'숫자형 컬럼 합계'는 구체 컬럼명 없이도 시트별 규칙 집계로 처리한다."""
+    prompt = "시트별로 숫자형 컬럼 합계를 표로 비교해줘"
+    named = [
+        (
+            "1월",
+            pd.DataFrame(
+                {
+                    "지역": ["서울", "부산"],
+                    "수량": [2, 3],
+                    "단가": [100, 200],
+                    "매출": [200, 600],
+                }
+            ),
+        ),
+        (
+            "2월",
+            pd.DataFrame(
+                {
+                    "지역": ["서울"],
+                    "수량": [5],
+                    "단가": [300],
+                    "매출": [1500],
+                }
+            ),
+        ),
+    ]
+    assert is_metric_aggregate_request(prompt, named_dfs=named) is True
+    result = build_multi_context_aggregate_table(named, prompt, unit_label="시트")
+    assert result is not None
+    table, summary = result
+    assert list(table["출처파일"]) == ["1월", "2월"]
+    assert set(table.columns) >= {"출처파일", "수량", "단가", "매출"}
+    assert table.loc[table["출처파일"] == "1월", "매출"].iloc[0] == 800
+    assert table.loc[table["출처파일"] == "2월", "매출"].iloc[0] == 1500
+    assert "시트별" in summary
+
+    from core.prompt_router import route_multi_prompt
+
+    outcome = route_multi_prompt(
+        prompt,
+        named_frames=named,
+        base_url="http://localhost:11434",
+        model="dummy",
+        context_label=None,
+        filter_df=None,
+        unit_label="시트",
+    )
+    assert outcome.dataframe is not None
+    assert list(outcome.dataframe["출처파일"]) == ["1월", "2월"]
+    assert "시트별숫자형" not in str(outcome.dataframe["출처파일"].iloc[0])
+
+
 def test_chart_from_aggregate_table_uses_same_totals() -> None:
     """집계 표를 차트로 그릴 때 표와 동일한 파일별 합계를 사용한다."""
     from core.chart_utils import generate_fallback_chart

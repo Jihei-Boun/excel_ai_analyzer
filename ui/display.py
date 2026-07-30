@@ -8,8 +8,6 @@ import re
 import pandas as pd
 import streamlit as st
 
-from core.excel_loader import merged_header_base
-
 _MERGED_SUFFIX_RE = re.compile(r"^(.+)_(\d+)$")
 
 
@@ -64,10 +62,10 @@ def render_dataframe(
     column_config: dict | None = None,
     column_labels: dict[str, str] | None = None,
 ) -> None:
-    """테마에 맞춰 표를 그린다.
+    """현재 테마 CSS 변수로 표를 그린다 (색상은 HTML에 넣지 않음).
 
-    라이트 모드는 Streamlit 네이티브 dataframe(캔버스)이 다크 테마로 남는 경우가
-    있어, 인라인 스타일 HTML 표로 표시한다.
+    st.dataframe(Glide 캔버스)은 Streamlit 네이티브 테마만 따르므로
+    앱 테마 토글과 어긋난다. 매 rerun마다 데이터만으로 HTML을 재생성한다.
     """
     display = for_display(df)
     labels = dict(column_labels or {})
@@ -77,84 +75,51 @@ def render_dataframe(
             if label:
                 labels[str(key)] = str(label)
 
-    if st.session_state.get("theme") == "light":
-        html_table = _light_html_table(
-            display, height=height, labels=labels, hide_index=hide_index
-        )
-        # st.html은 마크다운 새니타이즈를 피해 인라인 스타일이 유지된다.
-        if hasattr(st, "html"):
-            st.html(html_table)
-        else:
-            st.markdown(html_table, unsafe_allow_html=True)
-        return
-
-    kwargs: dict = {
-        "width": "stretch",
-        "height": height,
-        "hide_index": hide_index,
-    }
-    if column_config:
-        kwargs["column_config"] = column_config
-    st.dataframe(display, **kwargs)
+    table_html = _app_html_table(
+        display,
+        height=height,
+        labels=labels,
+        hide_index=hide_index,
+    )
+    if hasattr(st, "html"):
+        st.html(table_html)
+    else:
+        st.markdown(table_html, unsafe_allow_html=True)
 
 
-def _light_html_table(
+def _app_html_table(
     df: pd.DataFrame,
     *,
     height: int,
     labels: dict[str, str],
     hide_index: bool,
 ) -> str:
-    # Streamlit 네이티브(다크) 테마 CSS가 덮어쓰지 않도록 인라인으로 고정한다.
-    th_style = (
-        "position:sticky;top:0;z-index:1;background:#f3f4f6!important;"
-        "color:#111827!important;-webkit-text-fill-color:#111827!important;"
-        "border-bottom:1px solid #d0d7e2;padding:0.45rem 0.6rem;"
-        "text-align:left;white-space:nowrap;font-weight:600;"
-    )
-    td_style = (
-        "background:#ffffff!important;color:#111827!important;"
-        "-webkit-text-fill-color:#111827!important;"
-        "border-bottom:1px solid #e5e7eb;padding:0.4rem 0.6rem;white-space:nowrap;"
-    )
-
+    """색상 없는 HTML 표 — 스타일은 .app-df CSS 변수가 담당."""
+    columns = [str(col) for col in df.columns]
     header_cells: list[str] = []
     if not hide_index:
-        header_cells.append(f'<th style="{th_style}"></th>')
-    for column in df.columns:
-        title = labels.get(str(column), str(column))
-        header_cells.append(
-            f'<th style="{th_style}">{html.escape(title)}</th>'
-        )
+        header_cells.append("<th></th>")
+    for col in columns:
+        title = html.escape(labels.get(col, col))
+        header_cells.append(f"<th>{title}</th>")
 
     body_rows: list[str] = []
-    for row_i, (index, row) in enumerate(df.iterrows()):
-        row_bg = "#ffffff" if row_i % 2 == 0 else "#f9fafb"
-        cell_style = td_style.replace(
-            "background:#ffffff!important;",
-            f"background:{row_bg}!important;",
-        )
+    for idx, row in df.iterrows():
         cells: list[str] = []
         if not hide_index:
-            cells.append(
-                f'<td style="{cell_style}">{html.escape(str(index))}</td>'
-            )
-        for column in df.columns:
-            value = row[column]
-            cells.append(
-                f'<td style="{cell_style}">'
-                f"{html.escape(_format_cell_value(value))}</td>"
-            )
+            cells.append(f"<td>{html.escape(_format_cell_value(idx))}</td>")
+        for col in columns:
+            cells.append(f"<td>{html.escape(_format_cell_value(row[col]))}</td>")
         body_rows.append(f"<tr>{''.join(cells)}</tr>")
 
-    return f"""
-<div class="light-df-wrap" style="max-height:{height}px;overflow:auto;border:1px solid #d0d7e2;border-radius:8px;background:#ffffff;">
-  <table class="light-df" style="width:100%;border-collapse:collapse;background:#ffffff;color:#111827;font-size:0.82rem;">
-    <thead><tr>{''.join(header_cells)}</tr></thead>
-    <tbody>{''.join(body_rows)}</tbody>
-  </table>
-</div>
-"""
+    max_h = max(120, int(height))
+    return (
+        f'<div class="app-df-wrap" style="max-height:{max_h}px;overflow:auto;">'
+        f'<table class="app-df">'
+        f"<thead><tr>{''.join(header_cells)}</tr></thead>"
+        f"<tbody>{''.join(body_rows)}</tbody>"
+        f"</table></div>"
+    )
 
 
 def _normalize_numeric_series(series: pd.Series) -> pd.Series:

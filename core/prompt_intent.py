@@ -133,7 +133,18 @@ def expects_dataframe(prompt: str) -> bool:
 
 
 def is_list_request(prompt: str) -> bool:
+    """데이터 값 리스트 요청인지. '컬럼 목록' 등 스키마 문구는 제외."""
+    from core.schema_compare import is_schema_request
+
+    if is_schema_request(prompt):
+        return False
     lowered = prompt.lower()
+    compact = normalize_text(prompt)
+    # '컬럼목록'/'열목록'만 있고 다른 리스트 동사가 없으면 스키마로 본다
+    if ("컬럼목록" in compact or "열목록" in compact) and not any(
+        k in compact for k in ("리스트", "뽑아", "나열", "list")
+    ):
+        return False
     return any(keyword in lowered for keyword in _LIST_REQUEST_KEYWORDS)
 
 
