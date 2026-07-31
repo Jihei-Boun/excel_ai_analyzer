@@ -491,3 +491,215 @@ def test_groupby_shortcut_skips_topn_ranking_prompt() -> None:
     )
     result = build_groupby_aggregate_table(df, "상위 3개 매출 지역 보여줘")
     assert result is None
+
+
+
+def test_pivot_request_does_not_use_shortcut(monkeypatch) -> None:
+    """피벗 질의는 단축 경로 없이 LLM chat으로 보낸다."""
+    import core.analyzer as analyzer_mod
+
+    df = pd.DataFrame(
+        {
+            "비목분류": ["내부인건비", "", "소 계"],
+            "비용명_2": ["내부인건비", "계약직내부인건비", ""],
+            "집행계_합계": [10, 20, 30],
+        }
+    )
+    called: dict[str, object] = {}
+
+    def _fake_chat(frame, prompt, **kwargs):
+        called["prompt"] = prompt
+        return (
+            pd.DataFrame({"비목분류": ["내부인건비"], "내부인건비": [10]}),
+            "ok",
+            {},
+        )
+
+    monkeypatch.setattr(analyzer_mod, "chat", _fake_chat)
+    result, _summary, _meta = analyzer_mod.run_analysis(
+        df,
+        "비목분류와 비용명을 교차해서 집행계를 피벗해줘",
+        base_url="http://localhost",
+        model="dummy",
+    )
+    assert called.get("prompt") is not None
+    assert isinstance(result, pd.DataFrame)
+
+
+def test_schema_hints_expose_compound_metric_without_rewrite() -> None:
+    """복합 지표는 rewrite하지 않고 힌트로만 노출한다."""
+    from core.column_match import resolve_metric_column
+    from core.schema_hints import build_schema_hints, format_schema_hints_for_prompt
+
+    df = pd.DataFrame(
+        {
+            "집행계_이월집행": [1, 2],
+            "집행계_당해집행": [3, 4],
+            "집행계_합계": [4, 6],
+        }
+    )
+    assert resolve_metric_column(df, "집행계") == "집행계_이월집행"
+
+    hints = build_schema_hints(df)
+    group = hints["__metric_group__집행계"]
+    assert "집행계_합계" in group["total_candidates"]
+    text = format_schema_hints_for_prompt(df, hints)
+    assert "집행계_합계" in text
+    assert "강제 규칙이 아닙니다" in text
+
+
+def test_hierarchical_fill_only_on_analysis_copy() -> None:
+    """원본은 유지하고 분석용 복사본만 forward-fill한다."""
+    from core.schema_hints import prepare_analysis_frame
+
+    raw = pd.DataFrame(
+        {
+            "비목분류": ["내부인건비", "", "소 계", "연구활동비", "", "소 계"],
+            "비용명_2": ["A", "B", "", "C", "D", ""],
+            "집행계_합계": [10, 20, 30, 40, 50, 90],
+        }
+    )
+    analysis = prepare_analysis_frame(raw)
+    assert raw["비목분류"].tolist() == ["내부인건비", "", "소 계", "연구활동비", "", "소 계"]
+    assert analysis["비목분류"].tolist() == [
+        "내부인건비",
+        "내부인건비",
+        "소 계",
+        "연구활동비",
+        "연구활동비",
+        "소 계",
+    ]
+
+
+def test_code_guardrails_flag_pivot_without_forcing_rewrite() -> None:
+    from core.code_guardrails import (
+        build_regeneration_prompt,
+        extract_aggregation_meta,
+        format_aggregation_notice,
+        inspect_generated_code,
+        validate_analysis_result,
+    )
+
+    # 성공한 pivot() 자체는 하드 이슈가 아니다.
+    issues = inspect_generated_code(
+        "result = df.pivot(index='비목분류', columns='비용명_2', values='집행계_합계')",
+        available_columns=["비목분류", "비용명_2", "집행계_합계"],
+    )
+    assert not any("pivot_table" in issue for issue in issues)
+
+    # reshape 실패 안내는 재생성 프롬프트에 명시적으로 넣는다.
+    regen = build_regeneration_prompt(
+        "사용자 요청",
+        [
+            "중복 키로 pivot/unstack가 실패했습니다. "
+            "소계·합계 행 제외와 pivot_table(aggfunc=...) 사용을 검토하세요."
+        ],
+    )
+    assert "자동 치환하지 말고" in regen
+    assert "pivot_table" in regen
+
+    missing = inspect_generated_code(
+        "result = df['없는열']",
+        available_columns=["비목분류", "집행계_합계"],
+    )
+    assert any("존재하지 않는 컬럼" in issue for issue in missing)
+
+    no_agg = inspect_generated_code(
+        "result = df.pivot_table(index='비목분류', values='집행계_합계')",
+        available_columns=["비목분류", "집행계_합계"],
+    )
+    assert any("aggfunc" in issue for issue in no_agg)
+
+    hard, soft = validate_analysis_result(pd.DataFrame())
+    assert hard == []
+    assert soft
+
+    hard_nan, _soft = validate_analysis_result(pd.DataFrame({"a": [None, None]}))
+    assert hard_nan
+
+    agg = extract_aggregation_meta(
+        "out = df.groupby('비목분류')['집행계_합계'].sum()"
+    )
+    assert agg.get("aggregation_used") == "sum"
+    assert "비목분류" in (agg.get("group_keys") or [])
+    notice = format_aggregation_notice(agg)
+    assert notice is not None
+    assert "비목분류" in notice
+
+
+def test_code_columns_are_stringified_on_analysis_copy_only() -> None:
+    """비용명 코드는 분석 복사본에서만 '121' 문자열로 바뀐다."""
+    from core.schema_hints import prepare_analysis_frame
+
+    raw = pd.DataFrame(
+        {
+            "비용명": [121.0, 201.0],
+            "비용명_2": ["내부인건비", "계약직내부인건비"],
+            "집행계_합계": [10.0, 20.0],
+        }
+    )
+    analysis = prepare_analysis_frame(raw)
+    assert raw["비용명"].tolist() == [121.0, 201.0]
+    assert analysis["비용명"].tolist() == ["121", "201"]
+
+
+def test_friendly_error_explains_code_key_error() -> None:
+    from core.pandasai_config import _friendly_error
+
+    message = _friendly_error(KeyError("121.0"))
+    assert "비용명" in message or "코드" in message
+    assert "121" in message
+
+
+def test_near_diagonal_sparse_pivot_triggers_axis_swap_issue() -> None:
+    """대각선 sparse 피벗은 축 교체 재생성 이슈로 잡는다."""
+    from core.code_guardrails import (
+        is_near_diagonal_sparse_pivot,
+        validate_analysis_result,
+    )
+
+    # 비용명 행 × 비목분류 열 (잘못된 축) — 행마다 값 1개
+    bad = pd.DataFrame(
+        {
+            "간접비": [None, 5_419_500, None, None, None],
+            "기타": [None, None, None, None, 0],
+            "내부인건비": [10_990_230, None, None, None, None],
+            "연구수당": [None, None, None, 0, None],
+            "연구시설장비비": [None, None, 2_167_000, None, None],
+            "연구재료비": [None, None, None, None, None],
+            "연구활동비": [None, None, None, None, None],
+        }
+    )
+    # 연구활동비 행을 하나 더 채워 패턴 유지
+    bad.loc[3, "연구활동비"] = 2_025_169
+    assert is_near_diagonal_sparse_pivot(bad) is True
+
+    hard, soft = validate_analysis_result(
+        bad,
+        code="result = df.pivot_table(index='비용명_2', columns='비목분류', "
+        "values='집행계_합계', aggfunc='sum')",
+        user_prompt="비목분류와 비용명을 교차해서 집행계를 피벗해줘",
+    )
+    assert soft == []
+    assert any("대각선" in issue for issue in hard)
+    assert any("index='비목분류'" in issue for issue in hard)
+    assert any("columns='비용명'" in issue for issue in hard)
+
+    # 올바른 축: 비목분류 행 × 비용명 열 — 한 행에 여러 값
+    good = pd.DataFrame(
+        {
+            "비목분류": ["내부인건비", "연구활동비"],
+            "내부인건비": [10_990_230, 0],
+            "계약직내부인건비": [5_523_600, 0],
+            "연구용SW활용비": [0, 2_025_169],
+            "국내여비": [0, 473_960],
+        }
+    )
+    assert is_near_diagonal_sparse_pivot(good) is False
+    hard_good, _ = validate_analysis_result(
+        good,
+        code="result = df.pivot_table(index='비목분류', columns='비용명_2', "
+        "values='집행계_합계', aggfunc='sum')",
+        user_prompt="비목분류와 비용명을 교차해서 집행계를 피벗해줘",
+    )
+    assert not any("대각선" in issue for issue in hard_good)

@@ -155,7 +155,7 @@ def run_analysis(
         summary = build_file_summary(df, use_budget_profile=use_budget_profile)
         return None, summary, {}
 
-    # '비용명별 실행예산 합계' 등 그룹 집계는 LLM 전에 처리한다.
+    # '비용명별 실행예산 합계' 등 그룹 집계 단축 경로 (질의 해석형 — 축소 후보).
     if output_type != "plot" and not skip_aggregate_shortcuts:
         grouped = build_groupby_aggregate_table(
             df,
@@ -164,7 +164,7 @@ def run_analysis(
         )
         if grouped is not None:
             table, summary = grouped
-            return table, summary, {}
+            return table, summary, {"aggregation": {"operation": "groupby"}}
 
     # 값 필터를 리스트 시드보다 먼저 적용한다 (예: 비용명 121만).
     if output_type == "dataframe" and not _is_complex_analysis(prompt):
@@ -187,7 +187,8 @@ def run_analysis(
         "pandas 연산으로 수행하세요.\n"
         "필터링, 정렬, 집계, 그룹화, 피벗, 통계 등 요청의 종류를 스스로 판단하세요.\n"
         "특정 컬럼이나 데이터 형식을 가정하지 마세요.\n"
-        "반복된 상위 분류 값은 원본의 빈 상세 행을 분석용으로 채운 값이므로 "
+        "스키마 힌트는 참고용이며, 컬럼을 임의로 rewrite하지 마세요.\n"
+        "반복된 상위 분류 값은 분석용 복사본에서만 채운 값일 수 있으므로 "
         "같은 분류의 모든 행을 필터링할 때 사용하세요.\n"
         "'리스트', '목록', '표', '보여줘' 요청은 반드시 DataFrame으로 반환하세요.\n"
         "차트·그래프·시각화 요청은 plot type으로 차트를 저장하고 경로를 반환하세요.\n"

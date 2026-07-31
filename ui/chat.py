@@ -21,6 +21,7 @@ from core.prompt_router import (
     route_multi_prompt,
     route_single_prompt,
 )
+from core.pandasai_config import _friendly_error
 from ui.file_state import (
     find_file,
     frame_label_parts,
@@ -53,7 +54,7 @@ def process_user_prompt(prompt: str, *, user_already_added: bool = False) -> Non
             try:
                 reply, extra_df, extra_meta = _run_multi_prompt(prompt, named_frames)
             except Exception as exc:
-                reply = f"오류가 발생했습니다: {exc}"
+                reply = f"오류가 발생했습니다: {_friendly_error(exc)}"
                 extra_df = None
                 extra_meta = {}
                 st.session_state.operation_result = None
@@ -82,11 +83,10 @@ def process_user_prompt(prompt: str, *, user_already_added: bool = False) -> Non
             try:
                 reply, extra_df, extra_meta = _run_prompt(prompt, df)
             except Exception as exc:
-                reply = f"오류가 발생했습니다: {exc}"
+                reply = f"오류가 발생했습니다: {_friendly_error(exc)}"
                 extra_df = None
                 extra_meta = {}
                 st.session_state.operation_result = None
-
     message: dict = {"role": "assistant", "content": reply}
     message.update(extra_meta)
     if extra_df is not None:

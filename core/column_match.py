@@ -87,7 +87,11 @@ _looks_like_code_metric_column = looks_like_code_metric_column
 
 
 def resolve_metric_column(df: pd.DataFrame, wanted: str) -> str | None:
-    """파일마다 컬럼명이 달라도 같은 수치 열을 찾는다."""
+    """파일마다 컬럼명이 달라도 같은 수치 열을 찾는다.
+
+    동명이 여러 개면 첫 일치 후보를 반환한다. 합계열 우선 rewrite는 하지 않는다.
+    (복합 지표 후보는 schema_hints로 LLM에 힌트한다.)
+    """
     if wanted in df.columns:
         return wanted
     target = normalize_text(str(wanted))
@@ -104,6 +108,14 @@ def resolve_metric_column(df: pd.DataFrame, wanted: str) -> str | None:
 
 
 _resolve_metric_column = resolve_metric_column
+
+
+def _metric_column_preference(column: str) -> tuple[int, int]:
+    """스키마 힌트 정렬용 — 합계·금액열 우선 점수."""
+    norm = normalize_text(column)
+    total_rank = 1 if (norm.endswith("합계") or norm.endswith("_합계")) else 0
+    amount_rank = 1 if _is_amount_metric_column(column) else 0
+    return (total_rank, amount_rank)
 
 
 def _is_explicit_groupby_prompt(prompt: str) -> bool:
@@ -195,9 +207,8 @@ def find_mentioned_numeric_columns(df: pd.DataFrame, prompt: str) -> list[str]:
         amount_bonus = 100 if _is_amount_metric_column(col_name) else 0
         total_bonus = 0
         wants_total = any(k in normalized_prompt for k in ("합계", "합을", "합산", "의합", "총합"))
-        if wants_total and (
-            col_norm.endswith("합계") or col_norm.endswith("_합계")
-        ):
+        is_total_col = col_norm.endswith("합계") or col_norm.endswith("_합계")
+        if wants_total and is_total_col:
             total_bonus = 50
         code_penalty = -120 if looks_like_code_metric_column(df, column) else 0
         scored.append((amount_bonus + total_bonus + code_penalty, match_len, column))
@@ -236,11 +247,15 @@ def find_groupby_column(df: pd.DataFrame, prompt: str) -> str | None:
         return None
 
     key = match.group(1)
+    return _resolve_axis_column(df, key)
+
+
+def _resolve_axis_column(df: pd.DataFrame, key: str) -> str | None:
+    """축/그룹 키를 실제 컬럼명으로 해석한다. 병합 헤더는 명칭(오른쪽)을 우선한다."""
     key_norm = normalize_text(key)
     if len(key_norm) < 2:
         return None
 
-    # 병합 헤더 쌍이면 명칭(오른쪽)을 그룹 키로 쓴다 (비용명 코드 대신 비용명_2)
     pair = find_merged_header_pair(df.columns, key)
     if pair:
         return pair[1]
@@ -257,7 +272,6 @@ def find_groupby_column(df: pd.DataFrame, prompt: str) -> str | None:
             partial.append((len(norm), name))
 
     if exact:
-        # 문자 라벨 컬럼을 코드형 숫자 컬럼보다 선호
         exact.sort(
             key=lambda col: (
                 0 if pd.api.types.is_numeric_dtype(df[col]) else 1,
@@ -270,3 +284,4 @@ def find_groupby_column(df: pd.DataFrame, prompt: str) -> str | None:
         partial.sort(reverse=True)
         return partial[0][1]
     return None
+

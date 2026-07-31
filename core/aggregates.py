@@ -79,6 +79,8 @@ def build_groupby_aggregate_table(
 
     '비목분류별 계획예산'처럼 합계 단어가 없어도 X별 Y 요청이면 합산으로 처리한다.
     use_budget_profile=True이면 내부흡수액·외부유출액 등 예산 footer 행을 제외한다.
+
+    NOTE: 질의 해석 단축 경로이다. 장기적으로는 LLM + 범용 실행 유틸로 이관 대상.
     """
     group_col = find_groupby_column(df, prompt)
     if group_col is None or df is None or df.empty or group_col not in df.columns:

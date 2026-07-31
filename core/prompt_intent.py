@@ -96,6 +96,16 @@ def expects_plot(prompt: str) -> bool:
     return any(keyword in lowered for keyword in _CHART_KEYWORDS)
 
 
+def is_pivot_request(prompt: str) -> bool:
+    """피벗·교차 집계 요청인지 판별한다."""
+    if not prompt:
+        return False
+    lowered = prompt.lower()
+    normalized = normalize_text(prompt)
+    keywords = ("피벗", "pivot", "교차", "크로스탭", "crosstab")
+    return any(k in lowered or k in normalized for k in keywords)
+
+
 def resolve_output_type(prompt: str) -> str | None:
     """요청에 맞는 PandasAI output_type을 고른다. 차트는 plot을 우선한다."""
     if expects_plot(prompt):
@@ -107,6 +117,8 @@ def resolve_output_type(prompt: str) -> str | None:
 
 def expects_dataframe(prompt: str) -> bool:
     """표 형태 결과를 요구하는 표현인지 판별한다."""
+    if is_pivot_request(prompt):
+        return True
     lowered = prompt.lower()
     table_keywords = (
         "리스트",
@@ -159,6 +171,8 @@ def is_complex_analysis(prompt: str) -> bool:
     """집계·순위·시각화처럼 단순 값 필터로 해결할 수 없는 요청인지 판별한다."""
     if detect_aggregate_op(prompt) is not None:
         return True
+    if is_pivot_request(prompt):
+        return True
     lowered = prompt.lower()
     return any(keyword in lowered for keyword in _COMPLEX_KEYWORDS)
 
@@ -203,3 +217,4 @@ _resolve_output_type = resolve_output_type
 _expects_dataframe = expects_dataframe
 _is_list_request = is_list_request
 _is_complex_analysis = is_complex_analysis
+_is_pivot_request = is_pivot_request

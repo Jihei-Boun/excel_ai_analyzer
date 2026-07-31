@@ -33,6 +33,9 @@ _SAFE_CODE_RULES = (
     "- 데이터에 있는 분류명과 정확히 일치하는 요청은 해당 컬럼의 동등 비교를 사용하세요.\n"
     "- 사용자가 정렬·순위(상위/하위/내림차순 등)를 요청하지 않으면 "
     "원본 행 순서를 유지하세요. sort_values나 가나다순 정렬을 하지 마세요.\n"
+    "- 피벗 시 키 조합 유일성을 확인하세요. 중복 가능하면 pivot_table에 "
+    "aggfunc를 명시하세요. sum은 금액 열이고 합산이 분명할 때만 사용하세요.\n"
+    "- 컬럼명을 임의로 바꿔 쓰지 말고, 스키마 힌트의 후보를 참고해 선택하세요.\n"
     "- result의 type은 dataframe, number, string, plot 중 하나만 사용하세요.\n"
     "- 목록 결과는 Python list가 아니라 dataframe type의 DataFrame 또는 Series로 반환하세요.\n"
     "- 차트 요청은 matplotlib로 그린 뒤 plt.savefig로 png 파일을 저장하고 "
@@ -139,11 +142,109 @@ def chat(
     model: str,
     output_type: str | None = None,
 ) -> tuple[Any, str, dict[str, Any]]:
-    """PandasAI로 질의를 실행하고 (결과, 요약, 메타)을 반환한다."""
-    prepared = prepare_dataframe_for_ai(df)
-    safe_prompt = f"{_SAFE_CODE_RULES}\n{prompt}"
-    sdf = create_smart_dataframe(prepared, base_url=base_url, model=model)
-    return _run_chat_session(sdf, safe_prompt, output_type=output_type)
+    """PandasAI로 질의를 실행하고 (결과, 요약, 메타)을 반환한다.
+
+    원본 df는 변경하지 않고 분석용 복사본만 사용한다.
+    """
+    from core.code_guardrails import (
+        build_regeneration_prompt,
+        extract_aggregation_meta,
+        format_aggregation_notice,
+        inspect_generated_code,
+        validate_analysis_result,
+    )
+    from core.schema_hints import format_schema_hints_for_prompt, prepare_analysis_frame
+
+    raw_df = df
+    analysis_df = prepare_analysis_frame(raw_df)
+    schema_block = format_schema_hints_for_prompt(raw_df)
+    safe_prompt = f"{_SAFE_CODE_RULES}\n"
+    if schema_block:
+        safe_prompt += f"{schema_block}\n"
+    safe_prompt += prompt
+
+    sdf = create_smart_dataframe(analysis_df, base_url=base_url, model=model)
+    try:
+        result, summary, meta = _run_chat_session(
+            sdf, safe_prompt, output_type=output_type
+        )
+        first_error: str | None = None
+    except RuntimeError as exc:
+        result, summary, meta = None, "", {}
+        first_error = str(exc)
+        code = getattr(sdf, "last_code_executed", None)
+        if code:
+            meta["code"] = code
+
+    code = meta.get("code") or getattr(sdf, "last_code_executed", None)
+    issues = inspect_generated_code(
+        code,
+        available_columns=[str(c) for c in analysis_df.columns],
+    )
+    if first_error:
+        issues.append(first_error)
+        lowered_error = first_error.lower()
+        if "duplicate entries" in lowered_error or "reshape" in lowered_error:
+            issues.append(
+                "중복 키로 pivot/unstack가 실패했습니다. "
+                "소계·합계 행 제외와 pivot_table(aggfunc=...) 사용을 검토하세요."
+            )
+        if _looks_like_code_key_error(Exception(first_error), first_error) or (
+            "121" in first_error and ("key" in lowered_error or first_error.strip().startswith("'"))
+        ):
+            issues.append(
+                "숫자 코드(예: 121.0)를 컬럼/키로 조회하지 마세요. "
+                "'비용명' 요청이면 코드 열 대신 명칭 열(비용명_2)을 "
+                "pivot_table columns/index에 사용하세요."
+            )
+        if "can only use .str accessor" in lowered_error:
+            issues.append(
+                "숫자형 열에 .str을 쓰지 마세요. 명칭 열을 쓰거나 "
+                "astype(str) 후 문자열 연산을 하세요."
+            )
+    if result is not None:
+        hard_result, soft_result = validate_analysis_result(
+            result,
+            source_row_count=len(analysis_df),
+            code=code if isinstance(code, str) else None,
+            user_prompt=prompt,
+        )
+        issues.extend(hard_result)
+        if soft_result:
+            meta["result_warnings"] = soft_result
+
+    if issues:
+        retry_prompt = build_regeneration_prompt(safe_prompt, issues)
+        result, summary, meta = _run_chat_session(
+            sdf,
+            retry_prompt,
+            output_type=output_type,
+        )
+        code = meta.get("code") or getattr(sdf, "last_code_executed", None)
+        retry_issues = inspect_generated_code(
+            code,
+            available_columns=[str(c) for c in analysis_df.columns],
+        )
+        hard_retry, soft_retry = validate_analysis_result(
+            result,
+            source_row_count=len(analysis_df),
+            code=code if isinstance(code, str) else None,
+            user_prompt=prompt,
+        )
+        retry_issues.extend(hard_retry)
+        if soft_retry:
+            meta["result_warnings"] = soft_retry
+        if retry_issues:
+            meta["guardrail_issues"] = retry_issues
+
+    agg_meta = extract_aggregation_meta(code if isinstance(code, str) else None)
+    if agg_meta:
+        meta["aggregation"] = agg_meta
+        notice = format_aggregation_notice(agg_meta)
+        if notice:
+            summary = f"{summary} · {notice}"
+            meta["aggregation_notice"] = notice
+    return result, summary, meta
 
 
 def chat_multi(
@@ -155,16 +256,81 @@ def chat_multi(
     output_type: str | None = None,
 ) -> tuple[Any, str, dict[str, Any]]:
     """여러 파일을 SmartDatalake로 동시에 분석한다."""
-    inventory = _multi_file_inventory(named_dfs)
+    from core.code_guardrails import (
+        build_regeneration_prompt,
+        extract_aggregation_meta,
+        format_aggregation_notice,
+        inspect_generated_code,
+        validate_analysis_result,
+    )
+    from core.schema_hints import format_schema_hints_for_prompt, prepare_analysis_frame
+
+    prepared_named = [
+        (name, prepare_analysis_frame(frame)) for name, frame in named_dfs
+    ]
+    inventory = _multi_file_inventory(prepared_named)
+    hint_blocks = []
+    for name, raw_frame in named_dfs:
+        block = format_schema_hints_for_prompt(raw_frame)
+        if block:
+            hint_blocks.append(f"[{name}]\n{block}")
+    schema_block = "\n".join(hint_blocks)
+
     safe_prompt = (
         f"{_SAFE_CODE_RULES}\n"
         "여러 DataFrame(dfs[0], dfs[1], …)이 제공됩니다. "
         "파일 이름과 테이블 이름을 참고해 비교·병합·교차 집계를 수행하세요.\n"
         f"{inventory}\n"
-        f"{prompt}"
     )
-    lake = create_smart_datalake(named_dfs, base_url=base_url, model=model)
-    return _run_chat_session(lake, safe_prompt, output_type=output_type)
+    if schema_block:
+        safe_prompt += f"{schema_block}\n"
+    safe_prompt += prompt
+
+    lake = create_smart_datalake(prepared_named, base_url=base_url, model=model)
+    result, summary, meta = _run_chat_session(
+        lake, safe_prompt, output_type=output_type
+    )
+
+    code = meta.get("code") or getattr(lake, "last_code_executed", None)
+    all_columns = [str(c) for _, frame in prepared_named for c in frame.columns]
+    total_rows = sum(len(frame) for _, frame in prepared_named)
+    issues = inspect_generated_code(code, available_columns=all_columns)
+    hard_result, soft_result = validate_analysis_result(
+        result,
+        source_row_count=total_rows,
+        code=code if isinstance(code, str) else None,
+        user_prompt=prompt,
+    )
+    issues.extend(hard_result)
+    if soft_result:
+        meta["result_warnings"] = soft_result
+    if issues:
+        retry_prompt = build_regeneration_prompt(safe_prompt, issues)
+        result, summary, meta = _run_chat_session(
+            lake, retry_prompt, output_type=output_type
+        )
+        code = meta.get("code") or getattr(lake, "last_code_executed", None)
+        retry_issues = inspect_generated_code(code, available_columns=all_columns)
+        hard_retry, soft_retry = validate_analysis_result(
+            result,
+            source_row_count=total_rows,
+            code=code if isinstance(code, str) else None,
+            user_prompt=prompt,
+        )
+        retry_issues.extend(hard_retry)
+        if soft_retry:
+            meta["result_warnings"] = soft_retry
+        if retry_issues:
+            meta["guardrail_issues"] = retry_issues
+
+    agg_meta = extract_aggregation_meta(code if isinstance(code, str) else None)
+    if agg_meta:
+        meta["aggregation"] = agg_meta
+        notice = format_aggregation_notice(agg_meta)
+        if notice:
+            summary = f"{summary} · {notice}"
+            meta["aggregation_notice"] = notice
+    return result, summary, meta
 
 
 def _run_chat_session(
@@ -265,18 +431,54 @@ def _multi_file_inventory(named_dfs: list[tuple[str, pd.DataFrame]]) -> str:
     return "\n".join(lines)
 
 
-def prepare_dataframe_for_ai(df: pd.DataFrame) -> pd.DataFrame:
-    """PandasAI에 넣기 전 인덱스/타입을 정리한다."""
+def prepare_dataframe_for_ai(
+    df: pd.DataFrame,
+    *,
+    stringify_codes: bool = False,
+) -> pd.DataFrame:
+    """분석용 복사본을 만든다. 원본 DataFrame은 변경하지 않는다.
+
+    hierarchical 분류(그룹 → 빈 상세 → 소계)가 감지된 열만 forward-fill한다.
+    stringify_codes=True이면 코드성 수치 열(비용명 121 등)을 문자열로 바꾼다.
+    """
     out = df.copy().reset_index(drop=True)
     for col in out.columns:
         if _is_hierarchical_column(out[col]):
             out[col] = _fill_hierarchical_labels(out[col])
+
+    if stringify_codes:
+        out = _stringify_code_metric_columns(out)
 
     # string dtype을 object로 맞춰 LLM 생성 코드 호환성 향상
     for col in out.columns:
         if str(out[col].dtype) == "string":
             out[col] = out[col].fillna("").astype(object)
     return out
+
+
+def _stringify_code_metric_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """비용명 코드처럼 보이는 수치 열을 분석용 문자열로 변환한다."""
+    from core.column_match import looks_like_code_metric_column
+
+    out = df
+    for column in list(out.columns):
+        if not looks_like_code_metric_column(out, column):
+            continue
+        out = out.copy()
+        out[column] = out[column].map(_format_code_cell).astype(object)
+    return out
+
+
+def _format_code_cell(value: object) -> object:
+    if _is_blank(value):
+        return ""
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.notna(numeric):
+        number = float(numeric)
+        if number.is_integer():
+            return str(int(number))
+        return str(number)
+    return str(value).strip()
 
 
 def exclude_total_rows(df: pd.DataFrame) -> pd.DataFrame:
@@ -365,13 +567,27 @@ def _is_blank(value: object) -> bool:
     if value is None:
         return True
     try:
-        return bool(pd.isna(value))
+        if bool(pd.isna(value)):
+            return True
     except (TypeError, ValueError):
-        return False
+        pass
+    # 엑셀 병합칸이 빈 문자열로 들어오는 경우가 많아 공백도 blank로 본다.
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
 
 
 def _friendly_error(exc: BaseException) -> str:
     text = str(exc)
+    # 이미 가공된 RuntimeError 메시지는 그대로 둔다.
+    if isinstance(exc, RuntimeError) and (
+        text.startswith("PandasAI")
+        or text.startswith("AI가")
+        or text.startswith("비용명 코드")
+        or text.startswith("숫자형 열")
+    ):
+        return text
+
     lowered = text.lower()
     if "malicious" in lowered or "shouldn't use" in lowered:
         return (
@@ -390,7 +606,40 @@ def _friendly_error(exc: BaseException) -> str:
             "AI가 목록 결과를 PandasAI가 지원하지 않는 형식으로 생성했습니다. "
             "목록을 표 형식으로 다시 요청해 주세요."
         )
+    if _looks_like_code_key_error(exc, text):
+        return (
+            "비용명 코드 값(예: 121, 121.0)을 컬럼명처럼 조회하다 실패했습니다. "
+            "피벗·교차 축에는 코드 열 대신 명칭 열(예: 비용명_2)을 사용하세요. "
+            f"(상세: {text})"
+        )
+    if "can only use .str accessor" in lowered:
+        return (
+            "숫자형 열에 .str을 사용했습니다. "
+            "코드 열은 분석용으로 문자열 변환되어 있으니 astype(str) 후 사용하거나 "
+            "명칭 열을 쓰세요. "
+            f"(상세: {text})"
+        )
     return f"PandasAI 실행 실패: {text}"
+
+
+def _looks_like_code_key_error(exc: BaseException, text: str) -> bool:
+    if isinstance(exc, KeyError):
+        key = exc.args[0] if exc.args else text
+        return _is_code_like_key(key)
+    # PandasAI가 문자열로만 넘기는 경우: "'121.0'" / "121.0"
+    stripped = text.strip().strip("'\"")
+    return _is_code_like_key(stripped)
+
+
+def _is_code_like_key(value: object) -> bool:
+    text = str(value).strip().strip("'\"")
+    if not text:
+        return False
+    try:
+        number = float(text)
+    except ValueError:
+        return False
+    return abs(number) < 100_000
 
 
 def _raise_if_error_response(result: Any) -> None:
@@ -420,6 +669,15 @@ def _raise_if_error_response(result: Any) -> None:
             "AI가 분석 결과를 PandasAI 규격에 맞게 반환하지 못했습니다. "
             "같은 요청을 다시 시도해 주세요."
         )
+    # "following error: '121.0'" 형태
+    match = re.search(
+        r"following error:\s*(.+)$",
+        str(result),
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    detail = match.group(1).strip() if match else str(result)
+    if _looks_like_code_key_error(KeyError(detail.strip().strip("'\"")), detail):
+        raise RuntimeError(_friendly_error(KeyError(detail.strip().strip("'\""))))
     raise RuntimeError(f"PandasAI가 요청을 처리하지 못했습니다: {result}")
 
 

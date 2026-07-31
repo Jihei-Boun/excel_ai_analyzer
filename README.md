@@ -11,12 +11,11 @@
 
 - 해결하려는 문제: 엑셀 분석에 필요한 반복 작업과 높은 진입장벽
 - 사용자가 할 수 있는 것: 업로드, 시트 선택, 미리보기, 자연어 질의, 결과 확인
-- 분석 엔진: **PandasAI + Ollama** 기반 자연어 분석
+- 분석 엔진: **규칙 라우팅 + PandasAI + Ollama** (스키마·요약·집계는 규칙 경로, 자유 질문은 LLM)
 - UI: **Streamlit** 기반 인터랙티브 웹 화면
 - 모드: **일반 분석(기본)** / **예산 표 모드(예실대비표)**
 
 ## Preview
-
 
 ### 🏠 메인 화면
 ![Main Screen](./docs/images/preview-main.png)
@@ -30,7 +29,6 @@
 ### 🤖 AI 분석 결과
 ![AI Analysis Result](./docs/images/preview-result.png)
 
-
 ## 주요 기능 (Features)
 
 | Feature | Description |
@@ -42,10 +40,13 @@
 | Data Preview | 업로드 데이터 미리보기 및 기본 요약 |
 | AI Chat Analysis | 자연어 질문으로 필터·리스트·집계 분석 |
 | Summary Command | `파일을 요약해줘` 명령으로 빠른 요약 |
+| Schema Compare | 컬럼 목록·공통 컬럼·dtype/결측·의미 추정 등 스키마 비교 |
+| Suggested Prompts | 업로드 컬럼 기반 추천 질문 자동 생성 |
 | HTML Table Result | 분석 결과를 표 형태로 출력 |
 | Bar Chart Render | 집계 결과 기반 막대 차트 생성 |
 | Local LLM | Ollama 로컬 모델 연동 |
-| Theme Toggle | Light / Dark Theme 전환 |
+| Native Theme | Streamlit 설정(☰)에서 Light / Dark 전환 |
+| Code Guardrails | 생성된 분석 코드 점검·재시도, 사이드바에서 실행 코드 표시 |
 | Input Normalize | 컬럼명·타입 정규화로 다양한 엑셀 형식 흡수 |
 | Quality Report | 결측/중복/혼합타입 등 품질 경고·가이드 |
 | File Merge Export | 공통 키 기준 N개 파일 병합 후 xlsx 다운로드 |
@@ -55,30 +56,36 @@
 
 ```mermaid
 flowchart TD
-    A[Excel File] --> B[Pandas]
+    A[Excel File] --> B[Normalize / Quality]
     B --> C[DataFrame]
-    C --> D[PandasAI]
-    D --> E[Ollama Local LLM]
-    E --> F[Analysis Result]
-    F --> G[Streamlit UI]
+    C --> D{Prompt Router}
+    D -->|스키마·요약·집계 등| E[Rule Path]
+    D -->|자유 질문| F[PandasAI]
+    F --> G[Ollama Local LLM]
+    E --> H[Analysis Result]
+    G --> H
+    H --> I[Streamlit UI]
 ```
 
 ## Tech Stack
 
 - **Frontend**
-  - Streamlit
-  - Custom CSS (Light/Dark Theme)
+  - Streamlit (네이티브 Light/Dark 테마)
 - **Backend**
-  - Python
+  - Python 3.12
 - **AI**
   - PandasAI
   - Ollama (Local LLM)
 - **Data Processing**
   - pandas
-  - openpyxl
+  - openpyxl / xlrd
+  - PyYAML
 - **Visualization**
   - matplotlib
   - HTML table rendering (Streamlit)
+- **Test / CI**
+  - pytest
+  - GitHub Actions
 
 ## Project Structure
 
@@ -92,33 +99,54 @@ excel_ai_analyzer/
 │   ├── budget.yaml
 │   ├── column_hints.yaml
 │   └── column_meanings.yaml
+├── docs/images/
 ├── tests/
 ├── data/uploads/
 ├── exports/charts/
 ├── exports/merges/
+├── .streamlit/config.toml
+├── .github/workflows/
+├── pytest.ini
 ├── requirements.txt
 └── run.sh
 ```
 
 - `app.py`: Streamlit 앱 진입점
-- `core/`: 엑셀 로딩, 자연어 분석, 요약/집계 등 핵심 로직
+- `core/`: 엑셀 로딩, 프롬프트 라우팅, 자연어 분석, 요약/집계 등 핵심 로직
 - `ui/`: 업로드/미리보기/채팅/사이드바 등 화면 구성
 - `profiles/`: 일반·예산 프로필, 컬럼 힌트·의미 규칙 YAML
+- `docs/images/`: README 프리뷰 스크린샷
 - `tests/`: 주요 로직 단위 테스트
 - `data/uploads/`: 업로드 파일 임시 저장
 - `exports/charts/`: 생성된 차트 파일 저장
 - `exports/merges/`: 병합 결과 엑셀 저장
+- `.streamlit/`: 포트·테마 등 Streamlit 설정
 
 ## Quick Start
 
+**요구사항:** Python 3.12, [Ollama](https://ollama.com/) 실행 중
+
 ```bash
+# 1) Ollama 모델 (기본값: qwen2.5:7b)
+ollama pull qwen2.5:7b
+
+# 2) 의존성
 git clone https://github.com/Jihei-Boun/excel_ai_analyzer.git
 cd excel_ai_analyzer
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+# Python 3.12에서 PandasAI 의존성 충돌 시:
+# pip install pandasai==2.3.2 --no-deps
+# 그 다음 requirements.txt의 나머지 패키지를 설치
+
+# 3) 실행
 streamlit run app.py
+# 또는: ./run.sh
 ```
 
-기본 실행 포트는 `8502`, Ollama 기본 URL은 `http://localhost:11434`입니다.
+기본 실행 포트는 `8502`, Ollama 기본 URL은 `http://localhost:11434`입니다.  
+사이드바에서 Ollama 연결 상태와 분석 모델을 확인할 수 있습니다.
 
 ## Example Prompts
 
@@ -128,6 +156,7 @@ streamlit run app.py
 
 - 파일을 요약해줘
 - 각 컬럼의 데이터 타입과 결측치 개수를 알려줘
+- 컬럼 목록을 보여줘
 - 상품별 매출 합계를 표로 보여줘
 - 지역별 행 개수를 표로 보여줘
 - 상위 10개 항목을 표로 보여줘
@@ -152,10 +181,13 @@ streamlit run app.py
 - [x] Excel Upload (`xlsx/xls`)
 - [x] Multi File / Multi Sheet 분석
 - [x] Data Preview
-- [x] AI 자연어 분석 (PandasAI + Ollama)
+- [x] AI 자연어 분석 (규칙 라우팅 + PandasAI + Ollama)
 - [x] 파일 요약 명령 지원
+- [x] 스키마 비교·컬럼 의미 추정
+- [x] 컬럼 기반 추천 질문
 - [x] 집계 결과 표/막대 차트 출력
-- [x] Light / Dark Theme
+- [x] Streamlit 네이티브 Light / Dark Theme
+- [x] 분석 코드 가드레일·실행 코드 표시
 - [x] 입력 정규화·품질 진단
 - [x] N개 파일 비교 병합 및 xlsx export
 - [x] 일반·예산 모드 UX 분리 (추천 질문·프로필)
@@ -166,7 +198,7 @@ streamlit run app.py
 - [ ] 업로드 기반 프로필 자동 추천 + 사용자 변경
 - [ ] CSV 업로드 지원
 - [ ] PDF 데이터 입력 지원
-- [ ] 여러 파일 간 자동 비교 리포트
+- [ ] 여러 파일 간 자동 비교 리포트 강화 (수치·품질 요약 포함)
 - [ ] 차트 유형 확장 (라인/파이 등)
 - [ ] 분석 결과 Export 강화 (리포트 템플릿)
 
