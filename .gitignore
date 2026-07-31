@@ -32,8 +32,11 @@ data/uploads/*
 !data/uploads/.gitkeep
 exports/charts/*
 !exports/charts/.gitkeep
+exports/merges/*
+!exports/merges/.gitkeep
 exports/*
 !exports/charts/
+!exports/merges/
 !exports/.gitkeep
 
 # Excel / Office temp files

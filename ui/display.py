@@ -107,11 +107,17 @@ def render_analysis_result(result: object) -> None:
         return
 
     # Plotly / Matplotlib 등은 호출 측에서 처리. 여기선 일반 값.
+    # st.metric은 짧은 숫자용 — 긴 문자열은 잘리고 글씨가 커진다.
+    if isinstance(result, bool):
+        st.write(result)
+        return
     try:
+        if isinstance(result, str):
+            raise TypeError
         display = f"{float(result):,.0f}"
         st.metric("결과", display)
     except (TypeError, ValueError):
-        st.write(result)
+        st.markdown(str(result))
 
 
 def _normalize_numeric_series(series: pd.Series) -> pd.Series:

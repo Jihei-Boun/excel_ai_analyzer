@@ -1,4 +1,4 @@
-"""단일 파일 다중 시트 분석 단위 테스트."""
+"""단일 파일 다중 시트 · 다중 파일×시트 분석 단위 테스트."""
 
 from __future__ import annotations
 
@@ -10,8 +10,12 @@ import pytest
 from core.file_summary import build_multi_file_summary
 from ui.file_state import (
     _normalize_active_sheets,
+    activate_files,
     get_active_named_frames,
+    get_analysis_unit_label,
+    is_cross_file_sheet_analysis,
     is_multi_analysis_mode,
+    is_multi_file_analysis,
     is_multi_sheet_analysis,
     set_active_sheets,
 )
@@ -53,6 +57,21 @@ def multi_sheet_workbook(tmp_path: Path) -> Path:
             writer, sheet_name="잔액", index=False
         )
     return path
+
+
+@pytest.fixture
+def two_multi_sheet_workbooks(tmp_path: Path) -> tuple[Path, Path]:
+    a = tmp_path / "a.xlsx"
+    b = tmp_path / "b.xlsx"
+    for path, prefix in ((a, "A"), (b, "B")):
+        with pd.ExcelWriter(path) as writer:
+            pd.DataFrame({"항목": [f"{prefix}1"], "금액": [1]}).to_excel(
+                writer, sheet_name="예산", index=False
+            )
+            pd.DataFrame({"항목": [f"{prefix}2"], "금액": [2]}).to_excel(
+                writer, sheet_name="집행", index=False
+            )
+    return a, b
 
 
 def test_normalize_active_sheets_filters_invalid() -> None:
@@ -105,6 +124,7 @@ def test_set_active_sheets_enables_multi_sheet(
     assert named[0][1]["금액"].tolist() == [20]
     assert named[1][1]["금액"].tolist() == [30]
     assert state.work_target == "다중 시트"
+    assert get_analysis_unit_label() == "시트"
 
 
 def test_single_sheet_is_not_multi(
@@ -149,3 +169,113 @@ def test_multi_summary_unit_label_sheet() -> None:
     assert "선택된 시트 2개를 요약합니다" in text
     assert "### 예산" in text
     assert "### 집행" in text
+
+
+def test_multi_file_multi_sheet_expands_units(
+    monkeypatch: pytest.MonkeyPatch,
+    two_multi_sheet_workbooks: tuple[Path, Path],
+) -> None:
+    import ui.file_state as file_state_mod
+
+    path_a, path_b = two_multi_sheet_workbooks
+    state = _Session(
+        uploaded_files=[
+            {
+                "id": "a.xlsx",
+                "name": "a.xlsx",
+                "path": str(path_a),
+                "size": "1 KB",
+                "sheet_names": ["예산", "집행"],
+                "current_sheet": "예산",
+                "active_sheets": ["예산"],
+            },
+            {
+                "id": "b.xlsx",
+                "name": "b.xlsx",
+                "path": str(path_b),
+                "size": "1 KB",
+                "sheet_names": ["예산", "집행"],
+                "current_sheet": "예산",
+                "active_sheets": ["예산"],
+            },
+        ],
+        file_frames={},
+        sheet_frames={},
+        active_file_id=None,
+        active_file_ids=[],
+        analysis_mode="single",
+        preview_file_id=None,
+    )
+    monkeypatch.setattr(file_state_mod.st, "session_state", state)
+
+    activate_files(["a.xlsx", "b.xlsx"], reset_analysis=True)
+    assert is_multi_file_analysis()
+    assert not is_cross_file_sheet_analysis()
+    assert [name for name, _ in get_active_named_frames()] == ["a.xlsx", "b.xlsx"]
+    assert get_analysis_unit_label() == "파일"
+
+    set_active_sheets(["예산", "집행"], file_id="a.xlsx", reset_analysis=True)
+    set_active_sheets(["예산", "집행"], file_id="b.xlsx", reset_analysis=True)
+
+    assert is_multi_file_analysis()
+    assert is_cross_file_sheet_analysis()
+    assert not is_multi_sheet_analysis()
+    named = get_active_named_frames()
+    assert [name for name, _ in named] == [
+        "a.xlsx / 예산",
+        "a.xlsx / 집행",
+        "b.xlsx / 예산",
+        "b.xlsx / 집행",
+    ]
+    assert named[0][1]["금액"].tolist() == [1]
+    assert named[1][1]["금액"].tolist() == [2]
+    assert state.work_target == "다중 파일·시트"
+    assert get_analysis_unit_label() == "시트"
+    # 시트 변경이 다중 파일 모드를 깨지 않음
+    assert state.active_file_ids == ["a.xlsx", "b.xlsx"]
+    assert state.analysis_mode == "multi"
+
+
+def test_multi_file_single_sheet_each_keeps_file_labels(
+    monkeypatch: pytest.MonkeyPatch,
+    two_multi_sheet_workbooks: tuple[Path, Path],
+) -> None:
+    import ui.file_state as file_state_mod
+
+    path_a, path_b = two_multi_sheet_workbooks
+    state = _Session(
+        uploaded_files=[
+            {
+                "id": "a.xlsx",
+                "name": "a.xlsx",
+                "path": str(path_a),
+                "size": "1 KB",
+                "sheet_names": ["예산", "집행"],
+                "current_sheet": "집행",
+                "active_sheets": ["집행"],
+            },
+            {
+                "id": "b.xlsx",
+                "name": "b.xlsx",
+                "path": str(path_b),
+                "size": "1 KB",
+                "sheet_names": ["예산", "집행"],
+                "current_sheet": "예산",
+                "active_sheets": ["예산"],
+            },
+        ],
+        file_frames={},
+        sheet_frames={},
+        active_file_id=None,
+        active_file_ids=[],
+        analysis_mode="single",
+        preview_file_id=None,
+    )
+    monkeypatch.setattr(file_state_mod.st, "session_state", state)
+
+    activate_files(["a.xlsx", "b.xlsx"], reset_analysis=True)
+    named = get_active_named_frames()
+    assert [name for name, _ in named] == ["a.xlsx", "b.xlsx"]
+    assert named[0][1]["금액"].tolist() == [2]  # a 집행
+    assert named[1][1]["금액"].tolist() == [1]  # b 예산
+    assert state.work_target == "다중 파일"

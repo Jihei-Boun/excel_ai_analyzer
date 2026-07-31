@@ -67,6 +67,88 @@ _PROMPT_NOISE = (
 )
 
 
+def is_missing_rows_request(prompt: str) -> bool:
+    """결측이 있는 '행'을 보여달라는 요청인지 판별한다.
+
+    '컬럼별 결측치 개수' 같은 스키마 요약과 구분한다.
+    """
+    if not prompt or not str(prompt).strip():
+        return False
+    compact = re.sub(r"\s+", "", normalize_text(prompt)).lower()
+    has_missing = any(
+        token in compact
+        for token in ("결측", "null", "missing", "nan", "비어있", "빈값", "누락")
+    )
+    if not has_missing:
+        return False
+
+    # 스키마/집계 요약으로 보이는 경우 제외
+    if any(
+        token in compact
+        for token in (
+            "개수",
+            "갯수",
+            "타입",
+            "dtype",
+            "컬럼별",
+            "열별",
+            "데이터타입",
+            "행수",
+            "열수",
+        )
+    ):
+        return False
+
+    # 행 단위 필터 의도
+    if any(
+        token in compact
+        for token in ("행만", "행을", "행보여", "행알려", "로우", "rows", "row")
+    ):
+        return True
+    if "행" in compact and any(
+        token in compact
+        for token in ("있는", "포함", "보여", "알려", "필터", "추출", "골라", "찾아")
+    ):
+        return True
+    return False
+
+
+def filter_missing_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """하나 이상의 결측 셀이 있는 행만 남긴다."""
+    if df is None or df.empty:
+        return df.copy() if df is not None else pd.DataFrame()
+    mask = df.isna().any(axis=1)
+    return df.loc[mask].reset_index(drop=True)
+
+
+def build_missing_rows_outcome(
+    df: pd.DataFrame,
+    *,
+    label: str = "현재 데이터",
+) -> tuple[str, pd.DataFrame | None]:
+    """결측 행 필터 결과 (reply, dataframe)."""
+    if df is None or df.empty:
+        return f"`{label}`에 표시할 데이터가 없습니다.", None
+
+    filtered = filter_missing_rows(df)
+    if filtered.empty:
+        return f"`{label}`에서 결측값이 있는 행을 찾지 못했습니다.", None
+
+    missing_cols = [
+        str(col)
+        for col in filtered.columns
+        if bool(filtered[col].isna().any())
+    ]
+    col_note = ", ".join(f"`{c}`" for c in missing_cols[:8])
+    more = f" 외 {len(missing_cols) - 8}개" if len(missing_cols) > 8 else ""
+    reply = (
+        f"결측값이 있는 행 {len(filtered):,}개 "
+        f"(전체 {len(df):,}행 중)"
+        + (f" · 관련 열: {col_note}{more}" if missing_cols else "")
+    )
+    return reply, filtered
+
+
 def _filter_by_mentioned_value(
     df: pd.DataFrame,
     prompt: str,
@@ -152,13 +234,20 @@ def resolve_filter_source(
     if full_df is None or full_df.empty:
         return full_df, False
 
-    if keep_filter_for_aggregate and detect_aggregate_op(prompt) is not None:
+    if keep_filter_for_aggregate and (
+        detect_aggregate_op(prompt) is not None
+        or _is_groupby_prompt(prompt)
+    ):
         if filtered_df is not None and len(filtered_df) > 0:
+            if _should_reset_filter_for_groupby(full_df, filtered_df, prompt):
+                return full_df, True
             return filtered_df, False
         return full_df, False
 
     if _expects_plot(prompt):
         if filtered_df is not None and len(filtered_df) > 0:
+            if _should_reset_filter_for_groupby(full_df, filtered_df, prompt):
+                return full_df, True
             return filtered_df, False
         return full_df, False
 
@@ -173,6 +262,37 @@ def resolve_filter_source(
         return full_df, True
 
     return filtered_df, False
+
+
+def _is_groupby_prompt(prompt: str) -> bool:
+    from core.column_match import _is_explicit_groupby_prompt
+
+    return _is_explicit_groupby_prompt(prompt)
+
+
+def _should_reset_filter_for_groupby(
+    full_df: pd.DataFrame,
+    filtered_df: pd.DataFrame,
+    prompt: str,
+) -> bool:
+    """'담당자별'처럼 그룹 집계인데 필터가 그룹을 1개로 붕괴시키면 원본으로 돌린다.
+
+    예: 결측 행 1건(담당자=최유나) 이후 '담당자별 집계' → 전체 데이터로 집계.
+    """
+    from core.column_match import find_groupby_column
+
+    if not _is_groupby_prompt(prompt):
+        return False
+    if len(filtered_df) >= len(full_df):
+        return False
+
+    group_col = find_groupby_column(full_df, prompt)
+    if not group_col or group_col not in filtered_df.columns:
+        return False
+
+    n_full = int(full_df[group_col].nunique(dropna=True))
+    n_filt = int(filtered_df[group_col].nunique(dropna=True))
+    return n_full >= 2 and n_filt <= 1
 
 
 def _collect_value_matches(
@@ -476,13 +596,14 @@ def infer_context_label(
     prompt: str | None = None,
     result_df: pd.DataFrame | None = None,
     full_df: pd.DataFrame | None = None,
+    allow_prompt_text: bool = True,
 ) -> str | None:
-    """필터/목록 요청의 행 라벨을 여러 단서로 추론한다.
+    """필터/목록 요청에서 행 라벨을 여러 단서로 추론한다.
 
     우선순위:
     1) 결과 표에서 값이 하나뿐인 문자 컬럼
     2) full_df/result_df 셀 값과 프롬프트 매칭
-    3) 프롬프트에서 잡음 단어를 제거한 핵심 구
+    3) 프롬프트에서 잡음 단어를 제거한 핵심 구 (allow_prompt_text=True일 때만)
     """
     # 1) 필터 결과에서 단일 분류값 (가장 긴 라벨 우선)
     if result_df is not None and not result_df.empty:
@@ -511,11 +632,37 @@ def infer_context_label(
             return matched
 
     # 3) 프롬프트에서 핵심 명사구 추출
-    if prompt:
+    if allow_prompt_text and prompt:
         from_prompt = _label_from_prompt_text(prompt)
         if from_prompt:
             return from_prompt
     return None
+
+
+_LABEL_REJECT_TOKENS = (
+    "컬럼",
+    "의미",
+    "추측",
+    "설명",
+    "품질",
+    "수정",
+    "타입",
+    "구분",
+    "숫자",
+    "문자",
+    "날짜",
+    "스키마",
+    "결측",
+    "분석전",
+    "전처리",
+    "문제",
+    "개선",
+    "요약",
+    "비교",
+    "병합",
+    "차트",
+    "그래프",
+)
 
 
 def _label_from_prompt_text(prompt: str) -> str | None:
@@ -530,7 +677,10 @@ def _label_from_prompt_text(prompt: str) -> str | None:
     text = re.sub(r"[^0-9A-Za-z가-힣]", "", text)
     if len(text) < 2:
         return None
-    # 너무 긴 문장은 제외
-    if len(text) > 40:
+    # 너무 긴 문장/메타 잔여물은 제외
+    if len(text) > 24:
+        return None
+    lowered = text.lower()
+    if any(token in lowered for token in _LABEL_REJECT_TOKENS):
         return None
     return text

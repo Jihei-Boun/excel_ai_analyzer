@@ -2,24 +2,25 @@
 
 from __future__ import annotations
 
-import io
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
+from core.constants import CHAT_EXAMPLE_LIMIT, CHAT_PREVIEW_ROWS
+from core.suggest_prompts import suggest_example_prompts
 from ui.chat import process_user_prompt
 from ui.display import render_dataframe
-from ui.session_store import MULTI_FILE_PROMPTS, MULTI_SHEET_PROMPTS, RECOMMENDED_PROMPTS
 from ui.upload import (
     get_active_named_frames,
     get_analysis_df,
     get_analysis_file_name,
+    get_analysis_unit_label,
+    is_cross_file_sheet_analysis,
     is_multi_analysis_mode,
     is_multi_file_analysis,
     is_multi_sheet_analysis,
 )
-from core.constants import CHAT_EXAMPLE_LIMIT, CHAT_PREVIEW_ROWS
 
 
 def render_chat_panel() -> None:
@@ -27,7 +28,7 @@ def render_chat_panel() -> None:
     multi_mode = is_multi_analysis_mode()
     if multi_mode:
         active_names = [name for name, _ in get_active_named_frames()]
-        unit = "시트" if is_multi_sheet_analysis() else "파일"
+        unit = get_analysis_unit_label()
         st.caption(
             f"선택된 {len(active_names)}개 {unit}를 동시에 분석합니다. "
             "비교·병합·교차 집계를 자연어로 요청하세요."
@@ -72,8 +73,9 @@ def _render_analysis_mode_setting() -> None:
             st.caption(f"현재 분석 대상: {active_name} (사이드바에서 선택)")
         else:
             active_count = len(get_active_named_frames())
+            unit = get_analysis_unit_label()
             if active_count >= 2:
-                st.caption(f"현재 {active_count}개 파일이 동시 분석 대상입니다.")
+                st.caption(f"현재 {active_count}개 {unit}가 동시 분석 대상입니다.")
             else:
                 st.caption("왼쪽 사이드바에서 2개 이상 파일을 선택하세요.")
 
@@ -83,17 +85,26 @@ def _render_analysis_mode_setting() -> None:
             st.rerun()
 
 
+def _example_prompts() -> list[str]:
+    """모드·업로드 데이터에 맞춰 채팅 예시 질문을 고른다."""
+    use_budget = bool(st.session_state.get("budget_table_mode", False))
+    multi_sheet = is_multi_sheet_analysis() or is_cross_file_sheet_analysis()
+    multi_file = is_multi_file_analysis()
+    df = get_analysis_df()
+    return suggest_example_prompts(
+        df,
+        use_budget_profile=use_budget,
+        multi_file=multi_file,
+        multi_sheet=multi_sheet,
+        limit=CHAT_EXAMPLE_LIMIT,
+    )
+
+
 def _render_chat_history() -> None:
     messages = st.session_state.chat_messages
     if not messages:
         st.caption("아직 대화가 없습니다. 아래 예시로 시작해 보세요.")
-        examples = (
-            MULTI_SHEET_PROMPTS
-            if is_multi_sheet_analysis()
-            else MULTI_FILE_PROMPTS
-            if is_multi_file_analysis()
-            else RECOMMENDED_PROMPTS
-        )
+        examples = _example_prompts()
         cols = st.columns(2)
         for idx, prompt in enumerate(examples[:CHAT_EXAMPLE_LIMIT]):
             with cols[idx % 2]:
@@ -216,6 +227,18 @@ def _same_frame(left: pd.DataFrame, right: pd.DataFrame) -> bool:
         return False
 
 
+def _format_metric_number(value: object) -> str | None:
+    """짧은 숫자만 metric 표시용 문자열로 만든다. 그 외는 None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        return None
+    try:
+        return f"{float(value):,.0f}"
+    except (TypeError, ValueError):
+        return None
+
+
 def _render_operation_result() -> None:
     result = st.session_state.get("operation_result")
     if result is None:
@@ -231,21 +254,25 @@ def _render_operation_result() -> None:
         )
         export_df = result
     else:
-        try:
-            display = f"{float(result):,.0f}"
-        except (TypeError, ValueError):
-            display = str(result)
-        st.metric(f"결과 · {label}", display)
+        # st.metric은 짧은 숫자용 — 긴 문자열은 잘리고 글씨가 커진다.
+        numeric = _format_metric_number(result)
+        if numeric is not None:
+            st.metric(f"결과 · {label}", numeric)
+        else:
+            text = str(result).strip()
+            if text:
+                st.caption(f"결과 · {label}")
+                st.markdown(text)
         export_df = st.session_state.get("analysis_filter_df")
         if export_df is None:
             export_df = st.session_state.get("selected_df")
 
     if export_df is not None and isinstance(export_df, pd.DataFrame):
-        buffer = io.BytesIO()
-        export_df.to_excel(buffer, index=False, engine="openpyxl")
+        from core.export_utils import dataframe_to_xlsx_bytes
+
         st.download_button(
             "Excel 다운로드",
-            data=buffer.getvalue(),
+            data=dataframe_to_xlsx_bytes(export_df),
             file_name="analysis_result.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
@@ -282,7 +309,7 @@ def _render_chat_input() -> None:
             return
         if is_multi_analysis_mode():
             if len(get_active_named_frames()) < 2:
-                unit = "시트" if is_multi_sheet_analysis() else "파일"
+                unit = get_analysis_unit_label()
                 st.warning(f"동시 분석 모드에서는 {unit} 2개 이상을 선택하세요.")
                 return
         elif get_analysis_df() is None:

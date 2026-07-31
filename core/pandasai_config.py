@@ -31,6 +31,8 @@ _SAFE_CODE_RULES = (
     "- 별도 모듈을 불러오지 말고 메모리 안의 데이터만 분석하세요.\n"
     "- 문자열 검색은 컬럼을 astype(str)로 변환한 뒤 수행하세요.\n"
     "- 데이터에 있는 분류명과 정확히 일치하는 요청은 해당 컬럼의 동등 비교를 사용하세요.\n"
+    "- 사용자가 정렬·순위(상위/하위/내림차순 등)를 요청하지 않으면 "
+    "원본 행 순서를 유지하세요. sort_values나 가나다순 정렬을 하지 마세요.\n"
     "- result의 type은 dataframe, number, string, plot 중 하나만 사용하세요.\n"
     "- 목록 결과는 Python list가 아니라 dataframe type의 DataFrame 또는 Series로 반환하세요.\n"
     "- 차트 요청은 matplotlib로 그린 뒤 plt.savefig로 png 파일을 저장하고 "
@@ -469,6 +471,10 @@ def _build_summary(
         return f"PandasAI 결과: {len(result):,}행 × {len(result.columns)}열"
     if _is_number(result):
         return f"PandasAI 결과: {float(result):,.0f}"
+    if isinstance(result, str):
+        text = result.strip()
+        if text:
+            return text
     if code:
         first_line = next((line.strip() for line in code.splitlines() if line.strip()), "")
         if first_line:

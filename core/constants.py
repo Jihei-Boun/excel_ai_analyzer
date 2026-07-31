@@ -11,7 +11,9 @@ from core.profile_loader import load_budget_profile, load_column_hints
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
-CHARTS_DIR = PROJECT_ROOT / "exports" / "charts"
+EXPORTS_DIR = PROJECT_ROOT / "exports"
+CHARTS_DIR = EXPORTS_DIR / "charts"
+MERGES_DIR = EXPORTS_DIR / "merges"
 PROFILES_DIR = PROJECT_ROOT / "profiles"
 
 # ---------------------------------------------------------------------------

@@ -36,6 +36,52 @@ def test_is_schema_request_excludes_analysis() -> None:
     assert is_schema_request("결제수단 리스트로 뽑아줘") is False
     assert is_schema_request("범주형 컬럼별 행 개수를 표로 보여줘") is False
     assert is_schema_request("지역별 매출 차트로 보여줘") is False
+    assert is_schema_request("결측값이 있는 행만 보여줘") is False
+
+
+def test_route_missing_rows_shows_rows_not_schema() -> None:
+    df = pd.DataFrame(
+        {
+            "항목_코드": ["A-001", "A-006"],
+            "비용_명": ["연구활동비", "인쇄·제본비"],
+            "집행_금액": [1280000.0, None],
+            "집행_일자": pd.to_datetime(["2026-07-03", None]),
+        }
+    )
+    outcome = route_single_prompt(
+        "결측값이 있는 행만 보여줘",
+        full_df=df,
+        source_df=df,
+        context_label=None,
+        base_url="http://localhost:11434",
+        model="dummy",
+    )
+    assert outcome.dataframe is not None
+    assert len(outcome.dataframe) == 1
+    assert outcome.dataframe.iloc[0]["항목_코드"] == "A-006"
+    assert "결측값이 있는 행" in outcome.reply
+    assert "데이터 타입" not in outcome.reply
+    assert outcome.keep_as_filter is False
+    assert outcome.replace_selection is False
+
+
+def test_resolve_filter_resets_for_collapsed_groupby() -> None:
+    from core.value_filter import resolve_filter_source
+
+    full = pd.DataFrame(
+        {
+            "담당자": ["김지혜", "박민수", "최유나"],
+            "집행_금액": [100, 200, None],
+        }
+    )
+    filtered = full[full["담당자"] == "최유나"].reset_index(drop=True)
+    source, reset = resolve_filter_source(
+        full,
+        filtered,
+        "담당자별 집행 금액을 집계해줘",
+    )
+    assert reset is True
+    assert len(source) == len(full)
 
 
 def test_column_list_is_not_data_list() -> None:
@@ -49,6 +95,107 @@ def test_schema_kind() -> None:
     assert schema_kind("공통 컬럼을 알려줘") == "common"
     assert schema_kind("데이터 타입과 결측치") == "dtypes"
     assert schema_kind("행 수와 컬럼 목록 비교") == "compare"
+    assert schema_kind("각 컬럼이 어떤 의미인지 추측해서 설명해줘") == "meanings"
+    assert schema_kind("숫자 컬럼과 문자 컬럼을 구분해서 보여줘") == "type_groups"
+
+
+def test_is_schema_request_for_meanings_and_type_groups() -> None:
+    assert is_schema_request("각 컬럼이 어떤 의미인지 추측해서 설명해줘") is True
+    assert is_schema_request("숫자 컬럼과 문자 컬럼을 구분해서 보여줘") is True
+    assert is_schema_request("숫자형 컬럼과 문자형 컬럼을 나눠줘") is True
+
+
+def test_column_meanings_outcome() -> None:
+    df = pd.DataFrame(
+        {
+            "항목_코드": ["A-001"],
+            "비용_명": ["재료비"],
+            "실행_예산": [100],
+            "집행_금액": [80],
+            "담당자": ["김"],
+            "집행_일자": pd.to_datetime(["2026-07-01"]),
+            "비고": ["정상"],
+        }
+    )
+    reply, table = build_schema_outcome(
+        "각 컬럼이 어떤 의미인지 추측해서 설명해줘",
+        [("샘플", df)],
+        use_budget_profile=True,
+    )
+    assert "추정" in reply
+    assert table is not None
+    assert list(table.columns) == ["컬럼", "추정 의미"]
+    meanings = dict(zip(table["컬럼"], table["추정 의미"], strict=True))
+    assert "식별자" in meanings["항목_코드"]
+    assert "금액" in meanings["집행_금액"]
+    assert "날짜" in meanings["집행_일자"]
+    assert "예산" in meanings["실행_예산"]
+
+
+def test_column_meanings_generic_avoids_budget_wording() -> None:
+    from core.schema_compare import estimate_column_meaning
+
+    assert "예산" not in estimate_column_meaning("비용명", use_budget_profile=False)
+    assert "예산" in estimate_column_meaning("비용명", use_budget_profile=True)
+
+
+def test_type_groups_outcome() -> None:
+    df = pd.DataFrame(
+        {
+            "항목_코드": ["A-001", "A-002"],
+            "비용_명": ["재료비", "회의비"],
+            "실행_예산": [100, 200],
+            "집행_금액": [80.0, None],
+            "담당자": ["김", "이"],
+            "집행_일자": pd.to_datetime(["2026-07-01", None]),
+            "비고": ["정상", ""],
+        }
+    )
+    reply, table = build_schema_outcome(
+        "숫자 컬럼과 문자 컬럼을 구분해서 보여줘",
+        [("샘플", df)],
+    )
+    assert "숫자형 컬럼" in reply
+    assert "문자형 컬럼" in reply
+    assert "날짜형 컬럼" in reply
+    assert "실행_예산" in reply
+    assert "집행_금액" in reply
+    assert "항목_코드" in reply
+    assert "집행_일자" in reply
+    assert table is None
+
+
+def test_route_type_groups_bypasses_pandasai() -> None:
+    df = pd.DataFrame({"지역": ["서울"], "매출": [100], "판매일": pd.to_datetime(["2026-01-01"])})
+    outcome = route_single_prompt(
+        "숫자 컬럼과 문자 컬럼을 구분해서 보여줘",
+        full_df=df,
+        source_df=df,
+        context_label=None,
+        base_url="http://localhost:11434",
+        model="dummy",
+    )
+    assert "숫자형 컬럼" in outcome.reply
+    assert "매출" in outcome.reply
+    assert "지역" in outcome.reply
+    assert "판매일" in outcome.reply
+    assert outcome.operation_name is None
+
+
+def test_route_column_meanings_bypasses_pandasai() -> None:
+    df = pd.DataFrame({"담당자": ["김"], "집행_금액": [1]})
+    outcome = route_single_prompt(
+        "각 컬럼이 어떤 의미인지 추측해서 설명해줘",
+        full_df=df,
+        source_df=df,
+        context_label=None,
+        base_url="http://localhost:11434",
+        model="dummy",
+    )
+    assert outcome.dataframe is not None
+    assert "추정 의미" in outcome.dataframe.columns
+    assert "추정" in outcome.reply
+    assert outcome.operation_name is None
 
 
 def test_build_schema_compare_table() -> None:

@@ -83,6 +83,7 @@ def is_excluded_summary_label(value: object) -> bool:
 
 
 def fmt_won(value: float) -> str:
+    """원화 표시. 예산 표 모드 요약(budget_summary) 전용."""
     number = int(round(value))
     return f"{number:,}원"
 

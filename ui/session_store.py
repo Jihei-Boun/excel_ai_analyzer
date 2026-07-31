@@ -8,25 +8,16 @@ from core.constants import (
     DEFAULT_OLLAMA_BASE_URL,
     DEFAULT_OLLAMA_MODEL,
 )
+from core.profile_loader import load_profile
 
-RECOMMENDED_PROMPTS = (
-    "파일을 요약해줘",
-    "각 컬럼의 데이터 타입과 결측치 개수를 알려줘",
-    "첫 번째 숫자형 컬럼의 합계를 구해줘",
-    "범주형 컬럼별 행 개수를 표로 보여줘",
-)
-MULTI_FILE_PROMPTS = (
-    "각 파일의 행 수와 컬럼 목록을 비교해줘",
-    "두 파일에서 공통으로 있는 컬럼을 알려줘",
-    "각 파일의 숫자형 컬럼 합계를 표로 비교해줘",
-    "두 파일을 공통 키로 병합한 결과를 보여줘",
-)
-MULTI_SHEET_PROMPTS = (
-    "각 시트의 행 수와 컬럼 목록을 비교해줘",
-    "시트별로 숫자형 컬럼 합계를 표로 비교해줘",
-    "시트 간 공통 컬럼을 알려줘",
-    "파일을 요약해줘",
-)
+# 하위 호환: 프로필 YAML의 suggested_prompts를 재노출
+_generic = load_profile("generic")
+_budget = load_profile("budget")
+
+RECOMMENDED_PROMPTS = _generic["suggested_prompts"]
+MULTI_FILE_PROMPTS = _generic["suggested_prompts_multi_file"]
+MULTI_SHEET_PROMPTS = _generic["suggested_prompts_multi_sheet"]
+BUDGET_PROMPTS = _budget["suggested_prompts"]
 
 ANALYSIS_RESULT_KEYS = (
     "selected_df",

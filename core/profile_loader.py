@@ -1,4 +1,4 @@
-"""profiles/*.yaml 로더 — 컬럼 힌트·예산 프로필."""
+"""profiles/*.yaml 로더 — 컬럼 힌트·의미·일반/예산 프로필."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from typing import Any
 import yaml
 
 PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles"
+
+_PROFILE_NAMES = frozenset({"generic", "budget"})
 
 
 def _as_tuple(value: Any, *, field: str) -> tuple[str, ...]:
@@ -33,6 +35,24 @@ def _as_int(value: Any, *, field: str, default: int) -> int:
     return int(value)
 
 
+def _parse_meanings(value: Any, *, field: str) -> tuple[tuple[tuple[str, ...], str], ...]:
+    """YAML meanings 리스트 → ((hints...), meaning) 튜플."""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise TypeError(f"{field} must be a list, got {type(value).__name__}")
+    rules: list[tuple[tuple[str, ...], str]] = []
+    for idx, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise TypeError(f"{field}[{idx}] must be a mapping")
+        hints = _as_tuple(item.get("hints"), field=f"{field}[{idx}].hints")
+        meaning = _as_str(item.get("meaning"), field=f"{field}[{idx}].meaning")
+        if not hints or not meaning:
+            continue
+        rules.append((hints, meaning))
+    return tuple(rules)
+
+
 @lru_cache(maxsize=1)
 def load_column_hints() -> dict[str, tuple[str, ...]]:
     path = PROFILES_DIR / "column_hints.yaml"
@@ -55,10 +75,21 @@ def load_column_hints() -> dict[str, tuple[str, ...]]:
 
 
 @lru_cache(maxsize=1)
+def load_column_meanings() -> tuple[tuple[tuple[str, ...], str], ...]:
+    """일반 모드 컬럼 의미 규칙 (profiles/column_meanings.yaml)."""
+    path = PROFILES_DIR / "column_meanings.yaml"
+    data = _load_yaml(path)
+    return _parse_meanings(data.get("meanings"), field="meanings")
+
+
+@lru_cache(maxsize=1)
 def load_budget_profile() -> dict[str, Any]:
     path = PROFILES_DIR / "budget.yaml"
     data = _load_yaml(path)
     return {
+        "name": "budget",
+        "summary": _as_str(data.get("summary"), field="summary") or "budget",
+        "currency": _as_str(data.get("currency"), field="currency") or "krw",
         "detect_min_hits": _as_int(
             data.get("detect_min_hits"), field="detect_min_hits", default=2
         ),
@@ -85,13 +116,69 @@ def load_budget_profile() -> dict[str, Any]:
         "key_column_hints": _as_tuple(data.get("key_column_hints"), field="key_column_hints"),
         "footer_labels": _as_tuple(data.get("footer_labels"), field="footer_labels"),
         "intro": _as_str(data.get("intro"), field="intro"),
+        "suggested_prompts": _as_tuple(
+            data.get("suggested_prompts"), field="suggested_prompts"
+        ),
+        "meanings": _parse_meanings(data.get("meanings"), field="meanings"),
     }
+
+
+@lru_cache(maxsize=1)
+def load_generic_profile() -> dict[str, Any]:
+    path = PROFILES_DIR / "generic.yaml"
+    data = _load_yaml(path)
+    return {
+        "name": "generic",
+        "summary": _as_str(data.get("summary"), field="summary") or "generic",
+        "currency": _as_str(data.get("currency"), field="currency") or "none",
+        "suggested_prompts": _as_tuple(
+            data.get("suggested_prompts"), field="suggested_prompts"
+        ),
+        "suggested_prompts_multi_file": _as_tuple(
+            data.get("suggested_prompts_multi_file"),
+            field="suggested_prompts_multi_file",
+        ),
+        "suggested_prompts_multi_sheet": _as_tuple(
+            data.get("suggested_prompts_multi_sheet"),
+            field="suggested_prompts_multi_sheet",
+        ),
+        "meanings": load_column_meanings(),
+        "footer_labels": (),
+    }
+
+
+def load_profile(name: str) -> dict[str, Any]:
+    """프로필 이름으로 로드. ``generic`` | ``budget``."""
+    key = str(name or "generic").strip().lower()
+    if key not in _PROFILE_NAMES:
+        raise ValueError(f"Unknown profile: {name!r} (expected generic|budget)")
+    if key == "budget":
+        return load_budget_profile()
+    return load_generic_profile()
+
+
+def active_profile(*, use_budget_profile: bool = False) -> dict[str, Any]:
+    """예산 표 모드 여부에 따른 활성 프로필."""
+    return load_profile("budget" if use_budget_profile else "generic")
+
+
+def load_meaning_rules(*, use_budget_profile: bool = False) -> tuple[
+    tuple[tuple[str, ...], str], ...
+]:
+    """의미 규칙. 예산 모드면 budget meanings를 앞에 두고 일반 규칙을 이어 붙인다."""
+    generic = load_column_meanings()
+    if not use_budget_profile:
+        return generic
+    budget = load_budget_profile().get("meanings") or ()
+    return tuple(budget) + tuple(generic)
 
 
 def clear_profile_cache() -> None:
     """테스트·핫리로드용."""
     load_column_hints.cache_clear()
+    load_column_meanings.cache_clear()
     load_budget_profile.cache_clear()
+    load_generic_profile.cache_clear()
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:

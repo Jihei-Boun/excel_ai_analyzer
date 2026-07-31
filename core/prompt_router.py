@@ -26,15 +26,19 @@ from core.prompt_intent import (
     wants_table_and_chart,
 )
 from core.schema_compare import build_schema_outcome, is_schema_request
-from core.result_format import exclude_aggregate_rows, to_list_display
+from core.quality import build_quality_outcome, is_quality_request
+from core.result_format import exclude_aggregate_rows, restore_source_row_order, to_list_display
 from core.text_normalize import _normalize_text
 from core.value_filter import (
     _filter_by_mentioned_value,
     _filter_multi_by_mentioned_value,
     build_filter_summary,
+    build_missing_rows_outcome,
     extract_matched_value,
+    filter_missing_rows,
     infer_context_label,
     is_metric_aggregate_request,
+    is_missing_rows_request,
 )
 
 
@@ -139,12 +143,14 @@ def postprocess_table_result(
     *,
     source_df: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, str, dict]:
-    """집계 행 제거·리스트 표시 메타를 적용한다."""
+    """집계 행 제거·원본 순서 복원·리스트 표시 메타를 적용한다."""
     meta: dict = {}
     if detect_aggregate_op(prompt) is None:
         result, excluded = exclude_aggregate_rows(result, prompt)
         if excluded:
             summary = f"{summary} · 합계·소계 {excluded}행 제외"
+
+    result = restore_source_row_order(result, source_df, prompt=prompt)
 
     list_info = to_list_display(result, prompt, source_df=source_df)
     if list_info is not None:
@@ -296,11 +302,35 @@ def route_single_prompt(
             reply = build_file_summary(full_df, use_budget_profile=use_budget_profile)
         return SingleRouteOutcome(reply=reply, dataframe=None)
 
+    if is_missing_rows_request(prompt):
+        reply, table = build_missing_rows_outcome(source_df, label="현재 데이터")
+        return SingleRouteOutcome(
+            reply=reply,
+            dataframe=table,
+            # 결측 행 조회는 미리보기용 — 이후 집계 범위를 잠그지 않는다
+            keep_as_filter=False,
+            replace_selection=False,
+        )
+
+    if is_quality_request(prompt):
+        reply, table = build_quality_outcome(
+            [("현재 데이터", full_df)],
+            unit_label="대상",
+            prompt=prompt,
+        )
+        return SingleRouteOutcome(
+            reply=reply,
+            dataframe=table,
+            keep_as_filter=False,
+            replace_selection=False,
+        )
+
     if is_schema_request(prompt):
         reply, table = build_schema_outcome(
             prompt,
             [("현재 데이터", full_df)],
             unit_label="대상",
+            use_budget_profile=use_budget_profile,
         )
         return SingleRouteOutcome(
             reply=reply,
@@ -467,6 +497,15 @@ def route_single_prompt(
                 replace_selection=False,
             )
 
+    # 긴 문자열 답변은 metric이 아니라 채팅 메시지로만 표시
+    if isinstance(result, str):
+        text = result.strip()
+        return SingleRouteOutcome(
+            reply=text or summary,
+            dataframe=None,
+            meta=meta,
+        )
+
     return SingleRouteOutcome(
         reply=summary,
         dataframe=None,
@@ -500,11 +539,51 @@ def route_multi_prompt(
         )
         return SingleRouteOutcome(reply=reply, dataframe=None)
 
+    if is_missing_rows_request(prompt):
+        parts: list[pd.DataFrame] = []
+        for name, frame in prepared:
+            missing = filter_missing_rows(frame)
+            if missing.empty:
+                continue
+            part = missing.copy()
+            part.insert(0, "출처파일", name)
+            parts.append(part)
+        if not parts:
+            return SingleRouteOutcome(
+                reply=f"선택된 {unit_label}에서 결측값이 있는 행을 찾지 못했습니다.",
+                dataframe=None,
+            )
+        table = pd.concat(parts, ignore_index=True)
+        reply = (
+            f"결측값이 있는 행 {len(table):,}개 "
+            f"({len(parts)}개 {unit_label})"
+        )
+        return SingleRouteOutcome(
+            reply=reply,
+            dataframe=table,
+            keep_as_filter=False,
+            replace_selection=False,
+        )
+
+    if is_quality_request(prompt):
+        reply, table = build_quality_outcome(
+            prepared,
+            unit_label=unit_label,
+            prompt=prompt,
+        )
+        return SingleRouteOutcome(
+            reply=reply,
+            dataframe=table,
+            keep_as_filter=False,
+            replace_selection=False,
+        )
+
     if is_schema_request(prompt):
         reply, table = build_schema_outcome(
             prompt,
             prepared,
             unit_label=unit_label,
+            use_budget_profile=use_budget_profile,
         )
         return SingleRouteOutcome(
             reply=reply,
@@ -614,6 +693,15 @@ def route_multi_prompt(
     if meta.get("chart_path"):
         return SingleRouteOutcome(
             reply=summary or "차트 결과를 생성했습니다.",
+            dataframe=None,
+            meta=meta,
+        )
+
+    # 긴 문자열 답변은 metric이 아니라 채팅 메시지로만 표시
+    if isinstance(result, str):
+        text = result.strip()
+        return SingleRouteOutcome(
+            reply=text or summary,
             dataframe=None,
             meta=meta,
         )

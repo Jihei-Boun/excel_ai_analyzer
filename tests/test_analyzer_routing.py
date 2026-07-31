@@ -376,6 +376,24 @@ def test_resolve_filter_source_falls_back_to_full_data() -> None:
     assert len(source2) == 1
 
 
+def test_resolve_filter_source_resets_when_groupby_collapsed() -> None:
+    """결측행 등으로 그룹이 1명만 남으면 '담당자별' 집계는 원본으로 돌린다."""
+    full = pd.DataFrame(
+        {
+            "담당자": ["김지혜", "박민수", "이서연", "정우진", "최유나"],
+            "집행_금액": [1, 2, 3, 4, None],
+        }
+    )
+    filtered = full[full["담당자"] == "최유나"].reset_index(drop=True)
+    source, reset = resolve_filter_source(
+        full,
+        filtered,
+        "담당자별 집행 금액을 집계해줘",
+    )
+    assert reset is True
+    assert len(source) == len(full)
+
+
 def test_groupby_preserves_file_order() -> None:
     """그룹 집계 결과는 파일 등장 순서를 유지한다 (가나다/금액 정렬 금지)."""
     from core.analyzer import build_groupby_aggregate_table

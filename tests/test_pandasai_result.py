@@ -112,6 +112,15 @@ def test_build_summary_for_chart() -> None:
     assert _build_summary(None, None, {"chart_path": "/tmp/x.png"}) == "차트 결과를 생성했습니다."
 
 
+def test_build_summary_for_string_result() -> None:
+    text = "이 파일에서 분석 전에 수정하면 좋은 부분:\n1. NaN 값 처리"
+    assert _build_summary(text, "result = {}") == text
+
+
+def test_build_summary_for_number() -> None:
+    assert _build_summary(1234567, None) == "PandasAI 결과: 1,234,567"
+
+
 def test_format_axis_number_uses_exact_comma_values() -> None:
     assert _format_axis_number(187_090_387) == "187,090,387"
     assert _format_axis_number(114_525_479) == "114,525,479"

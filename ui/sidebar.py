@@ -43,8 +43,16 @@ def render_sidebar() -> None:
         st.session_state.budget_table_mode = st.checkbox(
             "예산 표 모드",
             value=bool(st.session_state.get("budget_table_mode", False)),
-            help="예실대비표 전용 요약·하단 요약행(내부흡수액·외부유출액) 제외를 사용합니다.",
+            help=(
+                "기본은 일반 분석 모드입니다. "
+                "켜면 예실대비표 전용 요약·하단 요약행(내부흡수액·외부유출액) 제외·"
+                "예산 추천 질문을 사용합니다."
+            ),
         )
+        if st.session_state.budget_table_mode:
+            st.caption("예실대비표(예산) 특화 모드")
+        else:
+            st.caption("일반 분석 모드 (기본)")
 
         st.subheader("연결")
         st.session_state.ollama_base_url = st.text_input(
@@ -75,6 +83,7 @@ def render_sidebar() -> None:
                 activate_file,
                 activate_files,
                 get_active_named_frames,
+                get_analysis_unit_label,
                 is_multi_file_analysis,
             )
 
@@ -109,7 +118,14 @@ def render_sidebar() -> None:
                         st.rerun()
                     elif len(files) >= 2:
                         st.caption("동시 분석에는 파일 2개 이상을 선택하세요.")
-                st.caption(f"{len(get_active_named_frames())}개 파일 동시 분석 중")
+
+                unit = get_analysis_unit_label()
+                st.caption(
+                    f"{len(get_active_named_frames())}개 {unit} 동시 분석 중"
+                )
+                _render_multi_file_sheet_selectors(
+                    list(st.session_state.get("active_file_ids") or [])
+                )
             else:
                 active_id = st.session_state.get("active_file_id")
                 label_by_id = {f["id"]: f["name"] for f in files}
@@ -138,9 +154,42 @@ def render_sidebar() -> None:
         )
 
 
-def _render_sheet_multiselect(file_id: str) -> None:
-    """단일 파일 모드에서 시트 다중 선택 UI."""
-    from ui.file_state import find_file, get_active_sheet_names, set_active_sheets
+def _render_multi_file_sheet_selectors(active_ids: list[str]) -> None:
+    """다중 파일 모드에서 파일별 시트 다중 선택 UI."""
+    from ui.file_state import find_file
+
+    multi_sheet_files = []
+    for file_id in active_ids:
+        meta = find_file(file_id)
+        if meta is None:
+            continue
+        if len(meta.get("sheet_names") or []) >= 2:
+            multi_sheet_files.append((file_id, meta))
+
+    if not multi_sheet_files:
+        return
+
+    st.subheader("파일별 분석 시트")
+    st.caption(
+        "각 파일에서 분석에 포함할 시트를 고르세요. "
+        "2개 이상이면 시트 단위로 펼칩니다."
+    )
+    for file_id, meta in multi_sheet_files:
+        st.markdown(f"**{meta['name']}**")
+        _render_sheet_multiselect(file_id, label="포함할 시트")
+
+
+def _render_sheet_multiselect(
+    file_id: str,
+    *,
+    label: str = "동시 분석할 시트",
+) -> None:
+    """파일의 시트 다중 선택 UI (단일·다중 파일 공통)."""
+    from ui.file_state import (
+        _normalize_active_sheets,
+        find_file,
+        set_active_sheets,
+    )
 
     meta = find_file(file_id)
     if meta is None:
@@ -149,8 +198,7 @@ def _render_sheet_multiselect(file_id: str) -> None:
     if len(sheet_names) < 2:
         return
 
-    st.subheader("분석할 시트")
-    current = get_active_sheet_names() or [meta.get("current_sheet") or sheet_names[0]]
+    current = list(_normalize_active_sheets(meta))
     desired = [name for name in current if name in sheet_names]
     if not desired:
         desired = [sheet_names[0]]
@@ -172,9 +220,12 @@ def _render_sheet_multiselect(file_id: str) -> None:
             st.session_state[widget_key] = stored
 
     picked = st.multiselect(
-        "동시 분석할 시트",
+        label,
         options=sheet_names,
-        help="2개 이상 선택하면 시트별로 동시에 분석합니다. 미리보기는 아래에서 시트를 따로 볼 수 있습니다.",
+        help=(
+            "2개 이상 선택하면 해당 파일의 시트를 각각 분석 단위로 펼칩니다. "
+            "미리보기는 아래에서 시트를 따로 볼 수 있습니다."
+        ),
         key=widget_key,
     )
     if not picked:
@@ -184,7 +235,7 @@ def _render_sheet_multiselect(file_id: str) -> None:
         set_active_sheets(list(picked), file_id=file_id, reset_analysis=True)
         st.rerun()
     if len(picked) >= 2:
-        st.caption(f"시트 {len(picked)}개 동시 분석 중")
+        st.caption(f"시트 {len(picked)}개 포함")
     else:
         st.caption(f"현재 시트: {picked[0]}")
 

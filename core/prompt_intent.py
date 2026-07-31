@@ -84,6 +84,7 @@ _AGGREGATE_OPS = (
     ("종합", "sum"),
     ("합계", "sum"),
     ("합산", "sum"),
+    ("집계", "sum"),
     ("sum", "sum"),
     ("total", "sum"),
 )

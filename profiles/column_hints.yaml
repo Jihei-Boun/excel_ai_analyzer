@@ -1,5 +1,6 @@
 # 범용 컬럼 역할 힌트 (항상 적용)
 # 도메인에 맞게 수정한 뒤 앱을 재시작하면 반영됩니다.
+# 예산 전용 강한 힌트는 profiles/budget.yaml을 사용하세요.
 
 group_column_hints:
   - 비목분류
@@ -8,6 +9,11 @@ group_column_hints:
   - 상위분류
   - 카테고리
   - category
+  - 지역
+  - 점포
+  - 매장
+  - 상품
+  - 부서
 
 group_column_suffixes:
   - 분류
@@ -18,6 +24,8 @@ group_column_exact:
   - 카테고리
   - category
   - 구분
+  - 지역
+  - 점포
 
 item_column_hints:
   - 비용명
@@ -27,6 +35,9 @@ item_column_hints:
   - 항목
   - 내역
   - 명칭
+  - 상품
+  - 품목
+  - 제품
 
 code_column_hints:
   - 세목코드
@@ -37,6 +48,8 @@ code_column_hints:
   - 세목
   - 번호
   - code
+  - 상품코드
+  - sku
 
 code_metric_name_hints:
   - 코드
@@ -44,6 +57,7 @@ code_metric_name_hints:
   - code
   - 비용명
   - 세목
+  - sku
 
 amount_column_hints:
   - 예산
@@ -57,3 +71,10 @@ amount_column_hints:
   - 잔액
   - 누계
   - 가집행
+  - 매출
+  - 매입
+  - 재고
+  - 판매
+  - sales
+  - amount
+  - revenue

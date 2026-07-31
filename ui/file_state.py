@@ -105,9 +105,14 @@ def activate_files(
         meta = find_file(file_id)
         if meta is None:
             continue
-        _normalize_active_sheets(meta)
-        sheet = meta.get("current_sheet") or meta["active_sheets"][0]
-        _ensure_file_frame(file_id, meta, sheet)
+        sheets = _normalize_active_sheets(meta)
+        for sheet in sheets:
+            _load_sheet_frame(file_id, meta, sheet)
+        primary_sheet = meta.get("current_sheet") or sheets[0]
+        if primary_sheet not in sheets:
+            primary_sheet = sheets[0]
+            meta["current_sheet"] = primary_sheet
+        _ensure_file_frame(file_id, meta, primary_sheet)
 
     # 분석 대상의 대표 파일 (단일 모드 = 유일한 파일)
     primary_id = ordered_ids[0]
@@ -170,13 +175,56 @@ def is_multi_sheet_analysis() -> bool:
     return len(_normalize_active_sheets(meta)) >= 2
 
 
+def is_cross_file_sheet_analysis() -> bool:
+    """다중 파일 모드에서 파일당 시트를 펼쳐 2개 이상 단위로 분석하는지."""
+    if not is_multi_file_analysis():
+        return False
+    return count_active_analysis_units() > len(st.session_state.get("active_file_ids") or [])
+
+
 def is_multi_analysis_mode() -> bool:
     """파일 또는 시트 단위로 2개 이상 동시 분석 중인지."""
     return is_multi_file_analysis() or is_multi_sheet_analysis()
 
 
-def get_active_sheet_names() -> list[str]:
-    """단일 파일 분석 시 선택된 시트 목록. 다중 파일이면 빈 목록."""
+def get_analysis_unit_label() -> str:
+    """동시 분석 단위 표시명. 시트 단위면 '시트', 아니면 '파일'."""
+    if is_multi_sheet_analysis() or is_cross_file_sheet_analysis():
+        return "시트"
+    return "파일"
+
+
+def count_active_analysis_units() -> int:
+    """활성 분석 단위(파일×시트) 개수."""
+    if is_multi_file_analysis():
+        total = 0
+        for file_id in st.session_state.get("active_file_ids") or []:
+            meta = find_file(file_id)
+            if meta is None:
+                continue
+            total += max(len(_normalize_active_sheets(meta)), 1)
+        return total
+    if is_multi_sheet_analysis():
+        active_id = st.session_state.get("active_file_id")
+        meta = find_file(active_id) if active_id else None
+        if meta is None:
+            return 0
+        return len(_normalize_active_sheets(meta))
+    return 1 if st.session_state.get("active_file_id") else 0
+
+
+def get_active_sheet_names(*, file_id: str | None = None) -> list[str]:
+    """파일의 분석 대상 시트 목록.
+
+    file_id가 없으면 단일 파일 모드의 활성 파일 기준.
+    다중 파일에서 file_id 없이 호출하면 빈 목록.
+    """
+    if file_id:
+        meta = find_file(file_id)
+        if meta is None:
+            return []
+        return list(_normalize_active_sheets(meta))
+
     if is_multi_file_analysis():
         return []
     active_id = st.session_state.get("active_file_id")
@@ -186,13 +234,25 @@ def get_active_sheet_names() -> list[str]:
     return list(_normalize_active_sheets(meta))
 
 
+def preserves_active_sheets_on_preview(file_id: str) -> bool:
+    """미리보기 시트 전환 시 분석용 active_sheets를 유지할지."""
+    meta = find_file(file_id)
+    if meta is None:
+        return False
+    return len(_normalize_active_sheets(meta)) >= 2
+
+
 def set_active_sheets(
     sheet_names: list[str],
     *,
     file_id: str | None = None,
     reset_analysis: bool = True,
 ) -> None:
-    """단일 파일의 분석 대상 시트를 설정한다. 2개 이상이면 시트 동시 분석."""
+    """파일의 분석 대상 시트를 설정한다.
+
+    단일 파일: 2개 이상이면 시트 동시 분석.
+    다중 파일: 해당 파일의 시트만 갱신하고 파일 동시 분석 모드는 유지.
+    """
     target_id = file_id or st.session_state.get("active_file_id")
     meta = find_file(target_id) if target_id else None
     if meta is None or not target_id:
@@ -213,26 +273,41 @@ def set_active_sheets(
     # 대표 시트(미리보기·단일 분석): 선택 목록의 첫 시트
     primary_sheet = ordered[0]
     meta["current_sheet"] = primary_sheet
-    df = _ensure_file_frame(target_id, meta, primary_sheet)
 
     # 선택 시트 프레임을 미리 로드
     for sheet in ordered:
         _load_sheet_frame(target_id, meta, sheet)
+    df = _ensure_file_frame(target_id, meta, primary_sheet)
 
-    st.session_state.active_file_ids = [target_id]
-    st.session_state.active_file_id = target_id
-    st.session_state.analysis_mode = "single"
-    st.session_state.df = df
-    st.session_state.file_name = meta["name"]
-    st.session_state.file_path = meta["path"]
-    st.session_state.file_size = meta["size"]
-    st.session_state.sheet_names = available
-    st.session_state.current_sheet = primary_sheet
-    st.session_state._df_sanitized = False
+    active_ids = list(st.session_state.get("active_file_ids") or [])
+    stay_multi = (
+        st.session_state.get("analysis_mode") == "multi"
+        and target_id in active_ids
+        and len(active_ids) >= 2
+    )
+
+    if stay_multi:
+        if target_id == st.session_state.get("active_file_id"):
+            st.session_state.df = df
+            st.session_state.current_sheet = primary_sheet
+            st.session_state.sheet_names = available
+            st.session_state._df_sanitized = False
+    else:
+        st.session_state.active_file_ids = [target_id]
+        st.session_state.active_file_id = target_id
+        st.session_state.analysis_mode = "single"
+        st.session_state.df = df
+        st.session_state.file_name = meta["name"]
+        st.session_state.file_path = meta["path"]
+        st.session_state.file_size = meta["size"]
+        st.session_state.sheet_names = available
+        st.session_state.current_sheet = primary_sheet
+        st.session_state._df_sanitized = False
 
     if reset_analysis:
-        clear_analysis_result_state()
-    st.session_state.work_target = _work_target_label()
+        clear_analysis_result_state(work_target=_work_target_label())
+    else:
+        st.session_state.work_target = _work_target_label()
     # 사이드바 시트 multiselect는 이미 인스턴스화된 뒤일 수 있으므로
     # 다음 스크립트 시작(위젯 생성 전)에 동기화한다.
     st.session_state._pending_sidebar_sheets = {
@@ -245,21 +320,33 @@ def set_active_sheets(
 def get_active_named_frames() -> list[tuple[str, pd.DataFrame]]:
     """활성 분석 단위 순서대로 (표시명, DataFrame) 목록을 반환한다.
 
-    - 다중 파일: 파일명 기준 (각 파일의 current_sheet)
-    - 다중 시트: 시트명 기준
+    - 다중 파일(파일당 시트 1개): 파일명
+    - 다중 파일(일부 파일 시트 복수): ``파일명 / 시트명``
+    - 단일 파일 다중 시트: 시트명
     """
     named: list[tuple[str, pd.DataFrame]] = []
 
     if is_multi_file_analysis():
+        file_sheets: list[tuple[dict, list[str]]] = []
         for file_id in st.session_state.get("active_file_ids") or []:
             meta = find_file(file_id)
             if meta is None:
                 continue
-            sheet = meta.get("current_sheet") or (meta.get("sheet_names") or [None])[0]
-            if not sheet:
+            sheets = _normalize_active_sheets(meta)
+            if not sheets:
                 continue
-            df = _ensure_file_frame(file_id, meta, sheet)
-            named.append((meta["name"], df))
+            file_sheets.append((meta, sheets))
+
+        expand_sheets = any(len(sheets) >= 2 for _, sheets in file_sheets)
+        for meta, sheets in file_sheets:
+            for sheet in sheets:
+                df = _load_sheet_frame(meta["id"], meta, sheet)
+                label = (
+                    f"{meta['name']} / {sheet}"
+                    if expand_sheets
+                    else meta["name"]
+                )
+                named.append((label, df))
         return named
 
     active_id = st.session_state.get("active_file_id")
@@ -307,7 +394,7 @@ def set_analysis_mode(mode: str, *, sync_mode_radio: bool = True) -> None:
                 return
         else:
             st.session_state.analysis_mode = "multi"
-            st.session_state.work_target = "다중 파일"
+            st.session_state.work_target = _work_target_label()
             st.session_state.selected_df = None
             st.session_state.operation_result = None
             st.session_state.active_operation = None
@@ -445,11 +532,21 @@ def _clear_active() -> None:
 
 
 def _work_target_label() -> str:
+    if is_cross_file_sheet_analysis():
+        return "다중 파일·시트"
     if is_multi_file_analysis():
         return "다중 파일"
     if is_multi_sheet_analysis():
         return "다중 시트"
     return "원본 df"
+
+
+def frame_label_parts(label: str) -> tuple[str | None, str | None]:
+    """``파일명 / 시트명`` 표시명을 (파일명, 시트명)으로 분리한다."""
+    if " / " not in label:
+        return None, None
+    file_name, sheet = label.split(" / ", 1)
+    return file_name, sheet
 
 
 def _normalize_active_sheets(meta: dict) -> list[str]:

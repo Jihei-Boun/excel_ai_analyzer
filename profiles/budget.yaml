@@ -1,5 +1,8 @@
 # 예산 표 모드(ON)일 때만 사용하는 예실대비표 프로필
 
+summary: budget
+currency: krw
+
 detect_min_hits: 2
 
 column_hints:
@@ -61,3 +64,26 @@ footer_labels:
 intro: >-
   이 파일은 연구과제의 예산 계획, 집행 내역, 가집행 금액 및 잔액을
   관리하는 예실대비표입니다.
+
+suggested_prompts:
+  - 파일을 요약해줘
+  - 실행예산 합계를 알려줘
+  - 비목분류별 집행계 합계를 표로 보여줘
+  - 비용명이 121인 데이터만 보여줘
+
+# 예산 모드 ON 시 일반 의미 규칙보다 앞에 병합
+meanings:
+  - hints: [항목_코드, 항목코드, itemcode]
+    meaning: 각 예산 항목을 구분하는 고유 식별자
+  - hints: [비용_명, 비용명, 항목명, 품목명]
+    meaning: 예산 또는 집행 대상 항목 이름
+  - hints: [실행_예산, 실행예산, 편성예산, 계획예산]
+    meaning: 계획된 예산 금액
+  - hints: [집행_금액, 집행금액, 사용금액, 지출액, 집행계]
+    meaning: 실제 사용된 금액
+  - hints: [집행_일자, 집행일자, 지출일, 사용일]
+    meaning: 예산이 집행된 날짜
+  - hints: [예산, budget]
+    meaning: 예산 관련 금액
+  - hints: [비목분류, 비목]
+    meaning: 예산 비목/분류 라벨

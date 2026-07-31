@@ -79,8 +79,13 @@ def merged_header_base(name: str) -> str:
 
 
 def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """원본 의미를 유지하며 컬럼명·빈 행·안전한 숫자 문자열만 정리한다."""
-    return _preprocess(df)
+    """원본 의미를 유지하며 컬럼명·빈 행·안전한 숫자 문자열만 정리한다.
+
+    이후 공통 정규화(`normalize_dataframe`)를 적용해 업로드 편차를 흡수한다.
+    """
+    from core.normalize import normalize_dataframe
+
+    return normalize_dataframe(_preprocess(df))
 
 
 def _preprocess(df: pd.DataFrame) -> pd.DataFrame:

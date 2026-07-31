@@ -1,4 +1,4 @@
-"""스키마·메타 요청 (행 수·컬럼 목록·공통 컬럼·dtype/결측) 규칙 경로."""
+"""스키마·메타 요청 (행 수·컬럼 목록·공통 컬럼·dtype/결측·타입 분류·의미 추정) 규칙 경로."""
 
 from __future__ import annotations
 
@@ -29,6 +29,29 @@ _SCHEMA_SIGNAL_PHRASES = (
     "columnlist",
     "colnames",
     "commoncolumns",
+    # 타입 분류
+    "숫자컬럼",
+    "문자컬럼",
+    "숫자형컬럼",
+    "문자형컬럼",
+    "수치형컬럼",
+    "날짜형컬럼",
+    "날짜컬럼",
+    "컬럼을구분",
+    "컬럼구분",
+    "타입구분",
+    "형구분",
+    # 의미 추정
+    "컬럼의미",
+    "컬럼설명",
+    "의미인지",
+    "의미추측",
+    "추측해서설명",
+    "의미를설명",
+    "무엇을의미",
+    "어떤의미",
+    "컬럼의도",
+    "columnmeaning",
 )
 
 # 스키마가 아닌 분석 요청으로 보이는 표현 (컬럼별 집계 등)
@@ -42,10 +65,47 @@ _NON_SCHEMA_MARKERS = (
     "차트",
     "그래프",
     "매출",
-    "금액",
     "뽑아",
     "나열",
 )
+
+_TYPE_GROUP_PHRASES = (
+    "숫자컬럼",
+    "문자컬럼",
+    "숫자형컬럼",
+    "문자형컬럼",
+    "수치형컬럼",
+    "날짜형컬럼",
+    "날짜컬럼",
+    "컬럼을구분",
+    "컬럼구분",
+    "타입구분",
+    "형구분",
+    "숫자와문자",
+    "숫자문자",
+)
+
+_MEANING_PHRASES = (
+    "컬럼의미",
+    "컬럼설명",
+    "의미인지",
+    "의미추측",
+    "추측해서설명",
+    "의미를설명",
+    "무엇을의미",
+    "어떤의미",
+    "컬럼의도",
+    "columnmeaning",
+    "의미알려",
+)
+
+def _column_meaning_rules(
+    *, use_budget_profile: bool = False
+) -> tuple[tuple[tuple[str, ...], str], ...]:
+    """컬럼 의미 규칙. YAML(profiles/)에서 로드한다."""
+    from core.profile_loader import load_meaning_rules
+
+    return load_meaning_rules(use_budget_profile=use_budget_profile)
 
 
 def is_schema_request(prompt: str) -> bool:
@@ -57,11 +117,20 @@ def is_schema_request(prompt: str) -> bool:
     if detect_aggregate_op(prompt) is not None:
         return False
 
+    # 결측 '행' 필터 요청은 스키마(컬럼별 결측 개수)가 아님
+    from core.value_filter import is_missing_rows_request
+
+    if is_missing_rows_request(prompt):
+        return False
+
     normalized = normalize_text(prompt)
     compact = re.sub(r"\s+", "", normalized)
 
     if _looks_like_groupby_row_count(compact):
         return False
+
+    if schema_kind(prompt) in {"type_groups", "meanings"}:
+        return True
 
     if any(phrase in compact for phrase in _SCHEMA_SIGNAL_PHRASES):
         return True
@@ -76,8 +145,18 @@ def is_schema_request(prompt: str) -> bool:
 
 
 def schema_kind(prompt: str) -> str:
-    """스키마 하위 유형: compare | common | dtypes | compare(기본)."""
+    """스키마 하위 유형: meanings | type_groups | common | dtypes | compare."""
     compact = re.sub(r"\s+", "", normalize_text(prompt))
+
+    from core.value_filter import is_missing_rows_request
+
+    if is_missing_rows_request(prompt):
+        return "compare"
+
+    if _is_meaning_request(compact):
+        return "meanings"
+    if _is_type_group_request(compact):
+        return "type_groups"
     if any(k in compact for k in ("공통컬럼", "공통으로있는컬럼", "commoncolumns")):
         return "common"
     if any(
@@ -93,6 +172,7 @@ def build_schema_outcome(
     named_frames: list[tuple[str, pd.DataFrame]],
     *,
     unit_label: str = "파일",
+    use_budget_profile: bool = False,
 ) -> tuple[str, pd.DataFrame | None]:
     """스키마 요청에 대한 (reply, dataframe)을 만든다."""
     if not named_frames:
@@ -103,6 +183,14 @@ def build_schema_outcome(
         return _common_columns_result(named_frames, unit_label=unit_label)
     if kind == "dtypes":
         return _dtypes_result(named_frames, unit_label=unit_label)
+    if kind == "type_groups":
+        return _type_groups_result(named_frames, unit_label=unit_label)
+    if kind == "meanings":
+        return _meanings_result(
+            named_frames,
+            unit_label=unit_label,
+            use_budget_profile=use_budget_profile,
+        )
     return _compare_result(named_frames, unit_label=unit_label)
 
 
@@ -124,6 +212,98 @@ def build_schema_compare_table(
             }
         )
     return pd.DataFrame(rows)
+
+
+def classify_columns(df: pd.DataFrame) -> dict[str, list[str]]:
+    """컬럼을 숫자형/문자형/날짜형/기타로 분류한다."""
+    groups: dict[str, list[str]] = {
+        "numeric": [],
+        "string": [],
+        "datetime": [],
+        "other": [],
+    }
+    for col in df.columns:
+        kind = _column_type_kind(df[col])
+        groups[kind].append(str(col))
+    return groups
+
+
+def estimate_column_meaning(
+    column: str,
+    series: pd.Series | None = None,
+    *,
+    use_budget_profile: bool = False,
+) -> str:
+    """컬럼명(·샘플)으로 의미를 추정한다."""
+    compact = re.sub(r"[\s_\-]+", "", str(column)).lower()
+    for hints, meaning in _column_meaning_rules(use_budget_profile=use_budget_profile):
+        for hint in hints:
+            hint_compact = re.sub(r"[\s_\-]+", "", hint).lower()
+            if hint_compact and hint_compact in compact:
+                return meaning
+
+    if series is not None:
+        if pd.api.types.is_datetime64_any_dtype(series):
+            return "날짜/시간 값"
+        if pd.api.types.is_numeric_dtype(series) and not pd.api.types.is_bool_dtype(
+            series
+        ):
+            return "수치 값 (용도는 컬럼명만으로 특정하기 어려움)"
+        if pd.api.types.is_bool_dtype(series):
+            return "예/아니오 또는 참/거짓 플래그"
+
+    return "용도를 컬럼명만으로 특정하기 어려워 추가 확인이 필요합니다"
+
+
+def _is_meaning_request(compact: str) -> bool:
+    if "컬럼" not in compact:
+        return False
+    if any(p in compact for p in _MEANING_PHRASES):
+        return True
+    # 의미·추측이 분명한 경우
+    if any(k in compact for k in ("의미", "추측", "해석", "용도")):
+        if any(
+            k in compact
+            for k in ("타입", "결측", "dtype", "숫자", "문자", "구분", "비교")
+        ):
+            return False
+        return True
+    # '설명'만 있을 때는 구조/목록 질문과 구분
+    if "설명" in compact:
+        if any(
+            k in compact
+            for k in (
+                "목록",
+                "리스트",
+                "행수",
+                "열수",
+                "비교",
+                "타입",
+                "결측",
+                "숫자",
+                "문자",
+                "구분",
+            )
+        ):
+            return False
+        return True
+    return False
+
+
+def _is_type_group_request(compact: str) -> bool:
+    if any(p in compact for p in _TYPE_GROUP_PHRASES):
+        return True
+    has_num = any(k in compact for k in ("숫자", "수치", "numeric", "number"))
+    has_str = any(k in compact for k in ("문자", "문자열", "텍스트", "string", "text"))
+    has_date = any(k in compact for k in ("날짜", "일자", "datetime", "date"))
+    if "컬럼" in compact and (
+        (has_num and has_str)
+        or (has_num and has_date)
+        or (has_str and has_date)
+        or ("구분" in compact and (has_num or has_str or has_date))
+    ):
+        return True
+    return False
 
 
 def _compare_result(
@@ -156,7 +336,6 @@ def _common_columns_result(
 
     col_sets = [set(str(c) for c in frame.columns) for _, frame in named_frames]
     common = set.intersection(*col_sets) if col_sets else set()
-    # 첫 프레임 컬럼 순서 유지
     ordered = [str(c) for c in named_frames[0][1].columns if str(c) in common]
     only_by_unit: list[dict] = []
     for name, frame in named_frames:
@@ -174,8 +353,6 @@ def _common_columns_result(
         f"{len(named_frames)}개 {unit_label} 공통 컬럼 {len(ordered)}개"
         + (f": {', '.join(ordered)}" if ordered else "")
     )
-    # 공통 목록 + 단위별 고유 컬럼을 한 표로 보기 어렵다면 공통 표만 반환
-    # 고유 정보는 reply에 짧게 덧붙임
     extras = []
     for row in only_by_unit:
         if row["고유 컬럼 수"]:
@@ -183,7 +360,10 @@ def _common_columns_result(
     if extras:
         reply = reply + " · " + " / ".join(extras)
     return reply, common_table if ordered else pd.DataFrame(
-        {unit_label: [r[unit_label] for r in only_by_unit], "고유 컬럼": [r["고유 컬럼"] for r in only_by_unit]}
+        {
+            unit_label: [r[unit_label] for r in only_by_unit],
+            "고유 컬럼": [r["고유 컬럼"] for r in only_by_unit],
+        }
     )
 
 
@@ -209,12 +389,154 @@ def _dtypes_result(
         parts.append(pd.DataFrame(rows))
     table = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
     if len(named_frames) == 1:
-        # 단일일 때 단위 컬럼 생략
         table = table.drop(columns=[unit_label], errors="ignore")
         reply = f"`{named_frames[0][0]}` 컬럼별 데이터 타입·결측치"
     else:
         reply = f"{unit_label}별 컬럼 데이터 타입·결측치 ({len(named_frames)}개)"
     return reply, table
+
+
+def _type_groups_result(
+    named_frames: list[tuple[str, pd.DataFrame]],
+    *,
+    unit_label: str,
+) -> tuple[str, pd.DataFrame | None]:
+    """숫자/문자/날짜 컬럼을 구분해 마크다운으로 반환한다."""
+    if len(named_frames) == 1:
+        _name, frame = named_frames[0]
+        groups = classify_columns(frame)
+        reply = _format_type_groups_markdown(groups)
+        # 마크다운 목록이 주 응답 — 표 중복 표시는 생략
+        return reply, None
+
+    parts: list[str] = [
+        f"선택된 {unit_label} {len(named_frames)}개의 컬럼 타입을 구분했습니다.",
+        "",
+    ]
+    rows: list[dict] = []
+    for name, frame in named_frames:
+        groups = classify_columns(frame)
+        parts.append(f"### `{name}`")
+        parts.append("")
+        parts.append(_format_type_groups_markdown(groups))
+        parts.append("")
+        for kind, label in (
+            ("numeric", "숫자형"),
+            ("string", "문자형"),
+            ("datetime", "날짜형"),
+            ("other", "기타"),
+        ):
+            for col in groups[kind]:
+                rows.append({unit_label: name, "컬럼": col, "유형": label})
+    table = pd.DataFrame(rows) if rows else None
+    return "\n".join(parts).rstrip(), table
+
+
+def _meanings_result(
+    named_frames: list[tuple[str, pd.DataFrame]],
+    *,
+    unit_label: str,
+    use_budget_profile: bool = False,
+) -> tuple[str, pd.DataFrame | None]:
+    """컬럼명 기반 의미 추정 표."""
+    if len(named_frames) == 1:
+        name, frame = named_frames[0]
+        table = _meanings_table(frame, use_budget_profile=use_budget_profile)
+        reply = (
+            f"**각 컬럼 설명** (`{name}`)\n\n"
+            "컬럼명을 바탕으로 **추정**한 의미입니다. "
+            "업무 정의와 다를 수 있으니 참고용으로 봐 주세요."
+        )
+        return reply, table
+
+    parts = [
+        f"선택된 {unit_label} {len(named_frames)}개의 컬럼 의미를 추정했습니다.",
+        "",
+    ]
+    rows: list[dict] = []
+    for name, frame in named_frames:
+        table = _meanings_table(frame, use_budget_profile=use_budget_profile)
+        parts.append(f"### `{name}`")
+        parts.append("")
+        for _, row in table.iterrows():
+            rows.append(
+                {
+                    unit_label: name,
+                    "컬럼": row["컬럼"],
+                    "추정 의미": row["추정 의미"],
+                }
+            )
+            parts.append(f"- **{row['컬럼']}**: {row['추정 의미']}")
+        parts.append("")
+    return "\n".join(parts).rstrip(), pd.DataFrame(rows) if rows else None
+
+
+def _meanings_table(
+    df: pd.DataFrame,
+    *,
+    use_budget_profile: bool = False,
+) -> pd.DataFrame:
+    rows = [
+        {
+            "컬럼": str(col),
+            "추정 의미": estimate_column_meaning(
+                str(col),
+                df[col],
+                use_budget_profile=use_budget_profile,
+            ),
+        }
+        for col in df.columns
+    ]
+    return pd.DataFrame(rows)
+
+
+def _type_groups_table(groups: dict[str, list[str]]) -> pd.DataFrame:
+    label_map = {
+        "numeric": "숫자형",
+        "string": "문자형",
+        "datetime": "날짜형",
+        "other": "기타",
+    }
+    rows: list[dict] = []
+    for kind, label in label_map.items():
+        for col in groups.get(kind, []):
+            rows.append({"컬럼": col, "유형": label})
+    return pd.DataFrame(rows)
+
+
+def _format_type_groups_markdown(groups: dict[str, list[str]]) -> str:
+    sections = [
+        ("numeric", "숫자형 컬럼"),
+        ("string", "문자형 컬럼"),
+        ("datetime", "날짜형 컬럼"),
+        ("other", "기타 컬럼"),
+    ]
+    lines: list[str] = []
+    for key, title in sections:
+        cols = groups.get(key) or []
+        if not cols:
+            continue
+        lines.append(f"**{title}**")
+        lines.extend(f"- {col}" for col in cols)
+        lines.append("")
+    return "\n".join(lines).rstrip() if lines else "분류할 컬럼이 없습니다."
+
+
+def _column_type_kind(series: pd.Series) -> str:
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return "datetime"
+    if pd.api.types.is_bool_dtype(series):
+        return "other"
+    if pd.api.types.is_numeric_dtype(series):
+        return "numeric"
+    if (
+        pd.api.types.is_string_dtype(series)
+        or pd.api.types.is_object_dtype(series)
+        or str(series.dtype) == "category"
+        or str(series.dtype) == "string"
+    ):
+        return "string"
+    return "other"
 
 
 def _looks_like_groupby_row_count(compact: str) -> bool:

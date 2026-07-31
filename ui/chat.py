@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import streamlit as st
 
@@ -21,9 +23,11 @@ from core.prompt_router import (
 )
 from ui.file_state import (
     find_file,
+    frame_label_parts,
     get_active_named_frames,
     get_analysis_df,
     get_analysis_file_name,
+    get_analysis_unit_label,
     is_multi_analysis_mode,
     is_multi_sheet_analysis,
 )
@@ -38,13 +42,13 @@ def process_user_prompt(prompt: str, *, user_already_added: bool = False) -> Non
     if is_multi_analysis_mode():
         named_frames = get_active_named_frames()
         if len(named_frames) < 2:
-            unit = "시트" if is_multi_sheet_analysis() else "파일"
+            unit = get_analysis_unit_label()
             st.warning(f"동시 분석 모드에서는 {unit} 2개 이상을 선택하세요.")
             return
         if not user_already_added:
             st.session_state.chat_messages.append({"role": "user", "content": prompt})
 
-        unit = "시트" if is_multi_sheet_analysis() else "파일"
+        unit = get_analysis_unit_label()
         with st.spinner(f"{len(named_frames)}개 {unit} 동시 분석 중..."):
             try:
                 reply, extra_df, extra_meta = _run_multi_prompt(prompt, named_frames)
@@ -187,10 +191,13 @@ def _store_dataframe_result(
 
 
 def _resolve_context_label(source: pd.DataFrame, prompt: str) -> str | None:
-    """집계 표의 행 라벨: 저장된 필터명 → 필터 표의 분류값 → 이전 질문."""
+    """집계 표의 행 라벨: 저장된 필터명 → 필터 표의 분류값 → 이전 필터 질문의 셀 값."""
     stored = st.session_state.get("analysis_context_label")
-    if stored:
+    if stored and not _looks_like_meta_label(str(stored)):
         return str(stored)
+    if stored and _looks_like_meta_label(str(stored)):
+        # 이전 메타 질문으로 오염된 라벨은 버린다
+        st.session_state.analysis_context_label = None
 
     filter_df = st.session_state.get("analysis_filter_df")
     work = filter_df if filter_df is not None and len(filter_df) > 0 else source
@@ -204,12 +211,18 @@ def _resolve_context_label(source: pd.DataFrame, prompt: str) -> str | None:
         if message.get("role") != "user":
             continue
         content = str(message.get("content") or "")
+        if not content or content.strip() == prompt.strip():
+            continue
         if detect_aggregate_op(content):
             continue
+        if _is_meta_user_prompt(content):
+            continue
+        # 이전 질문에서는 실제 데이터 셀 값만 라벨로 인정 (문장 조각 추출 금지)
         label = infer_context_label(
             prompt=content,
             result_df=work,
             full_df=source,
+            allow_prompt_text=False,
         )
         if label:
             st.session_state.analysis_context_label = label
@@ -217,12 +230,45 @@ def _resolve_context_label(source: pd.DataFrame, prompt: str) -> str | None:
     return None
 
 
+def _is_meta_user_prompt(content: str) -> bool:
+    """스키마/품질/요약 등 집계 맥락이 아닌 메타 질문."""
+    from core.file_summary import is_summary_request
+    from core.quality import is_quality_request
+    from core.schema_compare import is_schema_request
+
+    return (
+        is_schema_request(content)
+        or is_quality_request(content)
+        or is_summary_request(content)
+    )
+
+
+def _looks_like_meta_label(label: str) -> bool:
+    """오염된 메타 질문 잔여 라벨인지 판별한다."""
+    compact = re.sub(r"\s+", "", str(label)).lower()
+    tokens = (
+        "컬럼",
+        "의미",
+        "추측",
+        "설명",
+        "품질",
+        "수정",
+        "타입",
+        "구분",
+        "스키마",
+        "결측",
+        "숫자",
+        "문자",
+    )
+    return any(token in compact for token in tokens)
+
+
 def _run_multi_prompt(
     prompt: str,
     named_frames: list[tuple[str, pd.DataFrame]],
 ) -> tuple[str, pd.DataFrame | None, dict]:
     prepared = [(name, sanitize_dataframe(frame)) for name, frame in named_frames]
-    unit_label = "시트" if is_multi_sheet_analysis() else "파일"
+    unit_label = get_analysis_unit_label()
 
     outcome = route_multi_prompt(
         prompt,
@@ -286,6 +332,15 @@ def _multi_unit_sheet_info(
         return info
 
     for name, _frame in named_frames:
+        file_name, sheet = frame_label_parts(name)
+        if file_name and sheet:
+            meta = by_name.get(file_name) or {}
+            info[name] = {
+                "current_sheet": sheet,
+                "sheet_names": meta.get("sheet_names"),
+                "path": meta.get("path"),
+            }
+            continue
         meta = by_name.get(name) or {}
         info[name] = {
             "current_sheet": meta.get("current_sheet"),

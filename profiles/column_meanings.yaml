@@ -1,0 +1,32 @@
+# 범용 컬럼 의미 추정 규칙 (일반 모드)
+# 더 구체적 규칙을 앞에 둔다. budget.yaml의 meanings가 모드 ON 시 앞에 병합된다.
+
+meanings:
+  - hints: [항목_코드, 항목코드, itemcode]
+    meaning: 항목을 구분하는 고유 식별자
+  - hints: [비용_명, 비용명, 항목명, 품목명, 상품명, 상품]
+    meaning: 항목 또는 품목 이름
+  - hints: [담당자, manager, owner]
+    meaning: 해당 항목의 담당자
+  - hints: [비고, 메모, remark, note, 특기사항]
+    meaning: 추가 설명이나 특이사항
+  - hints: [코드, code, 번호, id]
+    meaning: 항목을 구분하는 코드/식별자
+  - hints: [명칭, 이름, 명]
+    meaning: 항목 또는 분류의 이름
+  - hints: [금액, amount, 액, 매출, 매입]
+    meaning: 금액 수치
+  - hints: [일자, 날짜, date, 일시, 연월일, 판매일]
+    meaning: 관련 일자가 기록된 날짜
+  - hints: [수량, qty, quantity, 재고]
+    meaning: 수량
+  - hints: [단가, price]
+    meaning: 단가
+  - hints: [비율, rate, percent]
+    meaning: 비율 또는 백분율
+  - hints: [분류, 카테고리, category, 구분, 지역, 점포]
+    meaning: 분류/카테고리 라벨
+  - hints: [출처, 파일, 시트]
+    meaning: 데이터 출처 구분
+  - hints: [결제수단, 결제]
+    meaning: 결제 또는 지불 수단

@@ -7,6 +7,7 @@ import streamlit as st
 
 from core.constants import UPLOAD_DIR
 from core.excel_loader import load_excel
+from core.quality import friendly_load_error
 from ui.file_state import (
     _ensure_file_frame,
     _format_size,
@@ -21,7 +22,9 @@ from ui.file_state import (
     get_active_sheet_names,
     get_analysis_df,
     get_analysis_file_name,
+    get_analysis_unit_label,
     get_preview_context,
+    is_cross_file_sheet_analysis,
     is_multi_analysis_mode,
     is_multi_file_analysis,
     is_multi_sheet_analysis,
@@ -42,7 +45,9 @@ __all__ = [
     "get_preview_context",
     "is_multi_file_analysis",
     "is_multi_sheet_analysis",
+    "is_cross_file_sheet_analysis",
     "is_multi_analysis_mode",
+    "get_analysis_unit_label",
     "get_active_sheet_names",
     "set_active_sheets",
     "get_active_named_frames",
@@ -110,10 +115,16 @@ def _handle_uploads(uploaded_list) -> None:
         save_path = UPLOAD_DIR / uploaded.name
         save_path.write_bytes(uploaded.getbuffer())
 
-        excel = pd.ExcelFile(save_path)
-        sheet_names = excel.sheet_names
-        current_sheet = sheet_names[0]
-        df = load_excel(save_path, sheet_name=current_sheet)
+        try:
+            excel = pd.ExcelFile(save_path)
+            sheet_names = excel.sheet_names
+            if not sheet_names:
+                raise ValueError("시트가 없는 엑셀 파일입니다.")
+            current_sheet = sheet_names[0]
+            df = load_excel(save_path, sheet_name=current_sheet)
+        except Exception as exc:  # noqa: BLE001
+            st.error(friendly_load_error(exc, path=uploaded.name))
+            continue
 
         meta = {
             "id": file_id,
@@ -187,7 +198,7 @@ def _render_file_list() -> None:
             suffix = " · 분석 중" if is_analysis else ""
             sheets = _normalize_active_sheets(meta)
             sheet_note = ""
-            if is_analysis and not multi_mode and len(sheets) >= 2:
+            if is_analysis and len(sheets) >= 2:
                 sheet_note = f" · 시트 {len(sheets)}개"
             st.caption(
                 f'{mark}{meta["name"]} · {meta["size"]}{suffix}{sheet_note}'
