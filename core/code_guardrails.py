@@ -97,6 +97,17 @@ def validate_analysis_result(
             )
 
         pivot_like = _code_looks_like_pivot(code) or _frame_looks_like_crosstab(result)
+        if pivot_like and has_broken_pivot_row_axis(result):
+            axis_hint = _pivot_axis_order_hint(user_prompt)
+            hard.append(
+                "피벗 행 축(왼쪽 열)이 비어 있거나 분류명 대신 숫자/결측으로 보입니다. "
+                "계층형 분류는 이미 분석용 복사본에서 forward-fill되어 있으니 "
+                "그 열을 index로 쓰세요. 소계·합계·총계·내부흡수액·외부유출액 행은 "
+                "피벗 전에 제외하세요. reset_index() 후 행 축 컬럼명을 "
+                "비목분류 등 의미 있는 이름으로 두세요. "
+                f"{axis_hint}"
+                "명칭 열(예: 비용명_2)을 columns로 사용하세요."
+            )
         if pivot_like and is_near_diagonal_sparse_pivot(result):
             axis_hint = _pivot_axis_order_hint(user_prompt)
             hard.append(
@@ -107,6 +118,47 @@ def validate_analysis_result(
                 "결과를 자동 전치(transpose)하지 말고 코드를 재작성하세요."
             )
     return hard, soft
+
+
+def has_broken_pivot_row_axis(df: pd.DataFrame) -> bool:
+    """피벗 결과의 행 라벨 열이 비어 있거나 금액처럼 보이는지 판별한다."""
+    if df is None or df.empty or df.shape[1] < 2 or df.shape[0] < 3:
+        return False
+
+    first_name = str(df.columns[0]).strip()
+    first = df.iloc[:, 0]
+    blank_ratio = float((~first.map(_cell_has_value)).mean())
+    numeric = pd.to_numeric(first, errors="coerce")
+    amount_like = numeric.notna() & (numeric.abs() >= 10_000)
+    amount_ratio = float(amount_like.mean())
+    label_hits = float(
+        first.map(
+            lambda v: bool(
+                _cell_has_value(v)
+                and not (
+                    pd.notna(pd.to_numeric(v, errors="coerce"))
+                    and abs(float(pd.to_numeric(v, errors="coerce"))) >= 10_000
+                )
+            )
+        ).mean()
+    )
+
+    unnamed = (
+        not first_name
+        or first_name.lower() in {"index", "level_0", "unnamed: 0", "none"}
+        or first_name.startswith("Unnamed")
+    )
+
+    # 행 라벨이 거의 없고 wide 숫자열만 남은 경우
+    if blank_ratio >= 0.4 and label_hits <= 0.4:
+        return True
+    # 행 라벨 자리에 큰 금액이 섞인 경우 (footer 집행계 등이 인덱스로 들어간 패턴)
+    if amount_ratio >= 0.15 and label_hits <= 0.5:
+        return True
+    # 헤더가 비어 있고 라벨 품질이 낮은 경우
+    if unnamed and (blank_ratio >= 0.25 or amount_ratio >= 0.1):
+        return True
+    return False
 
 
 def is_near_diagonal_sparse_pivot(df: pd.DataFrame) -> bool:

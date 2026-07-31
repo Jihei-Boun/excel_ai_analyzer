@@ -703,3 +703,36 @@ def test_near_diagonal_sparse_pivot_triggers_axis_swap_issue() -> None:
         user_prompt="비목분류와 비용명을 교차해서 집행계를 피벗해줘",
     )
     assert not any("대각선" in issue for issue in hard_good)
+
+
+def test_broken_pivot_row_axis_triggers_regeneration_issue() -> None:
+    """행 축이 비거나 금액처럼 보이면 재생성 이슈로 잡는다."""
+    from core.code_guardrails import has_broken_pivot_row_axis, validate_analysis_result
+
+    broken = pd.DataFrame(
+        {
+            "": [None, None, None, 16_409_730, None, 11_046_239],
+            "간접비": [5_419_500, None, None, None, None, None],
+            "내부인건비": [None, 10_990_230, None, None, None, None],
+            "연구용SW활용비": [None, None, 2_025_169, None, None, None],
+            "재료비": [None, None, None, None, 355_510, None],
+        }
+    )
+    assert has_broken_pivot_row_axis(broken) is True
+    hard, _ = validate_analysis_result(
+        broken,
+        code="result = df.pivot_table(index='비목분류', columns='비용명_2', "
+        "values='집행계_합계', aggfunc='sum').reset_index()",
+        user_prompt="비목분류와 비용명을 교차해서 집행계를 피벗해줘",
+    )
+    assert any("행 축" in issue or "왼쪽 열" in issue for issue in hard)
+
+    ok = pd.DataFrame(
+        {
+            "비목분류": ["내부인건비", "연구활동비", "간접비"],
+            "내부인건비": [10_990_230, 0, 0],
+            "연구용SW활용비": [0, 2_025_169, 0],
+            "간접비": [0, 0, 5_419_500],
+        }
+    )
+    assert has_broken_pivot_row_axis(ok) is False

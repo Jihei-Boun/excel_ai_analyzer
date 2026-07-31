@@ -35,6 +35,7 @@ _SAFE_CODE_RULES = (
     "원본 행 순서를 유지하세요. sort_values나 가나다순 정렬을 하지 마세요.\n"
     "- 피벗 시 키 조합 유일성을 확인하세요. 중복 가능하면 pivot_table에 "
     "aggfunc를 명시하세요. sum은 금액 열이고 합산이 분명할 때만 사용하세요.\n"
+    "- 피벗 전 소계/합계/총계 행을 제외하고, 행 축에는 빈 분류가 없게 하세요.\n"
     "- 컬럼명을 임의로 바꿔 쓰지 말고, 스키마 힌트의 후보를 참고해 선택하세요.\n"
     "- result의 type은 dataframe, number, string, plot 중 하나만 사용하세요.\n"
     "- 목록 결과는 Python list가 아니라 dataframe type의 DataFrame 또는 Series로 반환하세요.\n"
@@ -201,6 +202,18 @@ def chat(
             issues.append(
                 "숫자형 열에 .str을 쓰지 마세요. 명칭 열을 쓰거나 "
                 "astype(str) 후 문자열 연산을 하세요."
+            )
+        if (
+            "inappropriate 'type'" in lowered_error
+            or "actual 'none'" in lowered_error
+            or "value none" in lowered_error
+        ):
+            issues.append(
+                "result는 반드시 non-null DataFrame이어야 합니다. "
+                "예: result = {\"type\": \"dataframe\", \"value\": pivot_df}. "
+                "비목분류 빈칸은 분석용 데이터에서 이미 위 값으로 채워져 있으니 "
+                "그대로 index로 사용하고, 소계/합계 행만 제외하세요. "
+                "value=None 또는 빈 결과는 반환하지 마세요."
             )
     if result is not None:
         hard_result, soft_result = validate_analysis_result(
@@ -619,6 +632,18 @@ def _friendly_error(exc: BaseException) -> str:
             "명칭 열을 쓰세요. "
             f"(상세: {text})"
         )
+    if (
+        "inappropriate 'type'" in lowered
+        or "actual 'none'" in lowered
+        or "value none seems to be inappropriate" in lowered
+    ):
+        return (
+            "AI가 표(DataFrame) 대신 빈 결과(None)를 반환했습니다. "
+            "피벗 시 분석용으로 forward-fill된 비목분류를 index로 쓰고, "
+            "소계/합계 행을 제외한 뒤 non-null DataFrame을 반환하도록 "
+            "다시 시도해 주세요. "
+            f"(상세: {text})"
+        )
     return f"PandasAI 실행 실패: {text}"
 
 
@@ -690,6 +715,9 @@ def _is_retryable_response_error(result: Any) -> bool:
         or "must match with type list" in lowered
         or "no code found in the response" in lowered
         or "can only use .str accessor with string values" in lowered
+        or "inappropriate 'type'" in lowered
+        or "actual 'none'" in lowered
+        or "value none seems to be inappropriate" in lowered
     )
 
 
