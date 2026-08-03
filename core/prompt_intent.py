@@ -167,11 +167,44 @@ def wants_table_and_chart(prompt: str) -> bool:
     return any(kw in lowered for kw in TABLE_AND_CHART_KEYWORDS)
 
 
+def is_condition_filter_request(prompt: str) -> bool:
+    """컬럼 조건 비교(==0, 있는/없는, 이상/이하 등) 요청인지.
+
+    '연구활동비 보여줘'·'비용명이 121인 것만' 같은 라벨/코드 조회와 구분해
+    단순 셀 값 일치 필터가 가로채지 않게 한다.
+    """
+    if not prompt or not str(prompt).strip():
+        return False
+    text = str(prompt)
+    has_zero_cmp = bool(
+        re.search(r"(?:이|가|은|는)\s*0(?:\D|$)", text)
+        or re.search(r"0\s*(?:인데|이고|이며|이면서|인\s*(?:행|것|것만|데이터))", text)
+    )
+    has_exist = bool(
+        re.search(r"(?:있는|없는)\s*(?:행|것만|데이터|항목)", text)
+        or re.search(r"(?:이|가|은|는)\s*있는", text)
+        or re.search(r"(?:이|가|은|는)\s*없는", text)
+    )
+    has_compound = "인데" in text or "이고" in text or "이면서" in text
+    if has_zero_cmp and (has_exist or has_compound):
+        return True
+    if has_zero_cmp and re.search(r"(?:행|것만|골라|필터|보여|뽑아)", text):
+        return True
+    if re.search(
+        r"(?:보다\s*(?:큰|작|많|적)|이상|이하|초과|미만|>=|<=|==|>|<)",
+        text,
+    ):
+        return True
+    return False
+
+
 def is_complex_analysis(prompt: str) -> bool:
     """집계·순위·시각화처럼 단순 값 필터로 해결할 수 없는 요청인지 판별한다."""
     if detect_aggregate_op(prompt) is not None:
         return True
     if is_pivot_request(prompt):
+        return True
+    if is_condition_filter_request(prompt):
         return True
     lowered = prompt.lower()
     return any(keyword in lowered for keyword in _COMPLEX_KEYWORDS)
@@ -217,4 +250,5 @@ _resolve_output_type = resolve_output_type
 _expects_dataframe = expects_dataframe
 _is_list_request = is_list_request
 _is_complex_analysis = is_complex_analysis
+_is_condition_filter_request = is_condition_filter_request
 _is_pivot_request = is_pivot_request

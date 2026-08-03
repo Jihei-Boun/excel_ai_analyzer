@@ -40,7 +40,7 @@
 | Data Preview | 업로드 데이터 미리보기 및 기본 요약 |
 | AI Chat Analysis | 자연어 질문으로 필터·리스트·집계 분석 |
 | Summary Command | `파일을 요약해줘` 명령으로 빠른 요약 |
-| Schema Compare | 컬럼 목록·공통 컬럼·dtype/결측·의미 추정 등 스키마 비교 |
+| Schema Compare | 컬럼 목록·공통 컬럼·dtype/결측·타입 분류 등 스키마 비교 |
 | Suggested Prompts | 업로드 컬럼 기반 추천 질문 자동 생성 |
 | HTML Table Result | 분석 결과를 표 형태로 출력 |
 | Bar Chart Render | 집계 결과 기반 막대 차트 생성 |
@@ -183,7 +183,7 @@ streamlit run app.py
 - [x] Data Preview
 - [x] AI 자연어 분석 (규칙 라우팅 + PandasAI + Ollama)
 - [x] 파일 요약 명령 지원
-- [x] 스키마 비교·컬럼 의미 추정
+- [x] 스키마 비교 (컬럼 의미 추정은 LLM 경로)
 - [x] 컬럼 기반 추천 질문
 - [x] 집계 결과 표/막대 차트 출력
 - [x] Streamlit 네이티브 Light / Dark Theme

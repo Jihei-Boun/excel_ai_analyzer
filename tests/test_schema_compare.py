@@ -10,6 +10,7 @@ from core.result_format import expects_list_display
 from core.schema_compare import (
     build_schema_compare_table,
     build_schema_outcome,
+    is_column_meaning_request,
     is_schema_request,
     schema_kind,
 )
@@ -95,41 +96,15 @@ def test_schema_kind() -> None:
     assert schema_kind("공통 컬럼을 알려줘") == "common"
     assert schema_kind("데이터 타입과 결측치") == "dtypes"
     assert schema_kind("행 수와 컬럼 목록 비교") == "compare"
-    assert schema_kind("각 컬럼이 어떤 의미인지 추측해서 설명해줘") == "meanings"
     assert schema_kind("숫자 컬럼과 문자 컬럼을 구분해서 보여줘") == "type_groups"
 
 
 def test_is_schema_request_for_meanings_and_type_groups() -> None:
-    assert is_schema_request("각 컬럼이 어떤 의미인지 추측해서 설명해줘") is True
+    # 컬럼 의미 추정은 규칙 스키마가 아니라 LLM 경로
+    assert is_column_meaning_request("각 컬럼이 어떤 의미인지 추측해서 설명해줘") is True
+    assert is_schema_request("각 컬럼이 어떤 의미인지 추측해서 설명해줘") is False
     assert is_schema_request("숫자 컬럼과 문자 컬럼을 구분해서 보여줘") is True
     assert is_schema_request("숫자형 컬럼과 문자형 컬럼을 나눠줘") is True
-
-
-def test_column_meanings_outcome() -> None:
-    df = pd.DataFrame(
-        {
-            "항목_코드": ["A-001"],
-            "비용_명": ["재료비"],
-            "실행_예산": [100],
-            "집행_금액": [80],
-            "담당자": ["김"],
-            "집행_일자": pd.to_datetime(["2026-07-01"]),
-            "비고": ["정상"],
-        }
-    )
-    reply, table = build_schema_outcome(
-        "각 컬럼이 어떤 의미인지 추측해서 설명해줘",
-        [("샘플", df)],
-        use_budget_profile=True,
-    )
-    assert "추정" in reply
-    assert table is not None
-    assert list(table.columns) == ["컬럼", "추정 의미"]
-    meanings = dict(zip(table["컬럼"], table["추정 의미"], strict=True))
-    assert "식별자" in meanings["항목_코드"]
-    assert "금액" in meanings["집행_금액"]
-    assert "날짜" in meanings["집행_일자"]
-    assert "예산" in meanings["실행_예산"]
 
 
 def test_column_meanings_generic_avoids_budget_wording() -> None:
@@ -182,8 +157,20 @@ def test_route_type_groups_bypasses_pandasai() -> None:
     assert outcome.operation_name is None
 
 
-def test_route_column_meanings_bypasses_pandasai() -> None:
+def test_route_column_meanings_uses_llm(monkeypatch) -> None:
+    """컬럼 의미 추정은 규칙 경로를 건너뛰고 LLM(chat)으로 간다."""
     df = pd.DataFrame({"담당자": ["김"], "집행_금액": [1]})
+    called: dict[str, object] = {}
+
+    def _fake_chat(frame, query, *, base_url, model, output_type=None):
+        called["query"] = query
+        called["output_type"] = output_type
+        called["base_url"] = base_url
+        called["model"] = model
+        assert frame is df or frame.equals(df)
+        return None, "LLM 추정: 담당자=사람, 집행_금액=금액", {}
+
+    monkeypatch.setattr("core.analyzer.chat", _fake_chat)
     outcome = route_single_prompt(
         "각 컬럼이 어떤 의미인지 추측해서 설명해줘",
         full_df=df,
@@ -192,11 +179,12 @@ def test_route_column_meanings_bypasses_pandasai() -> None:
         base_url="http://localhost:11434",
         model="dummy",
     )
-    assert outcome.dataframe is not None
-    assert "추정 의미" in outcome.dataframe.columns
-    assert "추정" in outcome.reply
-    assert outcome.operation_name is None
-
+    assert "LLM 추정" in outcome.reply
+    assert outcome.dataframe is None
+    assert called.get("output_type") is None
+    assert "의미를 추정" in str(called.get("query")) or "의미인지" in str(
+        called.get("query")
+    )
 
 def test_build_schema_compare_table() -> None:
     frames = _sales_frames()

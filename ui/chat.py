@@ -231,13 +231,14 @@ def _resolve_context_label(source: pd.DataFrame, prompt: str) -> str | None:
 
 
 def _is_meta_user_prompt(content: str) -> bool:
-    """스키마/품질/요약 등 집계 맥락이 아닌 메타 질문."""
+    """스키마/품질/요약/의미추정 등 집계 맥락이 아닌 메타 질문."""
     from core.file_summary import is_summary_request
     from core.quality import is_quality_request
-    from core.schema_compare import is_schema_request
+    from core.schema_compare import is_column_meaning_request, is_schema_request
 
     return (
         is_schema_request(content)
+        or is_column_meaning_request(content)
         or is_quality_request(content)
         or is_summary_request(content)
     )

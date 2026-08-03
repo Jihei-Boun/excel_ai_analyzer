@@ -43,6 +43,7 @@ from core.prompt_intent import (
     detect_aggregate_op,
     wants_table_and_chart,
 )
+from core.schema_compare import is_column_meaning_request
 from core.text_normalize import _normalize_text, normalize_text
 from core.value_filter import (
     _cell_match_text,
@@ -63,6 +64,7 @@ from core.value_filter import (
     infer_context_label,
     is_metric_aggregate_request,
     resolve_filter_source,
+    try_condition_row_filter,
 )
 
 __all__ = [
@@ -127,6 +129,24 @@ __all__ = [
 ]
 
 
+def _column_meaning_query(prompt: str, *, multi: bool = False) -> str:
+    """컬럼 의미 추정용 LLM 프롬프트. 집계·필터 단축 없이 설명만 요청한다."""
+    scope = (
+        "제공된 모든 DataFrame의 컬럼을 대상으로 합니다.\n"
+        if multi
+        else "현재 DataFrame의 컬럼을 대상으로 합니다.\n"
+    )
+    return (
+        "컬럼명과 실제 데이터 샘플(dtype·고유값·예시 값)을 보고 "
+        "각 컬럼이 무엇을 의미하는지 추정해 설명하세요.\n"
+        f"{scope}"
+        "pandas로 집계·필터·정렬을 하지 마세요.\n"
+        "result type은 string으로 두고, 컬럼별로 의미를 자연어로 작성하세요.\n"
+        "확신이 낮으면 추정임을 명시하세요.\n"
+        f"사용자 요청: {prompt}"
+    )
+
+
 def run_analysis(
     df: pd.DataFrame,
     prompt: str,
@@ -139,6 +159,16 @@ def run_analysis(
     """DataFrame과 사용자 요청을 PandasAI에 전달해 결과를 반환한다."""
     if not prompt.strip():
         raise ValueError("분석 요청을 입력해 주세요.")
+
+    # 컬럼 의미 설명은 규칙 단축 없이 LLM으로 보낸다.
+    if is_column_meaning_request(prompt):
+        return chat(
+            df,
+            _column_meaning_query(prompt),
+            base_url=base_url,
+            model=model,
+            output_type=None,
+        )
 
     output_type = _resolve_output_type(prompt)
 
@@ -165,6 +195,16 @@ def run_analysis(
         if grouped is not None:
             table, summary = grouped
             return table, summary, {"aggregation": {"operation": "groupby"}}
+
+    # '집행계가 0인데 실행예산이 있는' 같은 조건 필터는 값 일치보다 먼저.
+    if output_type == "dataframe":
+        conditioned = try_condition_row_filter(df, prompt)
+        if conditioned is not None:
+            return (
+                conditioned,
+                f"조건 필터 결과: {len(conditioned):,}행",
+                {},
+            )
 
     # 값 필터를 리스트 시드보다 먼저 적용한다 (예: 비용명 121만).
     if output_type == "dataframe" and not _is_complex_analysis(prompt):
@@ -261,6 +301,15 @@ def run_multi_analysis(
     if not prompt.strip():
         raise ValueError("분석 요청을 입력해 주세요.")
 
+    if is_column_meaning_request(prompt):
+        return chat_multi(
+            named_dfs,
+            _column_meaning_query(prompt, multi=True),
+            base_url=base_url,
+            model=model,
+            output_type=None,
+        )
+
     output_type = _resolve_output_type(prompt)
 
     # 차트는 자체 렌더러를 우선 사용한다 (한글·값 라벨·축 포맷 보장).
@@ -284,6 +333,35 @@ def run_multi_analysis(
         if contextual is not None:
             table, summary = contextual
             return table, summary, {}
+
+    if output_type == "dataframe":
+        cond_parts: list[pd.DataFrame] = []
+        conditioned_any = False
+        for name, frame in named_dfs:
+            part = try_condition_row_filter(frame, prompt)
+            if part is None:
+                continue
+            conditioned_any = True
+            if part.empty:
+                continue
+            tagged = part.copy()
+            tagged.insert(0, "출처파일", name)
+            cond_parts.append(tagged)
+        if conditioned_any:
+            if cond_parts:
+                merged = pd.concat(cond_parts, ignore_index=True)
+                file_count = (
+                    merged["출처파일"].nunique()
+                    if "출처파일" in merged.columns
+                    else len(cond_parts)
+                )
+                return (
+                    merged,
+                    f"조건 필터 결과: {len(merged):,}행 ({file_count}개 파일)",
+                    {},
+                )
+            empty = named_dfs[0][1].iloc[0:0].copy()
+            return empty, "조건 필터 결과: 0행", {}
 
     # 값 필터를 리스트 시드보다 먼저 적용한다.
     if output_type == "dataframe" and not _is_complex_analysis(prompt):

@@ -1,4 +1,7 @@
-"""스키마·메타 요청 (행 수·컬럼 목록·공통 컬럼·dtype/결측·타입 분류·의미 추정) 규칙 경로."""
+"""스키마·메타 요청 (행 수·컬럼 목록·공통 컬럼·dtype/결측·타입 분류) 규칙 경로.
+
+컬럼 의미 추정은 규칙으로 답하지 않고 LLM 경로로 보낸다.
+"""
 
 from __future__ import annotations
 
@@ -41,17 +44,6 @@ _SCHEMA_SIGNAL_PHRASES = (
     "컬럼구분",
     "타입구분",
     "형구분",
-    # 의미 추정
-    "컬럼의미",
-    "컬럼설명",
-    "의미인지",
-    "의미추측",
-    "추측해서설명",
-    "의미를설명",
-    "무엇을의미",
-    "어떤의미",
-    "컬럼의도",
-    "columnmeaning",
 )
 
 # 스키마가 아닌 분석 요청으로 보이는 표현 (컬럼별 집계 등)
@@ -108,8 +100,16 @@ def _column_meaning_rules(
     return load_meaning_rules(use_budget_profile=use_budget_profile)
 
 
+def is_column_meaning_request(prompt: str) -> bool:
+    """컬럼 의미 추정·설명 요청인지. 규칙 스키마가 아니라 LLM으로 보낸다."""
+    if not prompt or not str(prompt).strip():
+        return False
+    compact = re.sub(r"\s+", "", normalize_text(prompt))
+    return _is_meaning_request(compact)
+
+
 def is_schema_request(prompt: str) -> bool:
-    """행·열·컬럼 구조/메타 질문인지 판별한다. 집계·차트는 제외."""
+    """행·열·컬럼 구조/메타 질문인지 판별한다. 집계·차트·의미 추정은 제외."""
     if not prompt or not str(prompt).strip():
         return False
     if expects_plot(prompt):
@@ -126,10 +126,14 @@ def is_schema_request(prompt: str) -> bool:
     normalized = normalize_text(prompt)
     compact = re.sub(r"\s+", "", normalized)
 
+    # 컬럼 의미 설명은 LLM 경로
+    if _is_meaning_request(compact):
+        return False
+
     if _looks_like_groupby_row_count(compact):
         return False
 
-    if schema_kind(prompt) in {"type_groups", "meanings"}:
+    if schema_kind(prompt) == "type_groups":
         return True
 
     if any(phrase in compact for phrase in _SCHEMA_SIGNAL_PHRASES):
@@ -145,7 +149,7 @@ def is_schema_request(prompt: str) -> bool:
 
 
 def schema_kind(prompt: str) -> str:
-    """스키마 하위 유형: meanings | type_groups | common | dtypes | compare."""
+    """스키마 하위 유형: type_groups | common | dtypes | compare."""
     compact = re.sub(r"\s+", "", normalize_text(prompt))
 
     from core.value_filter import is_missing_rows_request
@@ -153,8 +157,6 @@ def schema_kind(prompt: str) -> str:
     if is_missing_rows_request(prompt):
         return "compare"
 
-    if _is_meaning_request(compact):
-        return "meanings"
     if _is_type_group_request(compact):
         return "type_groups"
     if any(k in compact for k in ("공통컬럼", "공통으로있는컬럼", "commoncolumns")):
@@ -175,6 +177,7 @@ def build_schema_outcome(
     use_budget_profile: bool = False,
 ) -> tuple[str, pd.DataFrame | None]:
     """스키마 요청에 대한 (reply, dataframe)을 만든다."""
+    del use_budget_profile  # 의미 추정 규칙 경로 제거 후 미사용 (호환용 인자)
     if not named_frames:
         return f"비교할 {unit_label}이(가) 없습니다.", None
 
@@ -185,12 +188,6 @@ def build_schema_outcome(
         return _dtypes_result(named_frames, unit_label=unit_label)
     if kind == "type_groups":
         return _type_groups_result(named_frames, unit_label=unit_label)
-    if kind == "meanings":
-        return _meanings_result(
-            named_frames,
-            unit_label=unit_label,
-            use_budget_profile=use_budget_profile,
-        )
     return _compare_result(named_frames, unit_label=unit_label)
 
 
@@ -430,64 +427,6 @@ def _type_groups_result(
                 rows.append({unit_label: name, "컬럼": col, "유형": label})
     table = pd.DataFrame(rows) if rows else None
     return "\n".join(parts).rstrip(), table
-
-
-def _meanings_result(
-    named_frames: list[tuple[str, pd.DataFrame]],
-    *,
-    unit_label: str,
-    use_budget_profile: bool = False,
-) -> tuple[str, pd.DataFrame | None]:
-    """컬럼명 기반 의미 추정 표."""
-    if len(named_frames) == 1:
-        name, frame = named_frames[0]
-        table = _meanings_table(frame, use_budget_profile=use_budget_profile)
-        reply = (
-            f"**각 컬럼 설명** (`{name}`)\n\n"
-            "컬럼명을 바탕으로 **추정**한 의미입니다. "
-            "업무 정의와 다를 수 있으니 참고용으로 봐 주세요."
-        )
-        return reply, table
-
-    parts = [
-        f"선택된 {unit_label} {len(named_frames)}개의 컬럼 의미를 추정했습니다.",
-        "",
-    ]
-    rows: list[dict] = []
-    for name, frame in named_frames:
-        table = _meanings_table(frame, use_budget_profile=use_budget_profile)
-        parts.append(f"### `{name}`")
-        parts.append("")
-        for _, row in table.iterrows():
-            rows.append(
-                {
-                    unit_label: name,
-                    "컬럼": row["컬럼"],
-                    "추정 의미": row["추정 의미"],
-                }
-            )
-            parts.append(f"- **{row['컬럼']}**: {row['추정 의미']}")
-        parts.append("")
-    return "\n".join(parts).rstrip(), pd.DataFrame(rows) if rows else None
-
-
-def _meanings_table(
-    df: pd.DataFrame,
-    *,
-    use_budget_profile: bool = False,
-) -> pd.DataFrame:
-    rows = [
-        {
-            "컬럼": str(col),
-            "추정 의미": estimate_column_meaning(
-                str(col),
-                df[col],
-                use_budget_profile=use_budget_profile,
-            ),
-        }
-        for col in df.columns
-    ]
-    return pd.DataFrame(rows)
 
 
 def _type_groups_table(groups: dict[str, list[str]]) -> pd.DataFrame:
