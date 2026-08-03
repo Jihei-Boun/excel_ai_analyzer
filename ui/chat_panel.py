@@ -147,6 +147,21 @@ def _render_chat_history() -> None:
                 height = min(520, max(120, 38 * (min(len(attached), 15) + 1)))
                 render_dataframe(attached, hide_index=True, height=height)
 
+            workbook_bytes = message.get("workbook_bytes")
+            if workbook_bytes:
+                sheets = message.get("workbook_sheets") or []
+                label = "통합 Excel 다운로드"
+                if sheets:
+                    label = f"통합 Excel 다운로드 ({', '.join(str(s) for s in sheets)})"
+                st.download_button(
+                    label,
+                    data=workbook_bytes,
+                    file_name="integrated_result.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"dl_wb_{id(message)}",
+                    use_container_width=True,
+                )
+
             code = message.get("code")
             if show_code and code:
                 with st.expander("실행 코드", expanded=False):

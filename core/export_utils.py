@@ -19,6 +19,38 @@ def dataframe_to_xlsx_bytes(df: pd.DataFrame, *, sheet_name: str = "Sheet1") -> 
     return buffer.getvalue()
 
 
+def sheets_to_xlsx_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
+    """여러 시트를 담은 xlsx 바이트를 만든다."""
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        for name, frame in sheets.items():
+            safe = str(name)[:31] or "Sheet1"
+            frame.to_excel(writer, index=False, sheet_name=safe)
+    return buffer.getvalue()
+
+
+def export_sheets_xlsx(
+    sheets: dict[str, pd.DataFrame],
+    *,
+    filename: str | None = None,
+    directory: Path | None = None,
+) -> Path:
+    """다중 시트 DataFrame을 exports/merges 등에 저장한다."""
+    target_dir = Path(directory) if directory is not None else MERGES_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    if not filename:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"integrated_{stamp}.xlsx"
+    if not filename.lower().endswith((".xlsx", ".xlsm")):
+        filename = f"{filename}.xlsx"
+    path = target_dir / filename
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        for name, frame in sheets.items():
+            safe = str(name)[:31] or "Sheet1"
+            frame.to_excel(writer, index=False, sheet_name=safe)
+    return path
+
+
 def export_dataframe_xlsx(
     df: pd.DataFrame,
     *,

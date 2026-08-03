@@ -493,7 +493,6 @@ def test_groupby_shortcut_skips_topn_ranking_prompt() -> None:
     assert result is None
 
 
-
 def test_pivot_request_does_not_use_shortcut(monkeypatch) -> None:
     """피벗 질의는 단축 경로 없이 LLM chat으로 보낸다."""
     import core.analyzer as analyzer_mod

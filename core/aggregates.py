@@ -32,7 +32,6 @@ __all__ = [
     "_is_budget_footer_label",
 ]
 
-
 def _build_list_seed_frame(df: pd.DataFrame, prompt: str) -> pd.DataFrame | None:
     """리스트 요청용 최소 DataFrame을 만든다 (후처리에서 그룹/코드 보강)."""
     prepared = prepare_dataframe_for_ai(df)

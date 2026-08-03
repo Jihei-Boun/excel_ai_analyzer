@@ -53,6 +53,24 @@ def _parse_meanings(value: Any, *, field: str) -> tuple[tuple[tuple[str, ...], s
     return tuple(rules)
 
 
+def _parse_semantic_hints(value: Any, *, field: str) -> dict[str, Any]:
+    """LLM 힌트용 semantic_hints. 실행 경로를 강제하지 않는다."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise TypeError(f"{field} must be a mapping, got {type(value).__name__}")
+    result: dict[str, Any] = {}
+    for key, raw in value.items():
+        name = str(key)
+        if isinstance(raw, list):
+            result[name] = [str(item) for item in raw]
+        elif isinstance(raw, str):
+            result[name] = raw
+        else:
+            result[name] = raw
+    return result
+
+
 @lru_cache(maxsize=1)
 def load_column_hints() -> dict[str, tuple[str, ...]]:
     path = PROFILES_DIR / "column_hints.yaml"
@@ -116,8 +134,16 @@ def load_budget_profile() -> dict[str, Any]:
         "key_column_hints": _as_tuple(data.get("key_column_hints"), field="key_column_hints"),
         "footer_labels": _as_tuple(data.get("footer_labels"), field="footer_labels"),
         "intro": _as_str(data.get("intro"), field="intro"),
+        "domain": _as_str(data.get("domain"), field="domain"),
+        "semantic_hints": _parse_semantic_hints(
+            data.get("semantic_hints"), field="semantic_hints"
+        ),
         "suggested_prompts": _as_tuple(
             data.get("suggested_prompts"), field="suggested_prompts"
+        ),
+        "suggested_prompts_multi_file": _as_tuple(
+            data.get("suggested_prompts_multi_file"),
+            field="suggested_prompts_multi_file",
         ),
         "meanings": _parse_meanings(data.get("meanings"), field="meanings"),
     }
@@ -141,6 +167,10 @@ def load_generic_profile() -> dict[str, Any]:
         "suggested_prompts_multi_sheet": _as_tuple(
             data.get("suggested_prompts_multi_sheet"),
             field="suggested_prompts_multi_sheet",
+        ),
+        "domain": _as_str(data.get("domain"), field="domain") or "generic",
+        "semantic_hints": _parse_semantic_hints(
+            data.get("semantic_hints"), field="semantic_hints"
         ),
         "meanings": load_column_meanings(),
         "footer_labels": (),

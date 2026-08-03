@@ -51,7 +51,7 @@ def suggest_example_prompts(
     """
     limit = max(1, int(limit))
     if use_budget_profile:
-        return list(_budget_prompts())[:limit]
+        return list(_budget_prompts(multi_file=multi_file))[:limit]
 
     fallback = _fallback_prompts(multi_file=multi_file, multi_sheet=multi_sheet)
     if df is None or df.empty or len(df.columns) == 0:
@@ -61,8 +61,12 @@ def suggest_example_prompts(
     return _merge_unique(dynamic, fallback, limit=limit)
 
 
-def _budget_prompts() -> tuple[str, ...]:
+def _budget_prompts(*, multi_file: bool = False) -> tuple[str, ...]:
     profile = load_profile("budget")
+    if multi_file:
+        multi = profile.get("suggested_prompts_multi_file") or ()
+        if multi:
+            return tuple(str(p) for p in multi)
     prompts = profile.get("suggested_prompts") or ()
     if prompts:
         return tuple(str(p) for p in prompts)

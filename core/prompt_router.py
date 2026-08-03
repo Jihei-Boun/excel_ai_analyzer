@@ -20,6 +20,7 @@ from core.file_summary import (
     build_multi_file_summary,
     is_summary_request,
 )
+from core.integrate_pipeline import looks_like_structural_integrate, try_integrate_pipeline
 from core.prompt_intent import (
     _expects_plot,
     detect_aggregate_op,
@@ -628,6 +629,61 @@ def route_multi_prompt(
                 replace_selection=False,
                 set_filter_df=new_filter,
                 update_context_label=new_label,
+            )
+
+    # 범용 구조화 통합: LLM 스키마·계획 → 결정론 엔진 (도메인 전용 함수 호출 없음)
+    if looks_like_structural_integrate(prompt) and len(prepared) >= 2:
+        integrate_error: str | None = None
+        integrated = None
+        try:
+            integrated = try_integrate_pipeline(
+                prompt,
+                prepared,
+                base_url=base_url,
+                model=model,
+                use_budget_profile=use_budget_profile,
+            )
+        except Exception as exc:
+            integrate_error = str(exc)
+            integrated = None
+
+        if integrated is not None and integrated.validation.ok:
+            return SingleRouteOutcome(
+                reply=integrated.reply,
+                dataframe=integrated.integrated,
+                meta=dict(integrated.meta),
+                keep_as_filter=False,
+                replace_selection=True,
+                clear_operation=True,
+                set_operation_result=integrated.integrated,
+                operation_name="structured_integrate",
+            )
+        if integrated is not None and not integrated.validation.ok:
+            # 재추론 후에도 검증 실패 → 잘못된 파일 확정 대신 경고 반환
+            return SingleRouteOutcome(
+                reply=(
+                    "구조화 통합 계획을 실행했지만 검증에 실패했습니다. "
+                    "잘못된 통합 파일은 저장하지 않았습니다. "
+                    f"{integrated.validation.summary_text()}"
+                ),
+                dataframe=integrated.integrated,
+                meta={
+                    "integrate_plan": integrated.plan.to_dict(),
+                    "integrate_validation": integrated.validation.summary_text(),
+                },
+                keep_as_filter=False,
+                replace_selection=False,
+                operation_name="structured_integrate_failed",
+            )
+        if integrate_error:
+            return SingleRouteOutcome(
+                reply=(
+                    "구조화 통합 파이프라인 실행 중 오류가 발생했습니다. "
+                    f"{integrate_error}"
+                ),
+                dataframe=None,
+                keep_as_filter=False,
+                replace_selection=False,
             )
 
     result, summary, analysis_meta = run_multi_analysis(

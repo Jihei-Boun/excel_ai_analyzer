@@ -1,9 +1,36 @@
 # 예산 표 모드(ON)일 때만 사용하는 예실대비표 프로필
+# semantic_hints는 LLM 추론을 돕는 힌트일 뿐, 전용 실행 경로로 연결되지 않는다.
 
 summary: budget
 currency: krw
+domain: budget_table
 
 detect_min_hits: 2
+
+semantic_hints:
+  likely_identifier_concepts:
+    - 비용코드
+    - 세목코드
+    - 계정코드
+    - 항목코드
+  likely_label_concepts:
+    - 비목분류
+    - 비용명
+    - 항목명
+  likely_summary_labels:
+    - 소계
+    - 합계
+    - 총계
+  likely_additive_concepts:
+    - 예산
+    - 집행
+    - 잔액
+    - 가집행
+  cautions:
+    - summary rows should not be mixed with detail rows during aggregation
+    - percentage columns should not normally be summed
+    - totals should be validated after aggregation
+    - misnamed code columns may need job-local renames only
 
 column_hints:
   - 계획예산
@@ -70,6 +97,11 @@ suggested_prompts:
   - 실행예산 합계를 알려줘
   - 비목분류별 집행계 합계를 표로 보여줘
   - 비용명이 121인 데이터만 보여줘
+
+suggested_prompts_multi_file:
+  - 선택한 파일들을 통합해줘
+  - 각 파일의 행 수와 컬럼 목록을 비교해줘
+  - 파일별 숫자형 컬럼 합계를 표로 비교해줘
 
 # 예산 모드 ON 시 일반 의미 규칙보다 앞에 병합
 meanings:

@@ -14,6 +14,7 @@ from core.aggregates import (
     scalar_to_context_table,
     split_frames_by_source,
 )
+from core.analysis_pipeline import try_analysis_pipeline
 from core.chart_utils import generate_fallback_chart, generate_multi_file_chart
 from core.column_match import (
     _column_prompt_match_length,
@@ -221,6 +222,18 @@ def run_analysis(
         seed = _build_list_seed_frame(df, prompt)
         if seed is not None and not seed.empty:
             return seed, f"리스트 결과: {len(seed):,}행", {}
+
+    # LLM 분석 계획 → 범용 실행기 → 검증 (PandasAI 자유코드 이전)
+    if output_type == "dataframe":
+        planned = try_analysis_pipeline(
+            prompt,
+            df,
+            base_url=base_url,
+            model=model,
+            use_budget_profile=use_budget_profile,
+        )
+        if planned is not None:
+            return planned.dataframe, planned.reply, dict(planned.meta)
 
     query = (
         "사용자의 요청을 현재 DataFrame의 실제 컬럼명과 데이터 타입에 맞춰 "
