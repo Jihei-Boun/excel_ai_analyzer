@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-import io
 from typing import Any
 
 import pandas as pd
 
 from core.plan_types import DerivedRowSpec, ExecutionPlan
+from core.row_classify import (
+    ROW_CONF_COL,
+    ROW_REASONS_COL,
+    ROW_TYPE_COL,
+    classify_rows as classify_row_roles,
+)
 from core.text_normalize import normalize_text
 
 
@@ -37,8 +42,10 @@ def _execute_aggregate_merge(
         frame = dataframes[source].copy()
         frame = apply_rename(frame, plan.renames)
         classified = classify_rows(frame, plan.summary_row_labels)
-        detail = classified[classified["_row_type"] == "detail"].drop(
-            columns=["_row_type"], errors="ignore"
+        meta_cols = [c for c in (ROW_TYPE_COL, ROW_CONF_COL, ROW_REASONS_COL) if c in classified.columns]
+        detail = classified[classified[ROW_TYPE_COL] == "detail"].drop(
+            columns=meta_cols,
+            errors="ignore",
         )
         detail = _prepare_detail(detail, plan)
         detail_by_source[source] = detail
@@ -89,37 +96,8 @@ def classify_rows(
     df: pd.DataFrame,
     summary_labels: list[str],
 ) -> pd.DataFrame:
-    """행을 detail / summary 로 분류한다."""
-    result = df.copy()
-    norms = {normalize_text(_collapse(label)) for label in summary_labels if label}
-    # 공백 붕괴된 라벨도 매칭
-    row_types: list[str] = []
-    text_cols = [
-        col
-        for col in result.columns
-        if not pd.api.types.is_numeric_dtype(result[col])
-    ]
-    for _, row in result.iterrows():
-        matched = False
-        for col in text_cols:
-            value = _collapse(row[col])
-            if not value:
-                continue
-            if normalize_text(value) in norms:
-                matched = True
-                break
-            # '합         계' 같은 변형
-            if any(
-                normalize_text(value) == normalize_text(label)
-                or normalize_text(value).replace(" ", "")
-                == normalize_text(label).replace(" ", "")
-                for label in summary_labels
-            ):
-                matched = True
-                break
-        row_types.append("summary" if matched else "detail")
-    result["_row_type"] = row_types
-    return result
+    """행을 detail / 비detail 로 분류한다 — row_classify 공통 구현 위임."""
+    return classify_row_roles(df, summary_row_labels=summary_labels)
 
 
 def _prepare_detail(df: pd.DataFrame, plan: ExecutionPlan) -> pd.DataFrame:
@@ -456,27 +434,6 @@ def _order_columns(df: pd.DataFrame, plan: ExecutionPlan) -> pd.DataFrame:
     ordered = [c for c in plan.column_order if c in df.columns]
     rest = [c for c in df.columns if c not in ordered]
     return df.loc[:, ordered + rest]
-
-
-def sheets_to_xlsx_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        for name, frame in sheets.items():
-            safe = str(name)[:31] or "Sheet1"
-            frame.to_excel(writer, index=False, sheet_name=safe)
-    return buffer.getvalue()
-
-
-def export_sheets_xlsx(
-    sheets: dict[str, pd.DataFrame],
-    *,
-    path: str,
-) -> str:
-    with pd.ExcelWriter(path, engine="openpyxl") as writer:
-        for name, frame in sheets.items():
-            safe = str(name)[:31] or "Sheet1"
-            frame.to_excel(writer, index=False, sheet_name=safe)
-    return path
 
 
 def _pandas_agg(func: str) -> str:

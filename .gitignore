@@ -69,3 +69,5 @@ htmlcov/
 
 # Local Streamlit cache
 .streamlit/cache/
+
+# Runtime cleanup helper: ./scripts/clean_artifacts.sh

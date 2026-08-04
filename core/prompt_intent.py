@@ -106,6 +106,19 @@ def is_pivot_request(prompt: str) -> bool:
     return any(k in lowered or k in normalized for k in keywords)
 
 
+_STRUCTURED_ANALYSIS_KEYWORDS = (
+    "비교",
+    "해석",
+    "효율",
+    "집행률",
+    "대비",
+    "분석해",
+    "compare",
+    "efficiency",
+    "rate",
+)
+
+
 def resolve_output_type(prompt: str) -> str | None:
     """요청에 맞는 PandasAI output_type을 고른다. 차트는 plot을 우선한다."""
     if expects_plot(prompt):
@@ -113,6 +126,16 @@ def resolve_output_type(prompt: str) -> str | None:
     if expects_dataframe(prompt):
         return "dataframe"
     return None
+
+
+def wants_structured_analysis(prompt: str) -> bool:
+    """분석 계획 파이프라인(집계·비율·비교·해석) 후보인지."""
+    if not prompt or not str(prompt).strip():
+        return False
+    if expects_dataframe(prompt):
+        return True
+    lowered = prompt.lower()
+    return any(keyword in lowered for keyword in _STRUCTURED_ANALYSIS_KEYWORDS)
 
 
 def expects_dataframe(prompt: str) -> bool:
@@ -248,6 +271,7 @@ _wants_table_and_chart = wants_table_and_chart
 _expects_plot = expects_plot
 _resolve_output_type = resolve_output_type
 _expects_dataframe = expects_dataframe
+_wants_structured_analysis = wants_structured_analysis
 _is_list_request = is_list_request
 _is_complex_analysis = is_complex_analysis
 _is_condition_filter_request = is_condition_filter_request

@@ -101,6 +101,8 @@ excel_ai_analyzer/
 │   └── column_meanings.yaml
 ├── docs/images/
 ├── tests/
+├── scripts/
+│   └── clean_artifacts.sh
 ├── data/uploads/
 ├── exports/charts/
 ├── exports/merges/
@@ -117,7 +119,8 @@ excel_ai_analyzer/
 - `profiles/`: 일반·예산 프로필, 컬럼 힌트·의미 규칙 YAML
 - `docs/images/`: README 프리뷰 스크린샷
 - `tests/`: 주요 로직 단위 테스트
-- `data/uploads/`: 업로드 파일 임시 저장
+- `scripts/clean_artifacts.sh`: 차트·병합 산출물·`__pycache__` 정리
+- `data/uploads/`: 업로드 파일 임시 저장 (로컬 샘플 포함, git 미추적)
 - `exports/charts/`: 생성된 차트 파일 저장
 - `exports/merges/`: 병합 결과 엑셀 저장
 - `.streamlit/`: 포트·테마 등 Streamlit 설정

@@ -63,15 +63,16 @@ def inspect_generated_code(
     return issues
 
 
-def validate_analysis_result(
+def validate_pandasai_result(
     result: Any,
     *,
     source_row_count: int | None = None,
     code: str | None = None,
     user_prompt: str | None = None,
 ) -> tuple[list[str], list[str]]:
-    """실행 후 결과 이상 징후를 (재생성용 이슈, 경고)로 반환한다.
+    """PandasAI 실행 결과 이상 징후를 (재생성용 이슈, 경고)로 반환한다.
 
+    analysis_validate.validate_analysis_result(계획 실행 검증)과 구분한다.
     빈 결과는 유효한 필터일 수 있어 경고만 남긴다.
     피벗이 거의 대각선 sparse이면 축 교체 재생성을 요청한다.
     """

@@ -296,7 +296,7 @@ def test_route_multi_uses_structured_integrate(monkeypatch: pytest.MonkeyPatch, 
         )
 
     monkeypatch.setattr(
-        "core.prompt_router.try_integrate_pipeline",
+        "core.route_multi.try_integrate_pipeline",
         fake_try,
     )
 

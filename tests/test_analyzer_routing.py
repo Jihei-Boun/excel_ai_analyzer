@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import pandas as pd
 
-from core.analyzer import (
-    _expects_dataframe,
-    _expects_plot,
-    _filter_by_mentioned_value,
-    _is_complex_analysis,
-    _is_list_request,
-    _resolve_output_type,
-    build_filter_summary,
-    build_multi_context_aggregate_table,
+from core.aggregates import build_groupby_aggregate_table, build_multi_context_aggregate_table
+from core.column_match import find_mentioned_numeric_columns
+from core.prompt_intent import (
     detect_aggregate_op,
+    expects_dataframe,
+    expects_plot,
+    is_complex_analysis,
+    is_list_request,
+    resolve_output_type,
+)
+from core.value_filter import (
+    _filter_by_mentioned_value,
+    build_filter_summary,
     extract_matched_detail,
     is_metric_aggregate_request,
     resolve_filter_source,
@@ -30,18 +33,18 @@ def _sample_df() -> pd.DataFrame:
 
 
 def test_resolve_output_type_prefers_plot_over_dataframe() -> None:
-    assert _expects_plot("카테고리별 매출 차트를 보여줘") is True
-    assert _resolve_output_type("카테고리별 매출 차트를 보여줘") == "plot"
-    assert _resolve_output_type("연구활동비 목록 보여줘") == "dataframe"
-    assert _resolve_output_type("합계는?") is None
+    assert expects_plot("카테고리별 매출 차트를 보여줘") is True
+    assert resolve_output_type("카테고리별 매출 차트를 보여줘") == "plot"
+    assert resolve_output_type("연구활동비 목록 보여줘") == "dataframe"
+    assert resolve_output_type("합계는?") is None
 
 
 def test_list_and_complex_routing_flags() -> None:
-    assert _is_list_request("항목 리스트로 뽑아줘") is True
-    assert _expects_dataframe("표로 보여줘") is True
-    assert _is_complex_analysis("상위 10개 정렬") is True
-    assert _is_complex_analysis("비용명별 실행예산의 합을 보여줘") is True
-    assert _is_complex_analysis("연구활동비 보여줘") is False
+    assert is_list_request("항목 리스트로 뽑아줘") is True
+    assert expects_dataframe("표로 보여줘") is True
+    assert is_complex_analysis("상위 10개 정렬") is True
+    assert is_complex_analysis("비용명별 실행예산의 합을 보여줘") is True
+    assert is_complex_analysis("연구활동비 보여줘") is False
 
 
 def test_detect_aggregate_op() -> None:
@@ -53,8 +56,8 @@ def test_detect_aggregate_op() -> None:
 
 def test_chart_prompt_skips_aggregate_and_routes_to_plot() -> None:
     prompt = "각각 파일별로 계획예산의 종합을 막대그래프로 보여줘"
-    assert _expects_plot(prompt) is True
-    assert _resolve_output_type(prompt) == "plot"
+    assert expects_plot(prompt) is True
+    assert resolve_output_type(prompt) == "plot"
     # '종합을' 안의 '합을' 오탐으로 집계 단축되면 안 됨
     assert detect_aggregate_op(prompt) is None
 
@@ -298,7 +301,6 @@ def test_chart_from_aggregate_table_uses_same_totals() -> None:
 
 def test_chart_follow_up_uses_aggregate_table_not_raw_codes() -> None:
     """'차트로 보여줘' 후속 요청은 집계 표(계획예산)를 쓰고 비용명 코드를 쓰지 않는다."""
-    from core.analyzer import build_groupby_aggregate_table
     from core.chart_utils import _pick_chart_columns
 
     raw = pd.DataFrame(
@@ -396,7 +398,6 @@ def test_resolve_filter_source_resets_when_groupby_collapsed() -> None:
 
 def test_groupby_preserves_file_order() -> None:
     """그룹 집계 결과는 파일 등장 순서를 유지한다 (가나다/금액 정렬 금지)."""
-    from core.analyzer import build_groupby_aggregate_table
 
     df = pd.DataFrame(
         {
@@ -425,7 +426,6 @@ def test_groupby_preserves_file_order() -> None:
 
 def test_groupby_without_budget_profile_keeps_footer_labels() -> None:
     """예산 표 모드 OFF면 footer 라벨도 그룹에 포함된다 (합계/소계만 제외)."""
-    from core.analyzer import build_groupby_aggregate_table
 
     df = pd.DataFrame(
         {
@@ -456,7 +456,6 @@ def test_groupby_without_budget_profile_keeps_footer_labels() -> None:
 
 def test_groupby_execution_total_not_sum_expense_codes() -> None:
     """'비용명별 집행계 합계'는 비용명 코드(121+201)가 아니라 집행계를 합산한다."""
-    from core.analyzer import build_groupby_aggregate_table, find_mentioned_numeric_columns
 
     df = pd.DataFrame(
         {
@@ -481,7 +480,6 @@ def test_groupby_execution_total_not_sum_expense_codes() -> None:
 
 def test_groupby_shortcut_skips_topn_ranking_prompt() -> None:
     """'상위 N개 ...'는 강제 그룹합이 아니라 일반 분석 경로로 보낸다."""
-    from core.analyzer import build_groupby_aggregate_table
 
     df = pd.DataFrame(
         {
@@ -576,7 +574,7 @@ def test_code_guardrails_flag_pivot_without_forcing_rewrite() -> None:
         extract_aggregation_meta,
         format_aggregation_notice,
         inspect_generated_code,
-        validate_analysis_result,
+        validate_pandasai_result,
     )
 
     # 성공한 pivot() 자체는 하드 이슈가 아니다.
@@ -609,11 +607,11 @@ def test_code_guardrails_flag_pivot_without_forcing_rewrite() -> None:
     )
     assert any("aggfunc" in issue for issue in no_agg)
 
-    hard, soft = validate_analysis_result(pd.DataFrame())
+    hard, soft = validate_pandasai_result(pd.DataFrame())
     assert hard == []
     assert soft
 
-    hard_nan, _soft = validate_analysis_result(pd.DataFrame({"a": [None, None]}))
+    hard_nan, _soft = validate_pandasai_result(pd.DataFrame({"a": [None, None]}))
     assert hard_nan
 
     agg = extract_aggregation_meta(
@@ -654,7 +652,7 @@ def test_near_diagonal_sparse_pivot_triggers_axis_swap_issue() -> None:
     """대각선 sparse 피벗은 축 교체 재생성 이슈로 잡는다."""
     from core.code_guardrails import (
         is_near_diagonal_sparse_pivot,
-        validate_analysis_result,
+        validate_pandasai_result,
     )
 
     # 비용명 행 × 비목분류 열 (잘못된 축) — 행마다 값 1개
@@ -673,7 +671,7 @@ def test_near_diagonal_sparse_pivot_triggers_axis_swap_issue() -> None:
     bad.loc[3, "연구활동비"] = 2_025_169
     assert is_near_diagonal_sparse_pivot(bad) is True
 
-    hard, soft = validate_analysis_result(
+    hard, soft = validate_pandasai_result(
         bad,
         code="result = df.pivot_table(index='비용명_2', columns='비목분류', "
         "values='집행계_합계', aggfunc='sum')",
@@ -695,7 +693,7 @@ def test_near_diagonal_sparse_pivot_triggers_axis_swap_issue() -> None:
         }
     )
     assert is_near_diagonal_sparse_pivot(good) is False
-    hard_good, _ = validate_analysis_result(
+    hard_good, _ = validate_pandasai_result(
         good,
         code="result = df.pivot_table(index='비목분류', columns='비용명_2', "
         "values='집행계_합계', aggfunc='sum')",
@@ -706,7 +704,7 @@ def test_near_diagonal_sparse_pivot_triggers_axis_swap_issue() -> None:
 
 def test_broken_pivot_row_axis_triggers_regeneration_issue() -> None:
     """행 축이 비거나 금액처럼 보이면 재생성 이슈로 잡는다."""
-    from core.code_guardrails import has_broken_pivot_row_axis, validate_analysis_result
+    from core.code_guardrails import has_broken_pivot_row_axis, validate_pandasai_result
 
     broken = pd.DataFrame(
         {
@@ -718,7 +716,7 @@ def test_broken_pivot_row_axis_triggers_regeneration_issue() -> None:
         }
     )
     assert has_broken_pivot_row_axis(broken) is True
-    hard, _ = validate_analysis_result(
+    hard, _ = validate_pandasai_result(
         broken,
         code="result = df.pivot_table(index='비목분류', columns='비용명_2', "
         "values='집행계_합계', aggfunc='sum').reset_index()",

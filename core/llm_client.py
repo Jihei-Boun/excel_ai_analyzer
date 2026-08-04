@@ -18,22 +18,61 @@ def chat_json(
     timeout: int = 300,
 ) -> dict[str, Any]:
     """Ollama chat API로 JSON 객체 응답을 받는다."""
+    content = _chat_raw(
+        prompt,
+        system=system,
+        base_url=base_url,
+        model=model,
+        timeout=timeout,
+        format_json=True,
+    )
+    return _extract_json_object(content)
+
+
+def chat_text(
+    prompt: str,
+    *,
+    system: str,
+    base_url: str,
+    model: str,
+    timeout: int = 300,
+) -> str:
+    """Ollama chat API로 일반 텍스트 응답을 받는다."""
+    return _chat_raw(
+        prompt,
+        system=system,
+        base_url=base_url,
+        model=model,
+        timeout=timeout,
+        format_json=False,
+    ).strip()
+
+
+def _chat_raw(
+    prompt: str,
+    *,
+    system: str,
+    base_url: str,
+    model: str,
+    timeout: int,
+    format_json: bool,
+) -> str:
     url = f"{base_url.rstrip('/')}/api/chat"
-    payload = {
+    payload: dict[str, Any] = {
         "model": model,
         "stream": False,
-        "format": "json",
         "options": {"temperature": 0},
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
         ],
     }
+    if format_json:
+        payload["format"] = "json"
 
     response = requests.post(url, json=payload, timeout=timeout)
     response.raise_for_status()
-    content = response.json()["message"]["content"]
-    return _extract_json_object(content)
+    return str(response.json()["message"]["content"] or "")
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:

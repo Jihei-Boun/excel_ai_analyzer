@@ -294,6 +294,9 @@ class ValidationReport:
     def warnings(self) -> list[ValidationIssue]:
         return [item for item in self.issues if item.level == "warning"]
 
+    def error_messages(self) -> list[str]:
+        return [item.message for item in self.errors]
+
     def summary_text(self) -> str:
         if self.ok and not self.issues:
             return "검증 통과"

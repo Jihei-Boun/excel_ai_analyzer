@@ -89,7 +89,8 @@ def validate_analysis_result(
             )
 
     # summary rows mixed in when detail-only filter was requested
-    if plan.filters_to_detail_only and not result.empty:
+    # (집계·비교 결과 표는 그룹 요약이므로 이 검사를 건너뛴다)
+    if plan.filters_to_detail_only and not plan.uses_aggregate_ops and not result.empty:
         classified = classify_rows(
             result,
             dimension_columns=plan.dimension_columns or None,

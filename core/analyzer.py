@@ -5,128 +5,30 @@ from __future__ import annotations
 import pandas as pd
 
 from core.aggregates import (
-    _aggregate_reducer,
     _build_list_seed_frame,
-    _is_budget_footer_label,
-    build_context_aggregate_table,
     build_groupby_aggregate_table,
     build_multi_context_aggregate_table,
-    scalar_to_context_table,
-    split_frames_by_source,
 )
 from core.analysis_pipeline import try_analysis_pipeline
 from core.chart_utils import generate_fallback_chart, generate_multi_file_chart
-from core.column_match import (
-    _column_prompt_match_length,
-    _is_amount_metric_column,
-    _is_explicit_groupby_prompt,
-    _looks_like_code_metric_column,
-    _mentioned_columns,
-    _resolve_metric_column,
-    find_groupby_column,
-    find_mentioned_column,
-    find_mentioned_numeric_column,
-    find_mentioned_numeric_columns,
-    looks_like_code_metric_column,
-    resolve_metric_column,
-)
 from core.pandasai_config import chat, chat_multi
 from core.prompt_intent import (
-    _COMPLEX_KEYWORDS,
-    _LIST_REQUEST_KEYWORDS,
-    _expects_dataframe,
-    _expects_plot,
-    _is_complex_analysis,
-    _is_list_request,
-    _match_aggregate_op,
-    _resolve_output_type,
-    _wants_table_and_chart,
-    detect_aggregate_op,
-    wants_table_and_chart,
+    is_complex_analysis,
+    is_list_request,
+    resolve_output_type,
+    wants_structured_analysis,
 )
 from core.schema_compare import is_column_meaning_request
-from core.text_normalize import _normalize_text, normalize_text
 from core.value_filter import (
-    _cell_match_text,
-    _column_equals,
     _filter_by_mentioned_value,
     _filter_multi_by_mentioned_value,
-    _filter_tokens_from_prompt,
-    _is_aggregate_label_false_positive,
-    _is_exact_value_mention,
-    _label_from_prompt_text,
-    _prompt_requests_total_rows,
-    _score_value_prompt_match,
-    _value_mentioned_in_prompt,
-    build_filter_summary,
-    extract_matched_detail,
-    extract_matched_value,
-    format_context_label,
-    infer_context_label,
     is_metric_aggregate_request,
-    resolve_filter_source,
     try_condition_row_filter,
 )
 
 __all__ = [
     "run_analysis",
     "run_multi_analysis",
-    # prompt_intent
-    "_COMPLEX_KEYWORDS",
-    "_LIST_REQUEST_KEYWORDS",
-    "_expects_dataframe",
-    "_expects_plot",
-    "_is_complex_analysis",
-    "_is_list_request",
-    "_match_aggregate_op",
-    "_resolve_output_type",
-    "detect_aggregate_op",
-    "wants_table_and_chart",
-    "_wants_table_and_chart",
-    # text_normalize
-    "_normalize_text",
-    "normalize_text",
-    # column_match
-    "_column_prompt_match_length",
-    "_is_amount_metric_column",
-    "_is_explicit_groupby_prompt",
-    "_looks_like_code_metric_column",
-    "_mentioned_columns",
-    "_resolve_metric_column",
-    "find_groupby_column",
-    "find_mentioned_column",
-    "find_mentioned_numeric_column",
-    "find_mentioned_numeric_columns",
-    "looks_like_code_metric_column",
-    "resolve_metric_column",
-    # value_filter
-    "_cell_match_text",
-    "_column_equals",
-    "_filter_by_mentioned_value",
-    "_filter_multi_by_mentioned_value",
-    "_filter_tokens_from_prompt",
-    "_is_aggregate_label_false_positive",
-    "_is_exact_value_mention",
-    "_label_from_prompt_text",
-    "_prompt_requests_total_rows",
-    "_score_value_prompt_match",
-    "_value_mentioned_in_prompt",
-    "build_filter_summary",
-    "extract_matched_detail",
-    "extract_matched_value",
-    "format_context_label",
-    "infer_context_label",
-    "is_metric_aggregate_request",
-    "resolve_filter_source",
-    # aggregates
-    "_aggregate_reducer",
-    "_build_list_seed_frame",
-    "_is_budget_footer_label",
-    "build_context_aggregate_table",
-    "build_groupby_aggregate_table",
-    "build_multi_context_aggregate_table",
-    "scalar_to_context_table",
-    "split_frames_by_source",
 ]
 
 
@@ -171,7 +73,7 @@ def run_analysis(
             output_type=None,
         )
 
-    output_type = _resolve_output_type(prompt)
+    output_type = resolve_output_type(prompt)
 
     # 차트는 LLM matplotlib(한글 깨짐) 대신 자체 렌더러를 우선 사용한다.
     if output_type == "plot":
@@ -208,7 +110,7 @@ def run_analysis(
             )
 
     # 값 필터를 리스트 시드보다 먼저 적용한다 (예: 비용명 121만).
-    if output_type == "dataframe" and not _is_complex_analysis(prompt):
+    if output_type == "dataframe" and not is_complex_analysis(prompt):
         direct = _filter_by_mentioned_value(df, prompt)
         if direct is not None and not direct.empty:
             return (
@@ -218,13 +120,14 @@ def run_analysis(
             )
 
     # 값 제약이 없을 때만 컬럼 전체 리스트 시드 사용
-    if output_type == "dataframe" and _is_list_request(prompt):
+    if output_type == "dataframe" and is_list_request(prompt):
         seed = _build_list_seed_frame(df, prompt)
         if seed is not None and not seed.empty:
             return seed, f"리스트 결과: {len(seed):,}행", {}
 
-    # LLM 분석 계획 → 범용 실행기 → 검증 (PandasAI 자유코드 이전)
-    if output_type == "dataframe":
+    # LLM 분석 계획 → 범용 실행기 → 검증 → (선택) 해석
+    # 비교/집행률/해석 등은 표 키워드가 없어도 구조화 분석 후보로 본다.
+    if output_type == "dataframe" or wants_structured_analysis(prompt):
         planned = try_analysis_pipeline(
             prompt,
             df,
@@ -238,7 +141,7 @@ def run_analysis(
     query = (
         "사용자의 요청을 현재 DataFrame의 실제 컬럼명과 데이터 타입에 맞춰 "
         "pandas 연산으로 수행하세요.\n"
-        "필터링, 정렬, 집계, 그룹화, 피벗, 통계 등 요청의 종류를 스스로 판단하세요.\n"
+        "필터링, 정렬, 집계, 그룹화, 피벗, 통계 등 요청받은 종류를 스스로 판단하세요.\n"
         "특정 컬럼이나 데이터 형식을 가정하지 마세요.\n"
         "스키마 힌트는 참고용이며, 컬럼을 임의로 rewrite하지 마세요.\n"
         "반복된 상위 분류 값은 분석용 복사본에서만 채운 값일 수 있으므로 "
@@ -323,7 +226,7 @@ def run_multi_analysis(
             output_type=None,
         )
 
-    output_type = _resolve_output_type(prompt)
+    output_type = resolve_output_type(prompt)
 
     # 차트는 자체 렌더러를 우선 사용한다 (한글·값 라벨·축 포맷 보장).
     if output_type == "plot":
@@ -377,7 +280,7 @@ def run_multi_analysis(
             return empty, "조건 필터 결과: 0행", {}
 
     # 값 필터를 리스트 시드보다 먼저 적용한다.
-    if output_type == "dataframe" and not _is_complex_analysis(prompt):
+    if output_type == "dataframe" and not is_complex_analysis(prompt):
         direct = _filter_multi_by_mentioned_value(named_dfs, prompt)
         if direct is not None and not direct.empty:
             file_count = (
@@ -391,7 +294,7 @@ def run_multi_analysis(
                 {},
             )
 
-    if output_type == "dataframe" and _is_list_request(prompt):
+    if output_type == "dataframe" and is_list_request(prompt):
         list_parts: list[pd.DataFrame] = []
         for name, frame in named_dfs:
             seed = _build_list_seed_frame(frame, prompt)

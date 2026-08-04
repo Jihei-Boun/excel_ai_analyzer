@@ -14,6 +14,7 @@ from core.text_normalize import normalize_text
 ROW_TYPE_COL = "_row_type"
 ROW_CONF_COL = "_row_type_confidence"
 ROW_REASONS_COL = "_row_type_reasons"
+META_COLUMNS_SET = frozenset({ROW_TYPE_COL, ROW_CONF_COL, ROW_REASONS_COL})
 
 
 def classify_rows(
@@ -119,9 +120,11 @@ def _classify_one(
     dim_texts = [cell_text(row[c]) for c in dims if c in row.index]
     non_empty_dims = [t for t in dim_texts if t]
     all_dims_blank = bool(dims) and not non_empty_dims
+    # 소계/합계 라벨은 dimension 후보 밖(예: 비목분류)에 있을 수 있다.
+    label_texts = _label_texts_from_row(row, amount_cols=amount_cols)
 
     label_hit = None
-    for text in non_empty_dims:
+    for text in label_texts:
         if is_grand_total_label(text) or (
             is_excluded_summary_label(text) and _is_total_like(text)
         ):
@@ -156,17 +159,17 @@ def _classify_one(
     if near_bottom and (all_dims_blank or label_hit in {"total", "footer"}):
         reasons.append("near_bottom")
 
-    # blank: 차원·금액 모두 비어 있음
-    if all_dims_blank and amount_filled == 0:
-        return "blank", "high", reasons + ["empty_row"]
-
+    # 소계/합계/footer 라벨은 금액 유무와 관계없이 우선한다.
     if label_hit == "total":
         return "total", "high", reasons
     if label_hit == "subtotal":
         return "subtotal", "high", reasons
     if label_hit == "footer":
-        conf = "high" if not near_bottom else "high"
-        return "footer", conf, reasons
+        return "footer", "high", reasons
+
+    # blank: 차원·금액 모두 비어 있음
+    if all_dims_blank and amount_filled == 0:
+        return "blank", "high", reasons + ["empty_row"]
 
     if amounts_only:
         # 라벨 없이 금액만 → footer/total 후보. 하단이면 footer, 아니면 blank에 가깝게
@@ -182,6 +185,20 @@ def _classify_one(
         return "detail", "low", reasons + ["detail_near_bottom"]
 
     return "detail", "high", reasons or ["default_detail"]
+
+
+def _label_texts_from_row(row: pd.Series, *, amount_cols: list[str]) -> list[str]:
+    """라벨 판별용 텍스트. 금액·메타 열은 제외하고 등장 순서를 유지한다."""
+    amount_set = set(amount_cols)
+    texts: list[str] = []
+    for col in row.index:
+        name = str(col)
+        if name.startswith("_") or name in amount_set:
+            continue
+        text = cell_text(row[col])
+        if text:
+            texts.append(text)
+    return texts
 
 
 def _looks_like_amount_name(name: str) -> bool:

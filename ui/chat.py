@@ -7,21 +7,17 @@ import re
 import pandas as pd
 import streamlit as st
 
-from core.analyzer import (
-    detect_aggregate_op,
-    infer_context_label,
-    resolve_filter_source,
-)
 from core.excel_loader import sanitize_dataframe
 from core.file_summary import is_summary_request
-from core.prompt_intent import _expects_plot
+from core.pandasai_config import _friendly_error
+from core.prompt_intent import _expects_plot, detect_aggregate_op
 from core.prompt_router import (
     SingleRouteOutcome,
     needs_chart_context,
     route_multi_prompt,
     route_single_prompt,
 )
-from core.pandasai_config import _friendly_error
+from core.value_filter import infer_context_label, resolve_filter_source
 from ui.file_state import (
     find_file,
     frame_label_parts,

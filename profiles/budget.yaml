@@ -31,6 +31,8 @@ semantic_hints:
     - percentage columns should not normally be summed
     - totals should be validated after aggregation
     - misnamed code columns may need job-local renames only
+    - default 집행효율/집행률 uses 집행계_합계 ÷ 실행예산_합계
+    - do not use 당년도집행 or 계획예산 for 집행효율 unless the user asks for 당년 기준
 
 column_hints:
   - 계획예산

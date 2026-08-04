@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Callable
 
 import pandas as pd
 
 from core.constants import MERGES_DIR
+from core.export_utils import export_sheets_xlsx, sheets_to_xlsx_bytes
 from core.llm_client import chat_json
 from core.plan_builder import build_execution_plan
-from core.plan_engine import execute_plan, export_sheets_xlsx, sheets_to_xlsx_bytes
+from core.plan_engine import execute_plan
+from core.plan_retry import RetryAttempt, run_plan_retries
 from core.plan_types import ExecutionPlan, FileSchema, IntegrateResult, ValidationReport
 from core.plan_validate import validate_integrate_result
 from core.schema_infer import infer_schemas
@@ -42,6 +44,14 @@ _EXAMPLE_NAME_HINTS = (
     "expected",
     "정답",
 )
+
+
+@dataclass
+class _IntegrateBundle:
+    schemas: dict[str, FileSchema]
+    plan: ExecutionPlan
+    executed: dict[str, Any]
+    validation: ValidationReport
 
 
 def looks_like_structural_integrate(prompt: str) -> bool:
@@ -95,16 +105,16 @@ def run_integrate_pipeline(
         raise ValueError("구조적 통합에는 소스 파일이 2개 이상 필요합니다.")
 
     source_map = {name: frame.copy() for name, frame in sources}
-    previous_errors: list[str] = []
-    last_validation: ValidationReport | None = None
-    last_plan: ExecutionPlan | None = plan
-    last_schemas: dict[str, FileSchema] = schemas or {}
-    last_exec: dict[str, Any] | None = None
+    initial_schemas = schemas
+    initial_plan = plan
 
-    attempts = max(1, max_retries + 1)
-    for attempt in range(attempts):
-        if schemas is None or attempt > 0:
-            last_schemas = infer_schemas(
+    def _attempt(
+        attempt_index: int,
+        previous_errors: list[str],
+    ) -> RetryAttempt[_IntegrateBundle]:
+        force_refresh = attempt_index > 0
+        if initial_schemas is None or force_refresh:
+            next_schemas = infer_schemas(
                 sources,
                 base_url=base_url,
                 model=model,
@@ -113,13 +123,13 @@ def run_integrate_pipeline(
                 chat_json_fn=json_fn,
             )
         else:
-            last_schemas = schemas
+            next_schemas = initial_schemas
 
-        if plan is None or attempt > 0:
-            last_plan = build_execution_plan(
+        if initial_plan is None or force_refresh:
+            next_plan = build_execution_plan(
                 prompt,
                 named_frames=sources,
-                schemas=last_schemas,
+                schemas=next_schemas,
                 base_url=base_url,
                 model=model,
                 use_budget_profile=use_budget_profile,
@@ -128,33 +138,48 @@ def run_integrate_pipeline(
                 chat_json_fn=json_fn,
             )
         else:
-            last_plan = plan
+            next_plan = initial_plan
 
-        assert last_plan is not None
-        last_exec = execute_plan(last_plan, source_map)
-        last_validation = validate_integrate_result(
-            plan=last_plan,
-            source_details=last_exec["source_details"],
-            integrated_details=last_exec["integrated_details"],
-            integrated=last_exec["integrated"],
+        executed = execute_plan(next_plan, source_map)
+        validation = validate_integrate_result(
+            plan=next_plan,
+            source_details=executed["source_details"],
+            integrated_details=executed["integrated_details"],
+            integrated=executed["integrated"],
         )
-        if last_validation.ok:
-            break
-        previous_errors = [issue.message for issue in last_validation.errors]
-        # 다음 루프에서 강제 재추론
-        schemas = None
-        plan = None
+        bundle = _IntegrateBundle(
+            schemas=next_schemas,
+            plan=next_plan,
+            executed=executed,
+            validation=validation,
+        )
+        if validation.ok:
+            return RetryAttempt(ok=True, value=bundle)
+        return RetryAttempt(
+            ok=False,
+            value=bundle,
+            errors=validation.error_messages(),
+        )
 
-    assert last_exec is not None and last_plan is not None and last_validation is not None
+    outcome = run_plan_retries(max_retries=max_retries, attempt=_attempt)
+    assert outcome.value is not None
+    bundle = outcome.value
+    last_exec = bundle.executed
+    last_plan = bundle.plan
+    last_schemas = bundle.schemas
+    last_validation = bundle.validation
 
     workbook_bytes = None
     workbook_path = None
     if export and last_validation.ok:
         workbook_bytes = sheets_to_xlsx_bytes(last_exec["sheets"])
-        MERGES_DIR.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        workbook_path = str(MERGES_DIR / f"integrated_{stamp}.xlsx")
-        export_sheets_xlsx(last_exec["sheets"], path=workbook_path)
+        saved = export_sheets_xlsx(
+            last_exec["sheets"],
+            filename=f"integrated_{stamp}.xlsx",
+            directory=MERGES_DIR,
+        )
+        workbook_path = str(saved)
     elif last_validation.ok:
         workbook_bytes = sheets_to_xlsx_bytes(last_exec["sheets"])
 

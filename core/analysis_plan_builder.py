@@ -8,6 +8,7 @@ from typing import Any, Callable
 import pandas as pd
 
 from core.analysis_plan_types import AnalysisPlan, analysis_plan_from_dict
+from core.analysis_column_prefs import apply_execution_rate_column_prefs
 from core.llm_client import chat_json
 from core.row_classify import classification_summary
 from core.schema_infer import build_frame_inventory, semantic_hints_text
@@ -35,18 +36,34 @@ def build_analysis_plan(
         "produce ONE JSON analysis plan for a deterministic executor. "
         "Do NOT write pandas code. Do NOT invent columns that are not in the inventory. "
         "Prefer a pipeline of atomic steps. Allowed ops: "
-        "annotate_row_types, filter_rows, select_columns, derive_column, sort, limit, drop_columns. "
-        "derive_column expr allowlist: diff, abs, abs_diff, ratio — operands must be real column names. "
+        "annotate_row_types, filter_rows, select_columns, derive_column, sort, limit, "
+        "drop_columns, aggregate, ratio_of_aggregates, compare_groups, distribution_summary. "
+        "filter_rows may include include_row_types and column_filters "
+        "[{column, values}] for label membership. "
+        "aggregate: group_by, metrics[{column, fn}], prefer_subtotals(bool), include_groups. "
+        "When prefer_subtotals=true, use trustworthy subtotal rows if present; "
+        "otherwise sum detail rows. Never double-count subtotals with details. "
+        "ratio_of_aggregates: name, numerator, denominator — compute sum-level ratio "
+        "(NOT the mean of row ratios). Apply after aggregate. "
+        "compare_groups: group_column, groups, metrics, rate_columns. "
+        "distribution_summary: budget_column, executed_column, optional group_column/group_value. "
         "For ranking by 'largest difference' / '차이가 큰', use abs_diff and descending sort, "
         "and set criteria_note explaining absolute difference. "
         "For '초과' / '더 많이 집행' use directional diff (e.g. executed - planned). "
         "For '부족' / '미집행' use the opposite direction. "
-        "Always exclude non-detail rows when the user asks for items/entries: "
+        "For comparing categories / execution efficiency / 집행률 / 집행효율 / 해석: "
+        "prefer operation='group_comparison' with group_column, groups, "
+        "numerator, denominator, rate_name, prefer_subtotals=true, interpret=true. "
+        "Default execution rate columns when present: "
+        "numerator=집행계_합계 (NOT 당년도집행), denominator=실행예산_합계 (NOT 계획예산). "
+        "Only use 당년도집행/당년도예산/계획예산 when the user explicitly asks for "
+        "당년·당해·올해 기준. "
+        "Do NOT answer efficiency comparisons with top_n_difference on detail rows. "
+        "Always exclude non-detail rows when the user asks for item rankings: "
         "annotate_row_types then filter_rows with include_row_types=['detail'] "
         "and drop_blank_dimensions=true. "
-        "You may also return a compact high-level form with operation='top_n_difference' "
-        "plus dimension_columns, value_columns, difference_mode, sort, limit, exclude_rows; "
-        "the engine will compile it to atomic steps. "
+        "You may return compact high-level forms: "
+        "operation='top_n_difference' or operation='group_comparison'. "
         "Return ONLY a JSON object."
     )
 
@@ -57,9 +74,11 @@ def build_analysis_plan(
         f"Row type summary:\n{json.dumps(row_summary, ensure_ascii=False, indent=2)}",
         (
             "Return JSON with either:\n"
-            "1) steps[], criteria_note, dimension_columns, output_columns\n"
-            "2) or operation=top_n_difference with dimension_columns, value_columns, "
-            "difference_mode (absolute|signed), sort, limit, exclude_rows, criteria_note"
+            "1) steps[], criteria_note, dimension_columns, output_columns, interpret(bool)\n"
+            "2) operation=top_n_difference with dimension_columns, value_columns, "
+            "difference_mode (absolute|signed), sort, limit, exclude_rows, criteria_note\n"
+            "3) operation=group_comparison with group_column, groups, "
+            "numerator, denominator, rate_name, prefer_subtotals, criteria_note, interpret"
         ),
     ]
     hint = semantic_hints_text(use_budget_profile=use_budget_profile)
@@ -77,4 +96,5 @@ def build_analysis_plan(
         base_url=base_url,
         model=model,
     )
+    data = apply_execution_rate_column_prefs(prompt, data, columns)
     return analysis_plan_from_dict(data, available_columns=columns)
