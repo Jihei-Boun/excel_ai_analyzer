@@ -130,6 +130,9 @@ _STRUCTURED_ANALYSIS_KEYWORDS = (
     "비중",
     "골라",
     "계산해",
+    "잔액",
+    "하나씩",
+    "별로",
 )
 
 
@@ -149,7 +152,14 @@ def wants_structured_analysis(prompt: str) -> bool:
     if expects_dataframe(prompt):
         return True
     lowered = prompt.lower()
-    return any(keyword in lowered for keyword in _STRUCTURED_ANALYSIS_KEYWORDS)
+    if any(keyword in lowered for keyword in _STRUCTURED_ANALYSIS_KEYWORDS):
+        return True
+    # 비목별 가장 큰/작은 항목 — '뽑아'만 있어도 구조화 후보
+    if any(tok in prompt for tok in ("별", "그룹")) and any(
+        tok in prompt for tok in ("가장", "하나씩", "상위", "하위", "최대", "최소")
+    ):
+        return True
+    return False
 
 
 def expects_dataframe(prompt: str) -> bool:
@@ -187,6 +197,11 @@ def is_list_request(prompt: str) -> bool:
     from core.schema_compare import is_schema_request
 
     if is_schema_request(prompt):
+        return False
+    # 그룹별 대표 행 추출은 구조화 분석으로 보낸다
+    if any(tok in prompt for tok in ("별", "그룹")) and any(
+        tok in prompt for tok in ("가장", "하나씩", "상위", "하위", "최대", "최소")
+    ):
         return False
     lowered = prompt.lower()
     compact = normalize_text(prompt)

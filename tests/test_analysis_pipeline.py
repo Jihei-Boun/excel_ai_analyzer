@@ -846,3 +846,95 @@ def test_provisional_share_includes_ratio_column() -> None:
     assert abs(by_name["연구용SW활용비"] - 17.15) < 0.05
     assert abs(by_name["국내여비"] - 39.02) < 0.05
     assert abs(by_name["회의비"] - 40.32) < 0.05
+
+
+def test_top_n_per_group_balance_on_twin() -> None:
+    from pathlib import Path
+
+    from core.list_display import expects_list_display
+    from core.excel_loader import load_excel
+    from core.pandasai_config import prepare_dataframe_for_ai
+    from core.prompt_intent import is_list_request, wants_structured_analysis
+
+    prompt = "비목분류별로 가장 잔액이 큰 비용명 하나씩 뽑아줘"
+    assert wants_structured_analysis(prompt)
+    assert not is_list_request(prompt)
+    assert not expects_list_display(prompt)
+
+    path = Path(__file__).resolve().parents[1] / "data/uploads/03_트윈_예실대비표.xlsx"
+    if not path.is_file():
+        return
+    df = prepare_dataframe_for_ai(load_excel(path))
+    plan = analysis_plan_from_dict(
+        {
+            "operation": "top_n_per_group",
+            "group_column": "비목분류",
+            "value_column": "예산잔액_합계",
+            "n": 1,
+            "ascending": False,
+            "interpret": False,
+        },
+        available_columns=list(df.columns),
+    )
+    assert any(s.op == "top_per_group" for s in plan.steps)
+    assert not plan.interpret
+
+    classified = classify_rows(df, dimension_columns=["비용명", "비용명_2"])
+    result, meta = execute_analysis_plan(classified, plan)
+    assert len(result) == 7
+    assert list(result.columns) == ["비목분류", "비용명_2", "비용명", "예산잔액_합계"]
+    expected = {
+        "내부인건비": ("계약직내부인건비", 12_325_560),
+        "간접비": ("간접비", 5_419_500),
+        "연구수당": ("연구수당", 3_582_000),
+        "연구활동비": ("회의비", 2_845_700),
+        "연구재료비": ("재료비", 1_309_490),
+        "연구시설장비비": ("연구장비구입비", 22_000),
+        "기타": ("과제이월액", 0),
+    }
+    assert set(result["비목분류"].astype(str).str.strip()) == set(expected)
+    for _, row in result.iterrows():
+        cat = str(row["비목분류"]).strip()
+        name, bal = expected[cat]
+        assert str(row["비용명_2"]).strip() == name
+        assert abs(float(row["예산잔액_합계"]) - bal) < 1
+    assert float(result.iloc[0]["예산잔액_합계"]) >= float(result.iloc[-1]["예산잔액_합계"])
+    assert (meta.get("top_per_group") or {}).get("kept") == 7
+
+
+def test_top_n_per_group_prefs_override_wrong_plan() -> None:
+    from core.analysis_plan_builder import build_analysis_plan
+
+    df = pd.DataFrame(
+        {
+            "비목분류": ["A", "A", "B"],
+            "비용명": [1, 2, 3],
+            "비용명_2": ["x", "y", "z"],
+            "예산잔액_합계": [10, 99, 5],
+            "계획예산": [1, 1, 1],
+        }
+    )
+    prompt = "비목분류별로 가장 잔액이 큰 비용명 하나씩 뽑아줘"
+
+    def fake_chat_json(*_a, **_k):
+        return {
+            "operation": "group_comparison",
+            "group_column": "비목분류",
+            "numerator": "계획예산",
+            "denominator": "계획예산",
+            "interpret": True,
+        }
+
+    plan = build_analysis_plan(
+        prompt,
+        df,
+        base_url="http://localhost:11434",
+        model="dummy",
+        chat_json_fn=fake_chat_json,
+    )
+    assert any(s.op == "top_per_group" for s in plan.steps)
+    classified = classify_rows(df, dimension_columns=["비용명", "비용명_2"])
+    result, _ = execute_analysis_plan(classified, plan)
+    assert len(result) == 2
+    assert set(result["비용명_2"].astype(str)) == {"y", "z"}
+    assert "계획예산" not in result.columns

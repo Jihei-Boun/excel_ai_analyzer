@@ -76,6 +76,12 @@ def build_analysis_plan(
         "Default: numerator=집행계_합계, denominator=실행예산_합계. "
         "Exclude denominator==0 from rate and mean. "
         "Do NOT use group_comparison or 계획예산 for this. "
+        "For 비목분류별/그룹별 가장 잔액(또는 금액)이 큰/작은 항목 하나씩: "
+        "MUST use operation='top_n_per_group' with group_column, value_column, n=1, "
+        "ascending=false for 큰/최대, ascending=true for 작/최소. "
+        "Default value_column=예산잔액_합계 (use 예산잔액_당해잔액 only if 당해/당년 asked). "
+        "Filter to detail rows only. output_columns=labels+value only. "
+        "Do NOT answer with group_comparison aggregates or a full item list. "
         "For comparing categories / execution efficiency between groups / 해석: "
         "prefer operation='group_comparison' with group_column, groups, "
         "numerator, denominator, rate_name, prefer_subtotals=true, interpret=true. "
@@ -89,7 +95,8 @@ def build_analysis_plan(
         "and drop_blank_dimensions=true. "
         "You may return compact high-level forms: "
         "operation='top_n_difference', operation='group_comparison', "
-        "operation='correlation', operation='find_items', or operation='rate_vs_mean'. "
+        "operation='correlation', operation='find_items', operation='rate_vs_mean', "
+        "or operation='top_n_per_group'. "
         "Return ONLY a JSON object."
     )
 
@@ -110,7 +117,9 @@ def build_analysis_plan(
             "5) operation=find_items with numeric_filters[{column,op,value}], "
             "sort_by, output_columns (minimal), criteria_note, interpret\n"
             "6) operation=rate_vs_mean with numerator, denominator, relation "
-            "(below|above), rate_name, output_columns (minimal), interpret"
+            "(below|above), rate_name, output_columns (minimal), interpret\n"
+            "7) operation=top_n_per_group with group_column, value_column, n, "
+            "ascending, output_columns (minimal), interpret"
         ),
     ]
     hint = semantic_hints_text(use_budget_profile=use_budget_profile)

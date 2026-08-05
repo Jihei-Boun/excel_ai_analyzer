@@ -50,6 +50,12 @@ def expects_list_display(prompt: str) -> bool:
         return False
     if "표로" in lowered or "표 형" in lowered:
         return False
+    # 그룹별 대표 행(가장 큰/작은·하나씩)은 표로 유지 — '뽑아' 오탐 방지
+    if any(tok in prompt for tok in ("별", "그룹")) and any(
+        tok in prompt
+        for tok in ("가장", "하나씩", "하나 씩", "상위", "하위", "최대", "최소")
+    ):
+        return False
     compact = normalize_text(prompt)
     # '컬럼 목록 비교'처럼 스키마 문맥의 '목록'만 있는 경우 제외
     if ("컬럼목록" in compact or "열목록" in compact) and not any(

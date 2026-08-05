@@ -110,6 +110,13 @@ def apply_analysis_column_prefs(
     columns: list[str],
 ) -> dict[str, Any]:
     """도메인 질의에 맞춰 계획 JSON을 보정한다."""
+    data = apply_top_n_per_group_prefs(prompt, data, columns)
+    if str((data or {}).get("operation") or "") in {
+        "top_n_per_group",
+        "top_per_group",
+        "rank_per_group",
+    }:
+        return data
     data = apply_rate_vs_mean_prefs(prompt, data, columns)
     if str((data or {}).get("operation") or "") in {
         "rate_vs_mean",
@@ -218,6 +225,97 @@ def apply_rate_vs_mean_prefs(
     out["criteria_note"] = (
         f"집행률 = {numerator} ÷ {denominator} (분모 0 제외). "
         f"산술평균보다 {'낮은' if relation == 'below' else '높은'} 항목만 표시."
+    )
+    out.pop("steps", None)
+    return out
+
+
+def is_top_n_per_group_prompt(prompt: str) -> bool:
+    """그룹(비목)별 대표 항목(가장 큰/작은·하나씩) 질의."""
+    if not prompt:
+        return False
+    has_group = any(
+        tok in prompt
+        for tok in ("별로", "별 ", "분류별", "비목별", "그룹별", "비목분류별")
+    ) or ("별" in prompt and any(tok in prompt for tok in ("비목", "분류", "그룹")))
+    has_pick = any(
+        tok in prompt
+        for tok in ("가장", "하나씩", "하나 씩", "상위", "하위", "최대", "최소")
+    )
+    has_metric = any(
+        tok in prompt
+        for tok in ("잔액", "집행", "예산", "금액", "비용명", "항목")
+    )
+    return bool(has_group and has_pick and has_metric)
+
+
+def pick_balance_column(prompt: str, columns: list[str]) -> str | None:
+    """잔액 질의 시 열 선택. 당해 명시 시에만 당해잔액."""
+    colset = {str(c) for c in columns}
+    wants_current = any(tok in prompt for tok in _CURRENT_YEAR_TOKENS) and (
+        "잔액" in prompt
+    )
+    if wants_current:
+        picked = _first_present(
+            colset,
+            ("예산잔액_당해잔액", "당해잔액", "예산잔액_합계", "예산잔액"),
+        )
+    else:
+        picked = _first_present(
+            colset,
+            ("예산잔액_합계", "예산잔액", "예산잔액_당해잔액", "당해잔액"),
+        )
+    return picked
+
+
+def apply_top_n_per_group_prefs(
+    prompt: str,
+    data: dict[str, Any],
+    columns: list[str],
+) -> dict[str, Any]:
+    """비목별 잔액 최대(또는 최소) 항목 하나씩 → top_n_per_group."""
+    if not isinstance(data, dict) or not is_top_n_per_group_prompt(prompt):
+        return data
+    colset = {str(c) for c in columns}
+    group_col = _first_present(colset, ("비목분류", "비목", "분류"))
+    if not group_col:
+        return data
+
+    value_col: str | None = None
+    if "잔액" in prompt:
+        value_col = pick_balance_column(prompt, columns)
+    if not value_col:
+        # 잔액이 아니면 LLM/기존 plan의 value를 유지하되 없으면 합계 잔액 시도
+        candidate = str(
+            data.get("value_column") or data.get("metric") or ""
+        ).strip()
+        if candidate in colset:
+            value_col = candidate
+        else:
+            value_col = pick_balance_column(prompt, columns) or _first_present(
+                colset,
+                ("예산잔액_합계", "집행계_합계", "실행예산_합계"),
+            )
+    if not value_col:
+        return data
+
+    ascending = any(tok in prompt for tok in ("작", "낮", "최소", "하위")) and not any(
+        tok in prompt for tok in ("큰", "높", "최대", "상위")
+    )
+    labels = [c for c in ("비목분류", "비용명_2", "비용명") if c in colset]
+    out = dict(data)
+    out["operation"] = "top_n_per_group"
+    out["group_column"] = group_col
+    out["value_column"] = value_col
+    out["n"] = 1
+    out["ascending"] = ascending
+    out["output_columns"] = [*labels, value_col]
+    out["interpret"] = (
+        False if _wants_table_only(prompt) else bool(out.get("interpret", False))
+    )
+    out["criteria_note"] = (
+        f"{group_col}별로 {value_col}이(가) 가장 "
+        f"{'작은' if ascending else '큰'} 세부 항목 1개씩."
     )
     out.pop("steps", None)
     return out

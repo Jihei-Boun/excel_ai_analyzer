@@ -129,6 +129,53 @@ def project_readable_columns(
     return df.loc[:, ordered].copy()
 
 
+def top_per_group(
+    df: pd.DataFrame,
+    *,
+    group_column: str,
+    value_column: str,
+    n: int = 1,
+    ascending: bool = False,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """그룹마다 ``value_column`` 기준 상위/하위 n행을 고른다."""
+    if group_column not in df.columns:
+        raise ValueError(f"top_per_group 그룹 컬럼 없음: {group_column}")
+    if value_column not in df.columns:
+        raise ValueError(f"top_per_group 값 컬럼 없음: {value_column}")
+    n = max(1, min(50, int(n)))
+    work = df.copy()
+    work["_top_val"] = pd.to_numeric(work[value_column], errors="coerce")
+    # 결측 값은 비교에서 제외
+    work = work.loc[work["_top_val"].notna()].copy()
+    if work.empty:
+        return work.drop(columns=["_top_val"], errors="ignore"), {
+            "group_column": group_column,
+            "value_column": value_column,
+            "n": n,
+            "groups": 0,
+            "kept": 0,
+        }
+
+    parts: list[pd.DataFrame] = []
+    for _, chunk in work.groupby(group_column, sort=False, dropna=False):
+        ordered = chunk.sort_values(
+            "_top_val",
+            ascending=ascending,
+            kind="mergesort",
+        )
+        parts.append(ordered.head(n))
+    out = pd.concat(parts, axis=0).drop(columns=["_top_val"])
+    meta = {
+        "group_column": group_column,
+        "value_column": value_column,
+        "n": n,
+        "ascending": ascending,
+        "groups": int(work[group_column].nunique(dropna=False)),
+        "kept": int(len(out)),
+    }
+    return out.reset_index(drop=True), meta
+
+
 def filter_vs_mean(
     df: pd.DataFrame,
     *,

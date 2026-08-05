@@ -21,6 +21,7 @@ SUPPORTED_ANALYSIS_OPS = frozenset(
         "distribution_summary",
         "correlation",
         "filter_vs_mean",
+        "top_per_group",
     }
 )
 
@@ -45,6 +46,9 @@ HIGH_LEVEL_OPERATIONS = frozenset(
         "condition_select",
         "rate_vs_mean",
         "execution_rate_vs_mean",
+        "top_n_per_group",
+        "top_per_group",
+        "rank_per_group",
     }
 )
 
@@ -148,6 +152,7 @@ class AnalysisPlan:
                 "distribution_summary",
                 "correlation",
                 "filter_vs_mean",
+                "top_per_group",
             }
             for s in self.steps
         )
@@ -251,7 +256,109 @@ def _compile_high_level(data: dict[str, Any], columns: set[str]) -> dict[str, An
         return _compile_find_items(data, columns)
     if operation in {"rate_vs_mean", "execution_rate_vs_mean"}:
         return _compile_rate_vs_mean(data, columns)
+    if operation in {"top_n_per_group", "top_per_group", "rank_per_group"}:
+        return _compile_top_n_per_group(data, columns)
     return {}
+
+
+def _compile_top_n_per_group(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
+    """그룹마다 값 기준 상위/하위 n행 → 정렬 → 최소 열."""
+    group_col = str(
+        data.get("group_column") or data.get("group_by") or data.get("by") or ""
+    ).strip()
+    value_col = str(
+        data.get("value_column")
+        or data.get("metric")
+        or data.get("metric_column")
+        or ""
+    ).strip()
+    if not value_col:
+        sort_by = data.get("sort_by") or data.get("by_value")
+        if isinstance(sort_by, list) and sort_by:
+            value_col = str(sort_by[0]).strip()
+        elif isinstance(sort_by, str):
+            value_col = sort_by.strip()
+    if group_col not in columns or value_col not in columns:
+        return {}
+
+    try:
+        n = int(data.get("n") or data.get("top_n") or data.get("limit") or 1)
+    except (TypeError, ValueError):
+        n = 1
+    n = max(1, min(50, n))
+
+    ascending = data.get("ascending", False)
+    if isinstance(ascending, list):
+        ascending = bool(ascending[0]) if ascending else False
+    else:
+        ascending = bool(ascending)
+    order = str(data.get("order") or data.get("direction") or "").lower()
+    if any(tok in order for tok in ("asc", "small", "min", "낮", "작")):
+        ascending = True
+    if any(tok in order for tok in ("desc", "large", "max", "높", "큰")):
+        ascending = False
+
+    label_prefs = [
+        c
+        for c in ("비목분류", "비용명_2", "비용명", "항목명", "항목")
+        if c in columns
+    ]
+    explicit = [
+        str(c)
+        for c in (data.get("output_columns") or data.get("select_columns") or [])
+        if str(c) in columns
+    ]
+    out_cols: list[str] = []
+    seen: set[str] = set()
+    for col in [*label_prefs, value_col, *explicit]:
+        if col in columns and col not in seen:
+            out_cols.append(col)
+            seen.add(col)
+    if not explicit:
+        keep = set(label_prefs) | {value_col, group_col}
+        out_cols = [c for c in out_cols if c in keep]
+
+    note = str(
+        data.get("criteria_note")
+        or (
+            f"{group_col}별로 {value_col} "
+            f"{'하위' if ascending else '상위'} {n}개 항목"
+        )
+    )
+    if "interpret" in data:
+        interpret = bool(data.get("interpret"))
+    else:
+        interpret = False
+
+    steps: list[dict[str, Any]] = [
+        {"op": "annotate_row_types"},
+        {
+            "op": "filter_rows",
+            "include_row_types": ["detail"],
+            "drop_blank_dimensions": True,
+            "exclude_uncertain": False,
+        },
+        {
+            "op": "top_per_group",
+            "group_column": group_col,
+            "value_column": value_col,
+            "n": n,
+            "ascending": ascending,
+        },
+        {
+            "op": "sort",
+            "by": [value_col],
+            "ascending": [ascending],
+        },
+        {"op": "select_columns", "columns": out_cols},
+    ]
+    return {
+        "steps": steps,
+        "criteria_note": note,
+        "dimension_columns": [group_col],
+        "output_columns": out_cols,
+        "interpret": interpret,
+    }
 
 
 def _compile_rate_vs_mean(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
@@ -963,6 +1070,37 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
             return None
         relation = str(item.get("relation") or item.get("compare") or "below")
         return AnalysisStep(op, {"column": column, "relation": relation})
+
+    if op == "top_per_group":
+        group_col = str(
+            item.get("group_column") or item.get("group_by") or item.get("by") or ""
+        ).strip()
+        value_col = str(
+            item.get("value_column")
+            or item.get("metric")
+            or item.get("metric_column")
+            or ""
+        ).strip()
+        if group_col not in columns or value_col not in columns:
+            return None
+        try:
+            n = int(item.get("n") or item.get("top_n") or item.get("limit") or 1)
+        except (TypeError, ValueError):
+            n = 1
+        ascending = item.get("ascending", False)
+        if isinstance(ascending, list):
+            ascending = bool(ascending[0]) if ascending else False
+        else:
+            ascending = bool(ascending)
+        return AnalysisStep(
+            op,
+            {
+                "group_column": group_col,
+                "value_column": value_col,
+                "n": max(1, min(50, n)),
+                "ascending": ascending,
+            },
+        )
 
     return None
 

@@ -16,6 +16,7 @@ from core.analysis_ops import (
     ensure_row_types,
     filter_vs_mean,
     ratio_of_columns,
+    top_per_group,
 )
 from core.analysis_plan_types import META_COLUMNS, AnalysisPlan, AnalysisStep
 from core.row_classify import (
@@ -52,6 +53,7 @@ def execute_analysis_plan(
                 "distribution",
                 "correlation",
                 "vs_mean",
+                "top_per_group",
             }:
                 meta[key] = value
             elif key == "aggregate_warnings" and isinstance(value, list):
@@ -178,6 +180,16 @@ def _run_step(
             relation=str(step.payload.get("relation") or "below"),
         )
         return result, {"vs_mean": vs_meta}
+
+    if op == "top_per_group":
+        result, top_meta = top_per_group(
+            df,
+            group_column=str(step.payload.get("group_column") or ""),
+            value_column=str(step.payload.get("value_column") or ""),
+            n=int(step.payload.get("n") or 1),
+            ascending=bool(step.payload.get("ascending", False)),
+        )
+        return result, {"top_per_group": top_meta}
 
     raise ValueError(f"지원하지 않는 연산: {op!r}")
 
