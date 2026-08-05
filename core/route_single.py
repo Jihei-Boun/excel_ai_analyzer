@@ -207,8 +207,15 @@ def route_single_prompt(
         )
         meta = _merge_analysis_meta(meta, analysis_meta)
         is_filter = detect_aggregate_op(prompt) is None
-        # 그룹 집계·비교 분석 계획 결과는 필터 잠금/비목 일치 배지 대상이 아니다.
-        if analysis_meta.get("comparison") or analysis_meta.get("aggregate_sources"):
+        # 구조화 분석 계획 결과는 필터 잠금/비목 일치 배지 대상이 아니다.
+        aggregation = analysis_meta.get("aggregation") or {}
+        if (
+            analysis_meta.get("comparison")
+            or analysis_meta.get("aggregate_sources")
+            or analysis_meta.get("correlation")
+            or analysis_meta.get("vs_mean")
+            or aggregation.get("operation") == "analysis_plan"
+        ):
             is_filter = False
             ctx_label = None
             filter_summary = None

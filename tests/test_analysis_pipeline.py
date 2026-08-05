@@ -431,3 +431,418 @@ def test_execution_rate_prefs_override_wrong_llm_columns() -> None:
     assert ratio_steps
     assert ratio_steps[0].payload["numerator"] == "집행계_합계"
     assert ratio_steps[0].payload["denominator"] == "실행예산_합계"
+
+
+def _sample_corr_budget_df() -> pd.DataFrame:
+    """당년도집행·가집행금액 상관 기대값에 가까운 세부 비용 17행."""
+    # 둘 다 양수 3행 + 당년만 양수 6행 + 둘 다 0 8행 = 17
+    rows = [
+        ("내부인건비", 16_513_830, 0),
+        ("계약직", 1_200_000, 0),
+        ("간접비", 5_419_500, 0),
+        ("연구시설장비비", 2_167_000, 0),
+        ("연구재료비", 355_510, 0),
+        ("기타연구", 78_000, 0),
+        ("연구용SW활용비", 1_677_813, 347_356),
+        ("국내여비", 289_000, 184_960),
+        ("회의비", 280_600, 189_600),
+        ("항목A", 0, 0),
+        ("항목B", 0, 0),
+        ("항목C", 0, 0),
+        ("항목D", 0, 0),
+        ("항목E", 0, 0),
+        ("항목F", 0, 0),
+        ("항목G", 0, 0),
+        ("항목H", 0, 0),
+    ]
+    return pd.DataFrame(
+        {
+            "비목분류": ["연구활동비"] * 17,
+            "비용명": [r[0] for r in rows],
+            "당년도집행": [r[1] for r in rows],
+            "가집행금액": [r[2] for r in rows],
+        }
+    )
+
+
+def test_correlation_on_detail_rows_near_zero() -> None:
+    from core.prompt_intent import wants_structured_analysis
+
+    assert wants_structured_analysis("당년도집행과 가집행금액의 상관관계를 분석해줘")
+
+    df = _sample_corr_budget_df()
+    plan = analysis_plan_from_dict(
+        {
+            "operation": "correlation",
+            "x_column": "당년도집행",
+            "y_column": "가집행금액",
+            "label_column": "비용명",
+            "interpret": True,
+        },
+        available_columns=list(df.columns),
+    )
+    assert any(s.op == "correlation" for s in plan.steps)
+    assert plan.interpret
+    assert not any(s.op in {"aggregate", "ratio_of_aggregates", "compare_groups"} for s in plan.steps)
+
+    classified = classify_rows(df, dimension_columns=["비목분류", "비용명"])
+    result, meta = execute_analysis_plan(classified, plan)
+    corr = meta["correlation"]
+    assert corr["n"] == 17
+    assert corr["both_positive_count"] == 3
+    assert corr["x_only_positive_count"] == 6
+    assert corr["both_zero_count"] == 8
+    assert abs(corr["x_sum"] - float(df["당년도집행"].sum())) < 1
+    assert abs(corr["y_sum"] - float(df["가집행금액"].sum())) < 1
+    # 전체는 거의 무상관 (금액 큰 행에 가집행 0)
+    assert abs(float(corr["pearson_r"])) < 0.2
+    assert float(corr["r_squared"]) < 0.05
+    assert corr["strength"] in {"무상관~매우약함", "약함"}
+    # 양수 교집합만은 강하지만 표본 3개 — 경고에 반영
+    assert corr["both_positive_pearson_r"] is not None
+    assert float(corr["both_positive_pearson_r"]) > 0.95
+    assert any("3개" in w or "양수" in w for w in corr["warnings"])
+    assert list(result.columns) == ["지표", "값"]
+    assert "Pearson_r" in set(result["지표"].astype(str))
+
+
+def test_correlation_plan_not_ratio_group_comparison() -> None:
+    from core.analysis_plan_builder import build_analysis_plan
+
+    df = _sample_corr_budget_df()
+
+    def fake_chat_json(prompt: str, **kwargs):
+        # LLM이 잘못 비율 비교로 내려도, 테스트에서는 올바른 correlation을 반환
+        return {
+            "operation": "correlation",
+            "x_column": "당년도집행",
+            "y_column": "가집행금액",
+            "label_column": "비용명",
+            "interpret": True,
+        }
+
+    plan = build_analysis_plan(
+        "당년도집행과 가집행금액의 상관관계를 분석해줘",
+        df,
+        base_url="http://localhost:11434",
+        model="dummy",
+        chat_json_fn=fake_chat_json,
+    )
+    assert any(s.op == "correlation" for s in plan.steps)
+    assert not any(s.op == "ratio_of_aggregates" for s in plan.steps)
+
+
+def test_pipeline_correlation_with_interpretation_mock() -> None:
+    df = _sample_corr_budget_df()
+
+    def fake_chat_json(prompt: str, **kwargs):
+        return {
+            "operation": "correlation",
+            "x_column": "당년도집행",
+            "y_column": "가집행금액",
+            "label_column": "비용명",
+            "interpret": True,
+        }
+
+    def fake_chat_text(prompt: str, **kwargs):
+        return (
+            "전체적으로 선형 상관이 거의 없습니다(r≈0). "
+            "가집행이 있는 행은 3개뿐이라 전체 상관이 약합니다."
+        )
+
+    result = run_analysis_pipeline(
+        "당년도집행과 가집행금액의 상관관계를 분석해줘",
+        df,
+        base_url="http://localhost:11434",
+        model="dummy",
+        chat_json_fn=fake_chat_json,
+        chat_text_fn=fake_chat_text,
+    )
+    assert "Pearson" in result.reply or "r=" in result.reply
+    assert "무상관" in result.reply or "거의 없" in result.reply
+    corr = result.meta.get("correlation") or {}
+    assert abs(float(corr["pearson_r"])) < 0.2
+
+
+def _sample_carryover_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "비목분류": [
+                "연구활동비",
+                "연구활동비",
+                "연구재료비",
+                "연구활동비",
+                "연구활동비",
+                "연구활동비",
+                "연구활동비",
+                "연구활동비",
+            ],
+            "비용명": [272, 366, 221, 353, 231, 222, 293, 271],
+            "비용명_2": [
+                "국외여비",
+                "세미나비",
+                "재료비",
+                "전문가활용비",
+                "문헌구입비",
+                "사무용소모품비",
+                "네트워크사용료",
+                "회의비",
+            ],
+            "계획예산": [0, 1_200_000, 5_465_000, 600_000, 800_000, 600_000, 0, 0],
+            "실행예산_이월예산": [
+                2_400_000,
+                700_000,
+                665_000,
+                400_000,
+                300_000,
+                163_832,
+                138_400,
+                3_315_900,
+            ],
+            "실행예산_당해예산": [0, 0, 1_000_000, 0, 0, 0, 0, 0],
+            "집행계_이월집행": [0, 0, 355_510, 0, 0, 0, 30_800, 0],
+            "집행계_당해집행": [0, 0, 0, 0, 0, 0, 0, 189_600],
+            "집행계_합계": [0, 0, 355_510, 0, 0, 0, 30_800, 189_600],
+            "기타열A": [1] * 8,
+            "기타열B": [2] * 8,
+        }
+    )
+
+
+def test_find_items_selects_minimal_columns_and_excludes_meeting() -> None:
+    from core.prompt_intent import wants_structured_analysis
+
+    prompt = "이월예산은 많은데 당해집행이 없는 항목을 찾고 그 의미를 설명해줘"
+    assert wants_structured_analysis(prompt)
+
+    df = _sample_carryover_df()
+    plan = analysis_plan_from_dict(
+        {
+            "operation": "find_items",
+            "numeric_filters": [
+                {"column": "실행예산_이월예산", "op": "gt", "value": 0},
+                {"column": "집행계_당해집행", "op": "eq", "value": 0},
+            ],
+            "sort_by": ["실행예산_이월예산"],
+            "ascending": [False],
+            "output_columns": [
+                "비목분류",
+                "비용명_2",
+                "비용명",
+                "실행예산_이월예산",
+                "집행계_당해집행",
+                "집행계_합계",
+                "집행계_이월집행",
+            ],
+            "interpret": True,
+        },
+        available_columns=list(df.columns),
+    )
+    classified = classify_rows(df, dimension_columns=["비목분류", "비용명_2"])
+    result, _meta = execute_analysis_plan(classified, plan)
+
+    assert "회의비" not in set(result["비용명_2"].astype(str))
+    assert list(result["비용명_2"].astype(str).head(3)) == [
+        "국외여비",
+        "세미나비",
+        "재료비",
+    ]
+    assert "기타열A" not in result.columns
+    assert "계획예산" not in result.columns
+    assert "실행예산_당해예산" not in result.columns
+    assert set(result.columns) <= {
+        "비목분류",
+        "비용명",
+        "비용명_2",
+        "실행예산_이월예산",
+        "집행계_당해집행",
+        "집행계_합계",
+        "집행계_이월집행",
+    }
+    assert len(result) == 7
+
+
+def test_find_items_prefs_override_wide_llm_plan() -> None:
+    from core.analysis_plan_builder import build_analysis_plan
+
+    df = _sample_carryover_df()
+
+    def fake_chat_json(prompt: str, **kwargs):
+        # LLM이 전체 열을 고르려 해도 prefs가 축소해야 함
+        return {
+            "steps": [
+                {"op": "annotate_row_types"},
+                {"op": "filter_rows", "include_row_types": ["detail"]},
+                {"op": "select_columns", "columns": list(df.columns)},
+            ],
+            "interpret": False,
+        }
+
+    plan = build_analysis_plan(
+        "이월예산은 많은데 당해집행이 없는 항목을 찾고 그 의미를 설명해줘",
+        df,
+        base_url="http://localhost:11434",
+        model="dummy",
+        chat_json_fn=fake_chat_json,
+    )
+    assert plan.interpret
+    assert any(s.op == "filter_rows" and s.payload.get("numeric_filters") for s in plan.steps)
+    select = next(s for s in plan.steps if s.op == "select_columns")
+    cols = select.payload["columns"]
+    assert "기타열A" not in cols
+    assert "실행예산_이월예산" in cols
+    assert "집행계_당해집행" in cols
+    assert len(cols) <= 8
+
+
+def test_condition_filter_projects_columns() -> None:
+    from core.value_filter import try_condition_row_filter
+
+    df = pd.DataFrame(
+        {
+            "비목분류": ["연구활동비", "연구활동비"],
+            "비용명": [222, 271],
+            "비용명_2": ["사무용소모품비", "국내여비"],
+            "실행예산_합계": [163_832, 806_700],
+            "집행계_합계": [0, 473_960],
+            "기타열": [9, 9],
+        }
+    )
+    result = try_condition_row_filter(
+        df, "집행계가 0인데 실행예산이 있는 행만 골라줘"
+    )
+    assert result is not None
+    assert "기타열" not in result.columns
+    assert "집행계_합계" in result.columns
+    assert "실행예산_합계" in result.columns
+
+
+def test_rate_vs_mean_below_average_on_twin() -> None:
+    from pathlib import Path
+
+    from core.excel_loader import load_excel
+    from core.pandasai_config import prepare_dataframe_for_ai
+    from core.prompt_intent import wants_structured_analysis
+
+    prompt = "비용명별 집행률을 구한 뒤 평균보다 낮은 항목만 표로 보여줘"
+    assert wants_structured_analysis(prompt)
+
+    path = Path(__file__).resolve().parents[1] / "data/uploads/03_트윈_예실대비표.xlsx"
+    if not path.is_file():
+        return
+    df = prepare_dataframe_for_ai(load_excel(path))
+    plan = analysis_plan_from_dict(
+        {
+            "operation": "rate_vs_mean",
+            "numerator": "집행계_합계",
+            "denominator": "실행예산_합계",
+            "relation": "below",
+            "interpret": False,
+        },
+        available_columns=list(df.columns),
+    )
+    assert any(s.op == "filter_vs_mean" for s in plan.steps)
+    assert not plan.interpret
+
+    classified = classify_rows(df, dimension_columns=["비용명", "비용명_2"])
+    result, meta = execute_analysis_plan(classified, plan)
+    assert len(result) == 9
+    assert "계획예산" not in result.columns
+    assert "집행률" in result.columns
+    names = set(result["비용명_2"].astype(str).str.strip())
+    assert names == {
+        "사무용소모품비",
+        "문헌구입비",
+        "국외여비",
+        "전문가활용비",
+        "세미나비",
+        "연구수당",
+        "회의비",
+        "재료비",
+        "네트워크사용료",
+    }
+    assert "내부인건비" not in names
+    assert "계약직내부인건비" not in names
+    assert "연구용SW활용비" not in names
+    assert "연구실 운영 소모성 경비" not in names
+    assert "과제이월액" not in names
+    mean = float((meta.get("vs_mean") or {})["mean"])
+    assert abs(mean - 0.2846) < 0.01
+    assert float(result["집행률"].max()) < mean
+
+
+def test_rate_vs_mean_prefs_override_wrong_plan() -> None:
+    from core.analysis_plan_builder import build_analysis_plan
+
+    df = pd.DataFrame(
+        {
+            "비용명": [1, 2],
+            "비용명_2": ["A", "B"],
+            "실행예산_합계": [100, 200],
+            "집행계_합계": [10, 20],
+            "계획예산": [100, 200],
+        }
+    )
+
+    def fake_chat_json(prompt: str, **kwargs):
+        return {
+            "operation": "group_comparison",
+            "group_column": "비용명_2",
+            "numerator": "계획예산",
+            "denominator": "계획예산",
+            "interpret": True,
+        }
+
+    plan = build_analysis_plan(
+        "비용명별 집행률을 구한 뒤 평균보다 낮은 항목만 표로 보여줘",
+        df,
+        base_url="http://localhost:11434",
+        model="dummy",
+        chat_json_fn=fake_chat_json,
+    )
+    assert any(s.op == "filter_vs_mean" for s in plan.steps)
+    derive = next(s for s in plan.steps if s.op == "derive_column")
+    assert derive.payload["expr"]["ratio"] == ["집행계_합계", "실행예산_합계"]
+    assert not plan.interpret
+
+
+
+def test_provisional_share_includes_ratio_column() -> None:
+    from pathlib import Path
+
+    from core.excel_loader import load_excel
+    from core.pandasai_config import prepare_dataframe_for_ai
+    from core.analysis_plan_builder import build_analysis_plan
+    from core.prompt_intent import wants_structured_analysis
+
+    prompt = "가집행금액이 있는 항목만 골라 당해누계에서 차지하는 비중을 계산해줘"
+    assert wants_structured_analysis(prompt)
+
+    path = Path(__file__).resolve().parents[1] / "data/uploads/03_트윈_예실대비표.xlsx"
+    if not path.is_file():
+        return
+    df = prepare_dataframe_for_ai(load_excel(path))
+
+    def fake_chat_json(prompt: str, **kwargs):
+        return {"steps": []}
+
+    plan = build_analysis_plan(
+        prompt,
+        df,
+        base_url="http://localhost:11434",
+        model="dummy",
+        chat_json_fn=fake_chat_json,
+    )
+    assert any(s.op == "derive_column" for s in plan.steps)
+    classified = classify_rows(df, dimension_columns=["비용명", "비용명_2"])
+    result, _ = execute_analysis_plan(classified, plan)
+    assert "비중" in result.columns
+    assert len(result) == 3
+    names = set(result["비용명_2"].astype(str).str.strip())
+    assert names == {"연구용SW활용비", "국내여비", "회의비"}
+    by_name = {
+        str(r["비용명_2"]).strip(): float(r["비중"]) for _, r in result.iterrows()
+    }
+    assert abs(by_name["연구용SW활용비"] - 17.15) < 0.05
+    assert abs(by_name["국내여비"] - 39.02) < 0.05
+    assert abs(by_name["회의비"] - 40.32) < 0.05

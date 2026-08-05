@@ -7,6 +7,7 @@ import pandas as pd
 
 from core.column_match import resolve_metric_column
 from core.constants import BUDGET_FOOTER_LABELS
+from core.analysis_ops import project_readable_columns
 from core.pandasai_config import exclude_total_rows, prepare_dataframe_for_ai
 from core.prompt_intent import is_condition_filter_request
 from core.summary_utils import cell_text, compact, is_excluded_summary_label
@@ -38,8 +39,23 @@ def try_condition_row_filter(
     zero_vals = pd.to_numeric(work[zero_col], errors="coerce")
     exists_vals = pd.to_numeric(work[exists_col], errors="coerce")
     mask = (zero_vals.fillna(1) == 0) & (exists_vals.fillna(0) > 0)
-    result = work.loc[mask]
-    return result.reset_index(drop=True)
+    result = work.loc[mask].copy()
+    if re.search(r"(많|큰|상위|높은)", prompt):
+        result = result.sort_values(exists_col, ascending=False, kind="mergesort")
+    related = [
+        c
+        for c in (
+            "집행계_합계",
+            "집행계_이월집행",
+            "실행예산_합계",
+            "예산잔액_합계",
+        )
+        if c in result.columns and c not in {zero_col, exists_col}
+    ][:2]
+    return project_readable_columns(
+        result.reset_index(drop=True),
+        keep_columns=[exists_col, zero_col, *related],
+    )
 
 
 def _parse_zero_and_exists_columns(

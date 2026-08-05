@@ -166,6 +166,26 @@ def _build_reply(
     if plan.criteria_note:
         parts.append(plan.criteria_note)
     meta = exec_meta or {}
+    corr = meta.get("correlation") or {}
+    if corr:
+        r = corr.get("pearson_r")
+        rho = corr.get("spearman_rho")
+        strength = corr.get("strength") or ""
+        if r is not None:
+            parts.append(f"Pearson r={float(r):+.2f}")
+        if rho is not None:
+            parts.append(f"Spearman ρ={float(rho):+.2f}")
+        if strength:
+            parts.append(strength)
+        both_n = corr.get("both_positive_count")
+        if both_n is not None:
+            parts.append(f"둘 다 양수 {int(both_n)}행")
+    vs_mean = meta.get("vs_mean") or {}
+    if vs_mean and vs_mean.get("mean") is not None:
+        mean = float(vs_mean["mean"])
+        rel = str(vs_mean.get("relation") or "below")
+        label = "미만" if rel.startswith("below") else "초과"
+        parts.append(f"평균 {mean:.2%} {label}")
     comparisons = meta.get("comparison") or []
     if comparisons:
         first = comparisons[0]

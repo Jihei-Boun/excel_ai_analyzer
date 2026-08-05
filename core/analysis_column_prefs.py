@@ -1,4 +1,4 @@
-"""집행률·효율 비교용 컬럼 선호 (LLM 계획 보정)."""
+"""분석 계획 컬럼 선호·보정 (집행률 / 항목 탐색)."""
 
 from __future__ import annotations
 
@@ -51,6 +51,10 @@ _CURRENT_YEAR_TOKENS = (
     "당년도",
 )
 
+_CARRYOVER_TOKENS = ("이월예산", "이월", "실행예산_이월")
+_ZERO_EXEC_TOKENS = ("당해집행", "당년도집행", "집행계_당해")
+_FIND_TOKENS = ("찾", "골라", "추출", "필터", "없는", "미집행")
+
 
 def is_execution_efficiency_prompt(prompt: str) -> bool:
     if not prompt:
@@ -65,6 +69,17 @@ def asks_current_year_scope(prompt: str) -> bool:
         return False
     compact = normalize_text(prompt)
     return any(normalize_text(tok) in compact for tok in _CURRENT_YEAR_TOKENS)
+
+
+def is_carryover_no_current_exec_prompt(prompt: str) -> bool:
+    """이월예산은 있는데 당해집행이 없는 항목 탐색 질의."""
+    if not prompt:
+        return False
+    compact = normalize_text(prompt)
+    has_carry = any(normalize_text(t) in compact for t in _CARRYOVER_TOKENS)
+    has_curr = any(normalize_text(t) in compact for t in _ZERO_EXEC_TOKENS)
+    has_find = any(t in prompt for t in _FIND_TOKENS) or "없" in prompt
+    return has_carry and has_curr and has_find
 
 
 def pick_execution_rate_columns(
@@ -87,6 +102,125 @@ def pick_execution_rate_columns(
     if not num or not den or num == den:
         return None
     return num, den
+
+
+def apply_analysis_column_prefs(
+    prompt: str,
+    data: dict[str, Any],
+    columns: list[str],
+) -> dict[str, Any]:
+    """도메인 질의에 맞춰 계획 JSON을 보정한다."""
+    data = apply_rate_vs_mean_prefs(prompt, data, columns)
+    if str((data or {}).get("operation") or "") in {
+        "rate_vs_mean",
+        "execution_rate_vs_mean",
+    }:
+        return data
+    data = apply_provisional_share_prefs(prompt, data, columns)
+    if str((data or {}).get("operation") or "") == "find_items" and (data or {}).get(
+        "rate_name"
+    ):
+        return data
+    data = apply_find_items_column_prefs(prompt, data, columns)
+    if str((data or {}).get("operation") or "") == "find_items":
+        return data
+    return apply_execution_rate_column_prefs(prompt, data, columns)
+
+
+def is_provisional_share_prompt(prompt: str) -> bool:
+    """가집행이 있는 항목의 당해누계 대비 비중 질의."""
+    if not prompt:
+        return False
+    compact = normalize_text(prompt)
+    has_prov = "가집행" in compact
+    has_base = "당해누계" in compact
+    has_share = any(tok in prompt for tok in ("비중", "비율", "대비", "차지"))
+    return bool(has_prov and has_base and has_share)
+
+
+def apply_provisional_share_prefs(
+    prompt: str,
+    data: dict[str, Any],
+    columns: list[str],
+) -> dict[str, Any]:
+    """가집행>0 항목에 가집행÷당해누계 비중(%) 열을 붙인다."""
+    if not isinstance(data, dict) or not is_provisional_share_prompt(prompt):
+        return data
+    colset = {str(c) for c in columns}
+    prov = _first_present(colset, ("가집행금액", "가집행"))
+    base = _first_present(colset, ("당해누계",))
+    if not prov or not base or prov == base:
+        return data
+
+    labels = [c for c in ("비목분류", "비용명_2", "비용명") if c in colset]
+    out = dict(data)
+    out["operation"] = "find_items"
+    out["numeric_filters"] = [{"column": prov, "op": "gt", "value": 0}]
+    out["numerator"] = prov
+    out["denominator"] = base
+    out["rate_name"] = "비중"
+    out["sort_by"] = ["비중"]
+    out["ascending"] = [True]
+    out["output_columns"] = [*labels, prov, base, "비중"]
+    out["interpret"] = True if "interpret" not in out else bool(out.get("interpret"))
+    out["criteria_note"] = (
+        f"{prov} > 0인 항목만 골라 {prov} ÷ {base} 비중(%)을 계산했습니다."
+    )
+    out.pop("steps", None)
+    return out
+
+
+def is_rate_vs_mean_prompt(prompt: str) -> bool:
+    """집행률(비율)을 구한 뒤 평균보다 낮/높은 항목 질의."""
+    if not prompt:
+        return False
+    has_rate = is_execution_efficiency_prompt(prompt) or ("비율" in prompt)
+    has_mean = "평균" in prompt
+    has_cmp = any(
+        tok in prompt
+        for tok in ("낮은", "높은", "미만", "이상", "아래", "위인", "작은", "큰")
+    )
+    return bool(has_rate and has_mean and has_cmp)
+
+
+def _wants_table_only(prompt: str) -> bool:
+    has_table = any(tok in prompt for tok in ("표로", "표 ", "표만", "보여줘", "리스트", "목록"))
+    has_explain = any(tok in prompt for tok in ("의미", "설명", "해석"))
+    return has_table and not has_explain
+
+
+def apply_rate_vs_mean_prefs(
+    prompt: str,
+    data: dict[str, Any],
+    columns: list[str],
+) -> dict[str, Any]:
+    """집행률 평균 비교 질의를 rate_vs_mean + 합계 열로 강제한다."""
+    if not isinstance(data, dict) or not is_rate_vs_mean_prompt(prompt):
+        return data
+    picked = pick_execution_rate_columns(prompt, columns)
+    if not picked:
+        return data
+    numerator, denominator = picked
+    relation = "above" if any(
+        tok in prompt for tok in ("높은", "이상", "초과", "큰")
+    ) and not any(tok in prompt for tok in ("낮은", "미만", "아래", "작은")) else "below"
+
+    colset = {str(c) for c in columns}
+    labels = [c for c in ("비용명", "비용명_2", "비목분류") if c in colset]
+    out = dict(data)
+    out["operation"] = "rate_vs_mean"
+    out["numerator"] = numerator
+    out["denominator"] = denominator
+    out["rate_name"] = "집행률"
+    out["relation"] = relation
+    out["output_columns"] = [*labels, denominator, numerator, "집행률"]
+    out["interpret"] = False if _wants_table_only(prompt) else bool(out.get("interpret", False))
+    out["criteria_note"] = (
+        f"집행률 = {numerator} ÷ {denominator} (분모 0 제외). "
+        f"산술평균보다 {'낮은' if relation == 'below' else '높은'} 항목만 표시."
+    )
+    out.pop("steps", None)
+    return out
 
 
 def apply_execution_rate_column_prefs(
@@ -123,15 +257,64 @@ def apply_execution_rate_column_prefs(
     return out
 
 
+def apply_find_items_column_prefs(
+    prompt: str,
+    data: dict[str, Any],
+    columns: list[str],
+) -> dict[str, Any]:
+    """이월>0 & 당해집행=0 탐색을 find_items + 최소 열로 보정한다."""
+    if not isinstance(data, dict) or not is_carryover_no_current_exec_prompt(prompt):
+        return data
+    colset = {str(c) for c in columns}
+    carry = _first_present(
+        colset,
+        ("실행예산_이월예산", "이월예산", "실행예산_이월"),
+    )
+    curr_exec = _first_present(
+        colset,
+        ("집행계_당해집행", "당년도집행", "당해집행"),
+    )
+    if not carry or not curr_exec:
+        return data
+
+    out = dict(data)
+    out["operation"] = "find_items"
+    out["numeric_filters"] = [
+        {"column": carry, "op": "gt", "value": 0},
+        {"column": curr_exec, "op": "eq", "value": 0},
+    ]
+    out["sort_by"] = [carry]
+    out["ascending"] = [False]
+    labels = [c for c in ("비목분류", "비용명_2", "비용명") if c in colset]
+    extras = [
+        c
+        for c in ("집행계_합계", "집행계_이월집행", "예산잔액_합계")
+        if c in colset and c not in {carry, curr_exec}
+    ][:2]
+    out["output_columns"] = [*labels, carry, curr_exec, *extras]
+    out["interpret"] = True
+    out["criteria_note"] = (
+        f"{carry} > 0 이고 {curr_exec} = 0인 세부 항목을 "
+        "관련 열만 골라 이월예산 큰 순으로 정렬했습니다."
+    )
+    # steps가 있으면 고수준으로 다시 컴파일되도록 비움
+    out.pop("steps", None)
+    return out
+
+
 def _first_present(columns: set[str], candidates: tuple[str, ...]) -> str | None:
     for name in candidates:
         if name in columns:
             return name
-    # 부분 일치 (예: 무언가_집행계_합계)
     for name in candidates:
         target = normalize_text(name)
         for col in columns:
             if target and target == normalize_text(col):
+                return col
+    for name in candidates:
+        target = normalize_text(name)
+        for col in columns:
+            if target and target in normalize_text(col):
                 return col
     return None
 
@@ -165,7 +348,6 @@ def _rewrite_steps_for_rate(
                         rate_name = str(prev.get("name") or rate_name)
                         break
                 wanted = [denominator, numerator, rate_name]
-                # 문자열 리스트인 경우
                 if metrics and all(isinstance(m, str) for m in metrics):
                     item["metrics"] = wanted
                 item["rate_columns"] = [rate_name]

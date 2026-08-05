@@ -1,4 +1,4 @@
-"""범용 분석 연산 — aggregate / ratio / compare / distribution."""
+"""범용 분석 연산 — aggregate / ratio / compare / distribution / correlation."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from core.summary_utils import cell_text
 from core.text_normalize import normalize_text
 
 AGGREGATE_FNS = frozenset({"sum", "mean", "min", "max", "count"})
+CORR_ZERO_EPS = 1e-12
 
 
 def ensure_row_types(
@@ -55,6 +56,126 @@ def apply_column_filters(
         mask = work[column].map(lambda v: normalize_text(cell_text(v)) in targets)
         work = work.loc[mask]
     return work
+
+
+NUMERIC_FILTER_OPS = frozenset({"eq", "ne", "gt", "gte", "lt", "lte"})
+
+
+def apply_numeric_filters(
+    df: pd.DataFrame,
+    numeric_filters: list[dict[str, Any]] | None,
+) -> pd.DataFrame:
+    """``[{column, op, value}]`` 수치 비교 필터. op: eq/ne/gt/gte/lt/lte."""
+    if not numeric_filters:
+        return df
+    work = df
+    for spec in numeric_filters:
+        if not isinstance(spec, dict):
+            continue
+        column = str(spec.get("column") or "")
+        op = str(spec.get("op") or spec.get("operator") or "").lower().strip()
+        if column not in work.columns or op not in NUMERIC_FILTER_OPS:
+            continue
+        try:
+            threshold = float(spec.get("value"))
+        except (TypeError, ValueError):
+            continue
+        series = pd.to_numeric(work[column], errors="coerce")
+        if op == "eq":
+            mask = series.fillna(threshold + 1) == threshold
+        elif op == "ne":
+            mask = series.fillna(threshold) != threshold
+        elif op == "gt":
+            mask = series.fillna(threshold) > threshold
+        elif op == "gte":
+            mask = series.fillna(threshold - 1) >= threshold
+        elif op == "lt":
+            mask = series.fillna(threshold) < threshold
+        else:  # lte
+            mask = series.fillna(threshold + 1) <= threshold
+        work = work.loc[mask]
+    return work
+
+
+def project_readable_columns(
+    df: pd.DataFrame,
+    *,
+    keep_columns: list[str] | None = None,
+    preferred_labels: tuple[str, ...] = (
+        "비목분류",
+        "비용명_2",
+        "비용명",
+        "항목명",
+        "항목",
+    ),
+) -> pd.DataFrame:
+    """식별·조건 확인에 필요한 열만 남긴다. keep가 없으면 라벨 열만."""
+    if df is None or df.empty:
+        return df
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def _add(col: str) -> None:
+        if col in df.columns and col not in seen:
+            ordered.append(col)
+            seen.add(col)
+
+    for col in preferred_labels:
+        _add(col)
+    for col in keep_columns or []:
+        _add(str(col))
+    if not ordered:
+        return df
+    return df.loc[:, ordered].copy()
+
+
+def filter_vs_mean(
+    df: pd.DataFrame,
+    *,
+    column: str,
+    relation: str = "below",
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """``column``의 산술평균과 비교해 행을 남긴다.
+
+    relation: below | above | below_or_equal | above_or_equal
+    결측은 비교·평균에서 제외한다.
+    """
+    if column not in df.columns:
+        raise ValueError(f"filter_vs_mean 컬럼 없음: {column}")
+    vals = pd.to_numeric(df[column], errors="coerce")
+    valid = vals.dropna()
+    if valid.empty:
+        return df.iloc[0:0].copy(), {
+            "column": column,
+            "mean": None,
+            "n_valid": 0,
+            "relation": relation,
+            "kept": 0,
+        }
+    mean = float(valid.mean())
+    rel = str(relation or "below").lower().strip()
+    if rel in {"below", "lt", "lower", "미만", "낮은"}:
+        mask = vals < mean
+        rel = "below"
+    elif rel in {"above", "gt", "higher", "초과", "높은"}:
+        mask = vals > mean
+        rel = "above"
+    elif rel in {"below_or_equal", "lte", "이하"}:
+        mask = vals <= mean
+        rel = "below_or_equal"
+    else:
+        mask = vals >= mean
+        rel = "above_or_equal"
+    mask = mask.fillna(False)
+    out = df.loc[mask].copy()
+    meta = {
+        "column": column,
+        "mean": mean,
+        "n_valid": int(len(valid)),
+        "relation": rel,
+        "kept": int(mask.sum()),
+    }
+    return out, meta
 
 
 def aggregate_groups(
@@ -369,6 +490,157 @@ def distribution_summary(
         },
     ]
     return pd.DataFrame(summary_rows), meta
+
+
+def correlation_of_columns(
+    df: pd.DataFrame,
+    *,
+    x_column: str,
+    y_column: str,
+    label_column: str | None = None,
+    methods: list[str] | None = None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """세부 행 기준 두 수치 열의 상관계수·분포 요약을 만든다.
+
+    비율(집행률)이나 그룹 집계가 아니라, 행 단위 Pearson/Spearman 상관이다.
+    분모 0 때문에 비율이 0이 되는 것과 무상관을 혼동하지 않는다.
+    """
+    if x_column not in df.columns or y_column not in df.columns:
+        raise ValueError(f"correlation 컬럼 없음: {x_column}, {y_column}")
+
+    wanted = {str(m).lower() for m in (methods or ["pearson", "spearman"])}
+    work = df.copy()
+    x = pd.to_numeric(work[x_column], errors="coerce")
+    y = pd.to_numeric(work[y_column], errors="coerce")
+    valid = x.notna() & y.notna()
+    xv = x.loc[valid]
+    yv = y.loc[valid]
+    n = int(len(xv))
+
+    pearson_r: float | None = None
+    spearman_rho: float | None = None
+    r_squared: float | None = None
+    if n >= 2:
+        if "pearson" in wanted:
+            pearson_r = _safe_corr(xv, yv)
+            if pearson_r is not None:
+                r_squared = float(pearson_r**2)
+        if "spearman" in wanted:
+            # scipy 없이: 순위 변환 후 Pearson (= Spearman ρ)
+            spearman_rho = _safe_corr(xv.rank(), yv.rank())
+
+    x_pos = xv > CORR_ZERO_EPS
+    y_pos = yv > CORR_ZERO_EPS
+    x_zero = xv.abs() <= CORR_ZERO_EPS
+    y_zero = yv.abs() <= CORR_ZERO_EPS
+    both_pos_mask = x_pos & y_pos
+    x_only_mask = x_pos & y_zero
+    y_only_mask = y_pos & x_zero
+    both_zero_mask = x_zero & y_zero
+
+    label_col = label_column if label_column and label_column in work.columns else None
+    if label_col is None:
+        candidates = [
+            c
+            for c in work.columns
+            if c not in META_COLUMNS_SET
+            and c not in {x_column, y_column}
+            and not pd.api.types.is_numeric_dtype(work[c])
+        ]
+        label_col = candidates[0] if candidates else None
+
+    both_pos_rows: list[dict[str, Any]] = []
+    if both_pos_mask.any():
+        idx = xv.index[both_pos_mask]
+        for i in idx:
+            row: dict[str, Any] = {
+                x_column: float(xv.loc[i]),
+                y_column: float(yv.loc[i]),
+            }
+            if label_col is not None:
+                row[label_col] = cell_text(work.loc[i, label_col])
+            both_pos_rows.append(row)
+
+    # 양수 교집합만으로의 참고 상관 (표본이 작으면 해석 시 경고)
+    both_pos_r: float | None = None
+    both_pos_n = int(both_pos_mask.sum())
+    if both_pos_n >= 2 and "pearson" in wanted:
+        both_pos_r = _safe_corr(xv.loc[both_pos_mask], yv.loc[both_pos_mask])
+
+    summary_rows: list[dict[str, Any]] = [
+        {"지표": "Pearson_r", "값": pearson_r},
+        {"지표": "Spearman_rho", "값": spearman_rho},
+        {"지표": "R2", "값": r_squared},
+        {"지표": "표본수", "값": n},
+        {"지표": f"{x_column}_합계", "값": float(xv.sum()) if n else 0.0},
+        {"지표": f"{y_column}_합계", "값": float(yv.sum()) if n else 0.0},
+        {"지표": f"{x_column}_양수행", "값": int(x_pos.sum())},
+        {"지표": f"{y_column}_양수행", "값": int(y_pos.sum())},
+        {"지표": "둘다_양수", "값": both_pos_n},
+        {"지표": f"{x_column}만_양수", "값": int(x_only_mask.sum())},
+        {"지표": f"{y_column}만_양수", "값": int(y_only_mask.sum())},
+        {"지표": "둘다_0", "값": int(both_zero_mask.sum())},
+    ]
+    if both_pos_r is not None:
+        summary_rows.append({"지표": "둘다_양수_Pearson_r", "값": both_pos_r})
+
+    meta: dict[str, Any] = {
+        "x_column": x_column,
+        "y_column": y_column,
+        "label_column": label_col,
+        "n": n,
+        "pearson_r": pearson_r,
+        "spearman_rho": spearman_rho,
+        "r_squared": r_squared,
+        "x_sum": float(xv.sum()) if n else 0.0,
+        "y_sum": float(yv.sum()) if n else 0.0,
+        "x_positive_count": int(x_pos.sum()),
+        "y_positive_count": int(y_pos.sum()),
+        "both_positive_count": both_pos_n,
+        "x_only_positive_count": int(x_only_mask.sum()),
+        "y_only_positive_count": int(y_only_mask.sum()),
+        "both_zero_count": int(both_zero_mask.sum()),
+        "both_positive_rows": both_pos_rows[:20],
+        "both_positive_pearson_r": both_pos_r,
+        "strength": _correlation_strength(pearson_r),
+    }
+    warnings: list[str] = []
+    if n < 3:
+        warnings.append(f"상관 표본이 {n}행으로 매우 작습니다.")
+    if both_pos_n < 5 and both_pos_n > 0:
+        warnings.append(
+            f"두 열 모두 양수인 행이 {both_pos_n}개뿐입니다. "
+            "교집합만의 강한 상관을 전체 결론으로 쓰면 안 됩니다."
+        )
+    if both_pos_n == 0:
+        warnings.append("두 열 모두 양수인 행이 없어 동시 발생 패턴이 거의 없습니다.")
+    meta["warnings"] = warnings
+    return pd.DataFrame(summary_rows), meta
+
+
+def _safe_corr(left: pd.Series, right: pd.Series) -> float | None:
+    """Pearson 상관. 분산 0·결측이면 None (scipy 불필요)."""
+    if len(left) < 2 or len(right) < 2:
+        return None
+    value = left.corr(right, method="pearson")
+    if value is None or pd.isna(value):
+        return None
+    return float(value)
+
+
+def _correlation_strength(r: float | None) -> str:
+    if r is None or pd.isna(r):
+        return "계산불가"
+    ar = abs(float(r))
+    if ar < 0.1:
+        return "무상관~매우약함"
+    if ar < 0.3:
+        return "약함"
+    if ar < 0.5:
+        return "보통"
+    if ar < 0.7:
+        return "뚜렷"
+    return "강함"
 
 
 def _normalize_metrics(

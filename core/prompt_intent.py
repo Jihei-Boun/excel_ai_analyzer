@@ -113,9 +113,23 @@ _STRUCTURED_ANALYSIS_KEYWORDS = (
     "집행률",
     "대비",
     "분석해",
+    "상관",
+    "correlation",
+    "pearson",
+    "spearman",
     "compare",
     "efficiency",
     "rate",
+    "찾아",
+    "찾고",
+    "의미",
+    "설명해",
+    "미집행",
+    "없는 항목",
+    "평균",
+    "비중",
+    "골라",
+    "계산해",
 )
 
 

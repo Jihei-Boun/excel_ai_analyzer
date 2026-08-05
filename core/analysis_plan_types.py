@@ -19,10 +19,12 @@ SUPPORTED_ANALYSIS_OPS = frozenset(
         "ratio_of_aggregates",
         "compare_groups",
         "distribution_summary",
+        "correlation",
+        "filter_vs_mean",
     }
 )
 
-SUPPORTED_DERIVE_EXPRS = frozenset({"diff", "abs", "abs_diff", "ratio"})
+SUPPORTED_DERIVE_EXPRS = frozenset({"diff", "abs", "abs_diff", "ratio", "percent_ratio"})
 
 ROW_TYPES = frozenset({"detail", "subtotal", "total", "footer", "blank"})
 
@@ -36,6 +38,13 @@ HIGH_LEVEL_OPERATIONS = frozenset(
         "group_comparison",
         "compare_groups",
         "execution_rate_compare",
+        "correlation",
+        "correlation_analysis",
+        "find_items",
+        "item_filter",
+        "condition_select",
+        "rate_vs_mean",
+        "execution_rate_vs_mean",
     }
 )
 
@@ -131,7 +140,15 @@ class AnalysisPlan:
     @property
     def uses_aggregate_ops(self) -> bool:
         return any(
-            s.op in {"aggregate", "ratio_of_aggregates", "compare_groups", "distribution_summary"}
+            s.op
+            in {
+                "aggregate",
+                "ratio_of_aggregates",
+                "compare_groups",
+                "distribution_summary",
+                "correlation",
+                "filter_vs_mean",
+            }
             for s in self.steps
         )
 
@@ -188,11 +205,17 @@ def analysis_plan_from_dict(
         if "interpret" in compiled
         else data.get("interpret", False)
     )
-    # 비교·해석 고수준 연산은 기본 해석 ON
+    # 비교·상관·항목탐색 고수준은 기본 해석 ON.
+    # rate_vs_mean은 표 요청이 많아 기본 OFF (data/compiled에서 명시 가능).
     if str(data.get("operation") or "") in {
         "group_comparison",
         "compare_groups",
         "execution_rate_compare",
+        "correlation",
+        "correlation_analysis",
+        "find_items",
+        "item_filter",
+        "condition_select",
     }:
         interpret = True if "interpret" not in data else interpret
 
@@ -222,7 +245,314 @@ def _compile_high_level(data: dict[str, Any], columns: set[str]) -> dict[str, An
         return _compile_top_n_difference(data, columns)
     if operation in {"group_comparison", "compare_groups", "execution_rate_compare"}:
         return _compile_group_comparison(data, columns)
+    if operation in {"correlation", "correlation_analysis"}:
+        return _compile_correlation(data, columns)
+    if operation in {"find_items", "item_filter", "condition_select"}:
+        return _compile_find_items(data, columns)
+    if operation in {"rate_vs_mean", "execution_rate_vs_mean"}:
+        return _compile_rate_vs_mean(data, columns)
     return {}
+
+
+def _compile_rate_vs_mean(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
+    """행단위 비율 → 분모 0 제외 → 평균 대비 필터 → 최소 열."""
+    numerator = str(data.get("numerator") or data.get("executed_column") or "")
+    denominator = str(data.get("denominator") or data.get("budget_column") or "")
+    if numerator not in columns or denominator not in columns:
+        return {}
+
+    rate_name = str(data.get("rate_name") or "집행률").strip() or "집행률"
+    relation = str(data.get("relation") or data.get("compare") or "below").lower()
+    if any(tok in relation for tok in ("above", "높", "이상", "초과", "gt")):
+        relation = "above"
+    else:
+        relation = "below"
+
+    label_prefs = [
+        c
+        for c in ("비용명", "비용명_2", "비목분류", "항목명", "항목")
+        if c in columns
+    ]
+    explicit = [
+        str(c)
+        for c in (data.get("output_columns") or data.get("select_columns") or [])
+        if str(c) in columns or str(c) == rate_name
+    ]
+    out_cols: list[str] = []
+    seen: set[str] = set()
+    for col in [*label_prefs, denominator, numerator, rate_name, *explicit]:
+        if col == rate_name or col in columns:
+            if col not in seen:
+                out_cols.append(col)
+                seen.add(col)
+    # 가독성: 과도한 열 제거 (라벨+분모+분자+비율 위주)
+    if not explicit:
+        keep_max = set(label_prefs) | {denominator, numerator, rate_name}
+        out_cols = [c for c in out_cols if c in keep_max]
+
+    sort_asc = relation == "below"
+    note = str(
+        data.get("criteria_note")
+        or (
+            f"{rate_name} = {numerator} ÷ {denominator} "
+            f"(분모 0 제외). 산술평균보다 "
+            f"{'낮은' if relation == 'below' else '높은'} 항목만 표시."
+        )
+    )
+    # 표 요청은 기본 해석 OFF
+    if "interpret" in data:
+        interpret = bool(data.get("interpret"))
+    else:
+        interpret = False
+
+    steps: list[dict[str, Any]] = [
+        {"op": "annotate_row_types"},
+        {
+            "op": "filter_rows",
+            "include_row_types": ["detail"],
+            "drop_blank_dimensions": True,
+            "exclude_uncertain": False,
+            "numeric_filters": [
+                {"column": denominator, "op": "gt", "value": 0},
+            ],
+        },
+        {
+            "op": "derive_column",
+            "name": rate_name,
+            "expr": {"ratio": [numerator, denominator]},
+        },
+        {
+            "op": "filter_vs_mean",
+            "column": rate_name,
+            "relation": relation,
+        },
+        {
+            "op": "sort",
+            "by": [rate_name],
+            "ascending": [sort_asc],
+        },
+        {"op": "select_columns", "columns": out_cols},
+    ]
+    return {
+        "steps": steps,
+        "criteria_note": note,
+        "dimension_columns": [c for c in ("비용명_2", "비용명") if c in columns][:1],
+        "output_columns": out_cols,
+        "interpret": interpret,
+    }
+
+def _compile_find_items(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
+    """세부 항목 조건 탐색: 수치 필터 → (선택) 비중 파생 → 필요 열만 선택 → 정렬."""
+    numeric_filters = _sanitize_numeric_filters(
+        {"numeric_filters": data.get("numeric_filters") or data.get("conditions") or []},
+        columns,
+    )
+    if not numeric_filters:
+        return {}
+
+    label_prefs = [
+        c
+        for c in (
+            "비목분류",
+            "비용명_2",
+            "비용명",
+            "항목명",
+            "항목",
+        )
+        if c in columns
+    ]
+    metric_cols = [str(f["column"]) for f in numeric_filters]
+
+    numerator = str(data.get("numerator") or "")
+    denominator = str(data.get("denominator") or "")
+    rate_name = str(data.get("rate_name") or data.get("ratio_name") or "").strip()
+    # rate_name이 명시된 경우만 비중 열을 만든다 (오탐 방지)
+    derive_ratio = bool(
+        rate_name and numerator in columns and denominator in columns
+    )
+
+    explicit_out = [
+        str(c)
+        for c in (data.get("output_columns") or data.get("select_columns") or [])
+        if str(c) in columns or (derive_ratio and str(c) == rate_name)
+    ]
+    if explicit_out:
+        out_cols = []
+        seen: set[str] = set()
+        for col in [*label_prefs, *metric_cols, *explicit_out]:
+            if (col in columns or (derive_ratio and col == rate_name)) and col not in seen:
+                out_cols.append(col)
+                seen.add(col)
+    else:
+        related_hints = (
+            "집행계_합계",
+            "집행계_이월집행",
+            "집행계_당해집행",
+            "실행예산_이월예산",
+            "실행예산_당해예산",
+            "예산잔액_합계",
+            "당년도집행",
+            "당해누계",
+            "가집행금액",
+        )
+        related = [c for c in related_hints if c in columns and c not in metric_cols]
+        out_cols = []
+        seen = set()
+        related_kept = 0
+        for col in [*label_prefs, *metric_cols, *related]:
+            if col in seen or col not in columns:
+                continue
+            if col in related:
+                if related_kept >= 2:
+                    continue
+                related_kept += 1
+            out_cols.append(col)
+            seen.add(col)
+
+    if derive_ratio:
+        for col in (numerator, denominator, rate_name):
+            if col and col not in out_cols:
+                out_cols.append(col)
+
+    sort_by = data.get("sort_by") or data.get("sort") or []
+    if isinstance(sort_by, str):
+        sort_by = [sort_by]
+    sort_by = [
+        str(c)
+        for c in sort_by
+        if str(c) in columns or (derive_ratio and str(c) == rate_name)
+    ]
+    if not sort_by:
+        if derive_ratio and rate_name:
+            sort_by = [rate_name]
+        else:
+            for filt in numeric_filters:
+                if str(filt.get("op")) in {"gt", "gte"}:
+                    sort_by = [str(filt["column"])]
+                    break
+            if not sort_by:
+                sort_by = [str(numeric_filters[0]["column"])]
+
+    ascending = data.get("ascending", False)
+    if isinstance(ascending, bool):
+        ascending = [ascending] * len(sort_by)
+    elif isinstance(ascending, list):
+        ascending = [bool(x) for x in ascending]
+        while len(ascending) < len(sort_by):
+            ascending.append(False)
+        ascending = ascending[: len(sort_by)]
+    else:
+        ascending = [False] * len(sort_by)
+
+    steps: list[dict[str, Any]] = [
+        {"op": "annotate_row_types"},
+        {
+            "op": "filter_rows",
+            "include_row_types": ["detail"],
+            "drop_blank_dimensions": True,
+            "exclude_uncertain": False,
+            "numeric_filters": numeric_filters,
+        },
+    ]
+    if derive_ratio:
+        steps.append(
+            {
+                "op": "derive_column",
+                "name": rate_name,
+                "expr": {"percent_ratio": [numerator, denominator]},
+            }
+        )
+        steps.append(
+            {
+                "op": "filter_rows",
+                "include_row_types": ["detail"],
+                "drop_blank_dimensions": False,
+                "numeric_filters": [
+                    {"column": denominator, "op": "gt", "value": 0},
+                ],
+            }
+        )
+    steps.extend(
+        [
+            {"op": "sort", "by": sort_by, "ascending": ascending},
+            {"op": "select_columns", "columns": out_cols},
+        ]
+    )
+    note = str(
+        data.get("criteria_note")
+        or (
+            f"조건에 맞는 세부 항목만 추리고 {rate_name}={numerator}÷{denominator}(%)를 표시했습니다."
+            if derive_ratio
+            else "조건에 맞는 세부 항목만 추리고 관련 열만 표시했습니다."
+        )
+    )
+    interpret = True if "interpret" not in data else bool(data.get("interpret"))
+    return {
+        "steps": steps,
+        "criteria_note": note,
+        "dimension_columns": label_prefs[:1],
+        "output_columns": out_cols,
+        "interpret": interpret,
+    }
+
+
+
+def _compile_correlation(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
+    """세부 행 기준 두 수치 열 상관분석 계획."""
+    x_col = str(data.get("x_column") or data.get("column_x") or "")
+    y_col = str(data.get("y_column") or data.get("column_y") or "")
+    value_cols = data.get("value_columns") or data.get("columns") or []
+    if isinstance(value_cols, str):
+        value_cols = [value_cols]
+    value_cols = [str(c) for c in value_cols if str(c) in columns]
+    if (not x_col or x_col not in columns) and len(value_cols) >= 2:
+        x_col, y_col = value_cols[0], value_cols[1]
+    if x_col not in columns or y_col not in columns:
+        return {}
+
+    label_col = str(data.get("label_column") or data.get("item_column") or "")
+    if label_col not in columns:
+        dims = [str(c) for c in (data.get("dimension_columns") or []) if str(c) in columns]
+        label_col = dims[-1] if dims else ""
+
+    methods = data.get("methods") or ["pearson", "spearman"]
+    if isinstance(methods, str):
+        methods = [methods]
+    methods = [str(m) for m in methods if str(m).strip()]
+
+    drop_blank = True
+    exclude = data.get("exclude_rows") if isinstance(data.get("exclude_rows"), dict) else {}
+    if "blank_dimensions" in exclude:
+        drop_blank = bool(exclude.get("blank_dimensions"))
+
+    steps: list[dict[str, Any]] = [
+        {"op": "annotate_row_types"},
+        {
+            "op": "filter_rows",
+            "include_row_types": ["detail"],
+            "drop_blank_dimensions": drop_blank,
+            "exclude_uncertain": False,
+        },
+        {
+            "op": "correlation",
+            "x_column": x_col,
+            "y_column": y_col,
+            "label_column": label_col or None,
+            "methods": methods or ["pearson", "spearman"],
+        },
+    ]
+    note = str(
+        data.get("criteria_note")
+        or f"세부 행 기준 {x_col}와 {y_col}의 상관계수(Pearson/Spearman)를 계산했습니다."
+    )
+    interpret = True if "interpret" not in data else bool(data.get("interpret"))
+    return {
+        "steps": steps,
+        "criteria_note": note,
+        "dimension_columns": [],
+        "output_columns": ["지표", "값"],
+        "interpret": interpret,
+    }
 
 
 def _compile_top_n_difference(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
@@ -416,6 +746,7 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
                 },
                 columns,
             )
+        numeric_filters = _sanitize_numeric_filters(item, columns)
         return AnalysisStep(
             op,
             {
@@ -424,6 +755,7 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
                 "exclude_uncertain": bool(item.get("exclude_uncertain", False)),
                 "dimension_columns": dim_cols,
                 "column_filters": column_filters,
+                "numeric_filters": numeric_filters,
             },
         )
 
@@ -476,7 +808,7 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
         operands = [str(x) for x in operands]
         if kind == "abs" and len(operands) != 1:
             return None
-        if kind in {"diff", "abs_diff", "ratio"} and len(operands) != 2:
+        if kind in {"diff", "abs_diff", "ratio", "percent_ratio"} and len(operands) != 2:
             return None
         if any(opnd not in columns for opnd in operands):
             return None
@@ -597,6 +929,41 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
             },
         )
 
+    if op == "correlation":
+        x_col = str(item.get("x_column") or item.get("column_x") or "")
+        y_col = str(item.get("y_column") or item.get("column_y") or "")
+        value_cols = item.get("value_columns") or item.get("columns") or []
+        if isinstance(value_cols, str):
+            value_cols = [value_cols]
+        if (not x_col or x_col not in columns) and isinstance(value_cols, list):
+            valid = [str(c) for c in value_cols if str(c) in columns]
+            if len(valid) >= 2:
+                x_col, y_col = valid[0], valid[1]
+        if x_col not in columns or y_col not in columns:
+            return None
+        label_col = str(item.get("label_column") or item.get("item_column") or "")
+        methods = item.get("methods") or ["pearson", "spearman"]
+        if isinstance(methods, str):
+            methods = [methods]
+        return AnalysisStep(
+            op,
+            {
+                "x_column": x_col,
+                "y_column": y_col,
+                "label_column": label_col if label_col in columns else None,
+                "methods": [str(m) for m in methods if str(m).strip()]
+                or ["pearson", "spearman"],
+            },
+        )
+
+    if op == "filter_vs_mean":
+        # 파생열(집행률 등)일 수 있어 원본 columns 소속은 강제하지 않는다.
+        column = str(item.get("column") or item.get("name") or "").strip()
+        if not column:
+            return None
+        relation = str(item.get("relation") or item.get("compare") or "below")
+        return AnalysisStep(op, {"column": column, "relation": relation})
+
     return None
 
 
@@ -620,4 +987,51 @@ def _sanitize_column_filters(
         values = [str(v) for v in values if str(v).strip()]
         if values:
             out.append({"column": col, "values": values})
+    return out
+
+
+def _sanitize_numeric_filters(
+    item: dict[str, Any],
+    columns: set[str],
+) -> list[dict[str, Any]]:
+    from core.analysis_ops import NUMERIC_FILTER_OPS
+
+    raw = item.get("numeric_filters") or item.get("conditions") or []
+    if not isinstance(raw, list):
+        return []
+    op_aliases = {
+        "==": "eq",
+        "=": "eq",
+        "!=": "ne",
+        "<>": "ne",
+        ">": "gt",
+        ">=": "gte",
+        "<": "lt",
+        "<=": "lte",
+        "eq": "eq",
+        "ne": "ne",
+        "gt": "gt",
+        "gte": "gte",
+        "lt": "lt",
+        "lte": "lte",
+        "equal": "eq",
+        "greater": "gt",
+        "less": "lt",
+    }
+    out: list[dict[str, Any]] = []
+    for spec in raw:
+        if not isinstance(spec, dict):
+            continue
+        col = str(spec.get("column") or "")
+        if col not in columns:
+            continue
+        raw_op = str(spec.get("op") or spec.get("operator") or "").strip().lower()
+        op = op_aliases.get(raw_op, raw_op)
+        if op not in NUMERIC_FILTER_OPS:
+            continue
+        try:
+            value = float(spec.get("value"))
+        except (TypeError, ValueError):
+            continue
+        out.append({"column": col, "op": op, "value": value})
     return out

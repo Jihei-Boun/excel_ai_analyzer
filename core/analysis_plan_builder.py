@@ -8,7 +8,7 @@ from typing import Any, Callable
 import pandas as pd
 
 from core.analysis_plan_types import AnalysisPlan, analysis_plan_from_dict
-from core.analysis_column_prefs import apply_execution_rate_column_prefs
+from core.analysis_column_prefs import apply_analysis_column_prefs
 from core.llm_client import chat_json
 from core.row_classify import classification_summary
 from core.schema_infer import build_frame_inventory, semantic_hints_text
@@ -37,9 +37,11 @@ def build_analysis_plan(
         "Do NOT write pandas code. Do NOT invent columns that are not in the inventory. "
         "Prefer a pipeline of atomic steps. Allowed ops: "
         "annotate_row_types, filter_rows, select_columns, derive_column, sort, limit, "
-        "drop_columns, aggregate, ratio_of_aggregates, compare_groups, distribution_summary. "
-        "filter_rows may include include_row_types and column_filters "
-        "[{column, values}] for label membership. "
+        "drop_columns, aggregate, ratio_of_aggregates, compare_groups, "
+        "distribution_summary, correlation, filter_vs_mean. "
+        "filter_rows may include include_row_types, column_filters "
+        "[{column, values}] for label membership, and numeric_filters "
+        "[{column, op, value}] where op is eq|ne|gt|gte|lt|lte. "
         "aggregate: group_by, metrics[{column, fn}], prefer_subtotals(bool), include_groups. "
         "When prefer_subtotals=true, use trustworthy subtotal rows if present; "
         "otherwise sum detail rows. Never double-count subtotals with details. "
@@ -47,11 +49,34 @@ def build_analysis_plan(
         "(NOT the mean of row ratios). Apply after aggregate. "
         "compare_groups: group_column, groups, metrics, rate_columns. "
         "distribution_summary: budget_column, executed_column, optional group_column/group_value. "
+        "correlation: x_column, y_column, optional label_column, methods "
+        "— row-level Pearson/Spearman on detail rows (NOT a ratio, NOT group aggregate). "
+        "filter_vs_mean: column, relation(below|above) — keep rows vs arithmetic mean. "
         "For ranking by 'largest difference' / '차이가 큰', use abs_diff and descending sort, "
         "and set criteria_note explaining absolute difference. "
         "For '초과' / '더 많이 집행' use directional diff (e.g. executed - planned). "
         "For '부족' / '미집행' use the opposite direction. "
-        "For comparing categories / execution efficiency / 집행률 / 집행효율 / 해석: "
+        "For '상관' / '상관관계' / 'correlation' / Pearson / Spearman: "
+        "MUST use operation='correlation' with x_column, y_column, label_column "
+        "(detail item name like 비용명), interpret=true. "
+        "Never answer correlation with group_comparison, ratio_of_aggregates, "
+        "or 가집행_대비_집행율 style ratios. Zero denominator is not correlation. "
+        "For finding items by numeric conditions (많다/없는/0/=0/>0) and explaining: "
+        "MUST use operation='find_items' with numeric_filters, sort_by, "
+        "output_columns (ONLY labels + condition columns + 1-2 related metrics — "
+        "NEVER return all source columns), interpret=true when 의미/설명 asked. "
+        "Example: 이월예산 많은데 당해집행 없는 항목 → "
+        "numeric_filters=[{실행예산_이월예산,gt,0},{집행계_당해집행,eq,0}], "
+        "sort_by=[실행예산_이월예산] descending, "
+        "output_columns=[비목분류,비용명_2,비용명,실행예산_이월예산,집행계_당해집행,"
+        "집행계_합계,집행계_이월집행]. "
+        "For 비용명별/항목별 집행률 then 평균보다 낮은/높은 항목 only: "
+        "MUST use operation='rate_vs_mean' with numerator, denominator, relation, "
+        "interpret=false when user asks for a table. "
+        "Default: numerator=집행계_합계, denominator=실행예산_합계. "
+        "Exclude denominator==0 from rate and mean. "
+        "Do NOT use group_comparison or 계획예산 for this. "
+        "For comparing categories / execution efficiency between groups / 해석: "
         "prefer operation='group_comparison' with group_column, groups, "
         "numerator, denominator, rate_name, prefer_subtotals=true, interpret=true. "
         "Default execution rate columns when present: "
@@ -63,7 +88,8 @@ def build_analysis_plan(
         "annotate_row_types then filter_rows with include_row_types=['detail'] "
         "and drop_blank_dimensions=true. "
         "You may return compact high-level forms: "
-        "operation='top_n_difference' or operation='group_comparison'. "
+        "operation='top_n_difference', operation='group_comparison', "
+        "operation='correlation', operation='find_items', or operation='rate_vs_mean'. "
         "Return ONLY a JSON object."
     )
 
@@ -78,7 +104,13 @@ def build_analysis_plan(
             "2) operation=top_n_difference with dimension_columns, value_columns, "
             "difference_mode (absolute|signed), sort, limit, exclude_rows, criteria_note\n"
             "3) operation=group_comparison with group_column, groups, "
-            "numerator, denominator, rate_name, prefer_subtotals, criteria_note, interpret"
+            "numerator, denominator, rate_name, prefer_subtotals, criteria_note, interpret\n"
+            "4) operation=correlation with x_column, y_column, label_column, "
+            "methods, criteria_note, interpret\n"
+            "5) operation=find_items with numeric_filters[{column,op,value}], "
+            "sort_by, output_columns (minimal), criteria_note, interpret\n"
+            "6) operation=rate_vs_mean with numerator, denominator, relation "
+            "(below|above), rate_name, output_columns (minimal), interpret"
         ),
     ]
     hint = semantic_hints_text(use_budget_profile=use_budget_profile)
@@ -96,5 +128,5 @@ def build_analysis_plan(
         base_url=base_url,
         model=model,
     )
-    data = apply_execution_rate_column_prefs(prompt, data, columns)
+    data = apply_analysis_column_prefs(prompt, data, columns)
     return analysis_plan_from_dict(data, available_columns=columns)

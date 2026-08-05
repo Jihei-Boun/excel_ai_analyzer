@@ -9,9 +9,12 @@ import pandas as pd
 from core.analysis_ops import (
     aggregate_groups,
     apply_column_filters,
+    apply_numeric_filters,
     compare_groups,
+    correlation_of_columns,
     distribution_summary,
     ensure_row_types,
+    filter_vs_mean,
     ratio_of_columns,
 )
 from core.analysis_plan_types import META_COLUMNS, AnalysisPlan, AnalysisStep
@@ -42,7 +45,14 @@ def execute_analysis_plan(
         for key, value in step_meta.items():
             if key == "warnings" and isinstance(value, list):
                 meta["warnings"].extend(value)
-            elif key in {"comparison", "structured", "aggregate_sources", "distribution"}:
+            elif key in {
+                "comparison",
+                "structured",
+                "aggregate_sources",
+                "distribution",
+                "correlation",
+                "vs_mean",
+            }:
                 meta[key] = value
             elif key == "aggregate_warnings" and isinstance(value, list):
                 meta["warnings"].extend(value)
@@ -150,6 +160,25 @@ def _run_step(
         )
         return result, {"distribution": dist_meta}
 
+    if op == "correlation":
+        result, corr_meta = correlation_of_columns(
+            df,
+            x_column=str(step.payload.get("x_column") or ""),
+            y_column=str(step.payload.get("y_column") or ""),
+            label_column=step.payload.get("label_column"),
+            methods=list(step.payload.get("methods") or []) or None,
+        )
+        warnings = list(corr_meta.get("warnings") or [])
+        return result, {"correlation": corr_meta, "warnings": warnings}
+
+    if op == "filter_vs_mean":
+        result, vs_meta = filter_vs_mean(
+            df,
+            column=str(step.payload.get("column") or ""),
+            relation=str(step.payload.get("relation") or "below"),
+        )
+        return result, {"vs_mean": vs_meta}
+
     raise ValueError(f"지원하지 않는 연산: {op!r}")
 
 
@@ -187,7 +216,8 @@ def _filter_rows(
                 mask &= has_label
 
     filtered = work.loc[mask].copy()
-    return apply_column_filters(filtered, payload.get("column_filters"))
+    filtered = apply_column_filters(filtered, payload.get("column_filters"))
+    return apply_numeric_filters(filtered, payload.get("numeric_filters"))
 
 
 def _derive_column(df: pd.DataFrame, payload: dict[str, Any]) -> pd.DataFrame:
@@ -210,7 +240,7 @@ def _derive_column(df: pd.DataFrame, payload: dict[str, Any]) -> pd.DataFrame:
         work[name] = pd.to_numeric(work[col], errors="coerce").abs()
         return work
 
-    if kind in {"diff", "abs_diff", "ratio"}:
+    if kind in {"diff", "abs_diff", "ratio", "percent_ratio"}:
         if len(operands) != 2:
             raise ValueError(f"{kind}는 피연산자 2개가 필요합니다.")
         left_c, right_c = operands
@@ -222,6 +252,9 @@ def _derive_column(df: pd.DataFrame, payload: dict[str, Any]) -> pd.DataFrame:
             work[name] = left - right
         elif kind == "abs_diff":
             work[name] = (left - right).abs()
+        elif kind == "percent_ratio":
+            denom = right.replace(0, pd.NA)
+            work[name] = (left / denom) * 100.0
         else:
             denom = right.replace(0, pd.NA)
             work[name] = left / denom
