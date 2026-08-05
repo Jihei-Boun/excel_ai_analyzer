@@ -82,6 +82,11 @@ def build_analysis_plan(
         "Default value_column=예산잔액_합계 (use 예산잔액_당해잔액 only if 당해/당년 asked). "
         "Filter to detail rows only. output_columns=labels+value only. "
         "Do NOT answer with group_comparison aggregates or a full item list. "
+        "For 계획예산 vs 실행예산 늘어난/줄어든 항목을 나눠 설명: "
+        "MUST use operation='split_by_difference' with left=실행예산_합계, "
+        "right=계획예산, diff_name=차이, label_name=구분, interpret=true. "
+        "Do NOT use top_n_difference or limit — keep ALL detail rows "
+        "(increases and decreases). 차이 = left − right. "
         "For comparing categories / execution efficiency between groups / 해석: "
         "prefer operation='group_comparison' with group_column, groups, "
         "numerator, denominator, rate_name, prefer_subtotals=true, interpret=true. "
@@ -96,7 +101,7 @@ def build_analysis_plan(
         "You may return compact high-level forms: "
         "operation='top_n_difference', operation='group_comparison', "
         "operation='correlation', operation='find_items', operation='rate_vs_mean', "
-        "or operation='top_n_per_group'. "
+        "operation='top_n_per_group', or operation='split_by_difference'. "
         "Return ONLY a JSON object."
     )
 
@@ -119,7 +124,9 @@ def build_analysis_plan(
             "6) operation=rate_vs_mean with numerator, denominator, relation "
             "(below|above), rate_name, output_columns (minimal), interpret\n"
             "7) operation=top_n_per_group with group_column, value_column, n, "
-            "ascending, output_columns (minimal), interpret"
+            "ascending, output_columns (minimal), interpret\n"
+            "8) operation=split_by_difference with left, right, diff_name, "
+            "label_name, output_columns, interpret=true (NO limit)"
         ),
     ]
     hint = semantic_hints_text(use_budget_profile=use_budget_profile)

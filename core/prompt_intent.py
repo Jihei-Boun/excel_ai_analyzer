@@ -133,6 +133,9 @@ _STRUCTURED_ANALYSIS_KEYWORDS = (
     "잔액",
     "하나씩",
     "별로",
+    "늘어난",
+    "줄어든",
+    "나눠",
 )
 
 

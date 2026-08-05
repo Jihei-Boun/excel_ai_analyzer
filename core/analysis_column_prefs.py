@@ -110,6 +110,13 @@ def apply_analysis_column_prefs(
     columns: list[str],
 ) -> dict[str, Any]:
     """도메인 질의에 맞춰 계획 JSON을 보정한다."""
+    data = apply_split_by_difference_prefs(prompt, data, columns)
+    if str((data or {}).get("operation") or "") in {
+        "split_by_difference",
+        "increase_decrease_split",
+        "budget_change_split",
+    }:
+        return data
     data = apply_top_n_per_group_prefs(prompt, data, columns)
     if str((data or {}).get("operation") or "") in {
         "top_n_per_group",
@@ -227,6 +234,72 @@ def apply_rate_vs_mean_prefs(
         f"산술평균보다 {'낮은' if relation == 'below' else '높은'} 항목만 표시."
     )
     out.pop("steps", None)
+    return out
+
+
+def is_split_by_difference_prompt(prompt: str) -> bool:
+    """계획 vs 실행(또는 전후) 증가/감소를 나눠 설명하는 질의."""
+    if not prompt:
+        return False
+    has_up = any(tok in prompt for tok in ("늘어난", "증가", "증액", "커진"))
+    has_down = any(tok in prompt for tok in ("줄어든", "감소", "감액", "작아진"))
+    has_split = any(
+        tok in prompt for tok in ("나눠", "나누", "구분", "각각", "대비", "비교", "설명")
+    )
+    has_budget = ("계획" in prompt and "실행" in prompt) or (
+        "계획예산" in prompt or "실행예산" in prompt
+    )
+    return bool(has_up and has_down and has_split and has_budget)
+
+
+def pick_plan_vs_exec_columns(
+    prompt: str, columns: list[str]
+) -> tuple[str, str] | None:
+    """(실행/이후, 계획/이전) 열. 차이 = left − right."""
+    del prompt  # 현재는 스키마 우선; 당해 실행예산 요청은 후속 확장
+    colset = {str(c) for c in columns}
+    left = _first_present(
+        colset,
+        ("실행예산_합계", "실행예산", "실행"),
+    )
+    right = _first_present(
+        colset,
+        ("계획예산", "계획", "편성예산"),
+    )
+    if not left or not right or left == right:
+        return None
+    return left, right
+
+
+def apply_split_by_difference_prefs(
+    prompt: str,
+    data: dict[str, Any],
+    columns: list[str],
+) -> dict[str, Any]:
+    """증가/감소 분할 질의를 split_by_difference로 강제 (top_n_difference 우회)."""
+    if not isinstance(data, dict) or not is_split_by_difference_prompt(prompt):
+        return data
+    picked = pick_plan_vs_exec_columns(prompt, columns)
+    if not picked:
+        return data
+    left, right = picked
+    colset = {str(c) for c in columns}
+    labels = [c for c in ("비목분류", "비용명_2", "비용명") if c in colset]
+    out = dict(data)
+    out["operation"] = "split_by_difference"
+    out["left"] = left
+    out["right"] = right
+    out["value_columns"] = [left, right]
+    out["diff_name"] = "차이"
+    out["label_name"] = "구분"
+    out["output_columns"] = [*labels, right, left, "차이", "구분"]
+    out["interpret"] = True
+    out["criteria_note"] = (
+        f"차이 = {left} − {right}. 세부행을 증가/감소/동일으로 구분해 설명. "
+        "상위 N으로 자르지 않음."
+    )
+    out.pop("steps", None)
+    out.pop("limit", None)
     return out
 
 

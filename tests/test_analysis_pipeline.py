@@ -938,3 +938,96 @@ def test_top_n_per_group_prefs_override_wrong_plan() -> None:
     assert len(result) == 2
     assert set(result["비용명_2"].astype(str)) == {"y", "z"}
     assert "계획예산" not in result.columns
+
+
+def test_split_by_difference_plan_vs_exec_on_twin() -> None:
+    from core.excel_loader import load_excel
+    from core.pandasai_config import prepare_dataframe_for_ai
+    from core.prompt_intent import wants_structured_analysis
+
+    prompt = "계획예산보다 실행예산이 늘어난 항목과 줄어든 항목을 나눠서 설명해줘"
+    assert wants_structured_analysis(prompt)
+
+    path = Path(__file__).resolve().parents[1] / "data/uploads/03_트윈_예실대비표.xlsx"
+    if not path.is_file():
+        return
+    df = prepare_dataframe_for_ai(load_excel(path))
+    plan = analysis_plan_from_dict(
+        {
+            "operation": "split_by_difference",
+            "left": "실행예산_합계",
+            "right": "계획예산",
+            "interpret": True,
+        },
+        available_columns=list(df.columns),
+    )
+    assert plan.interpret
+    assert not any(s.op == "limit" for s in plan.steps)
+    assert any(
+        s.op == "derive_column" and s.payload.get("name") == "차이" for s in plan.steps
+    )
+    assert any(
+        s.op == "derive_column" and s.payload.get("name") == "구분" for s in plan.steps
+    )
+
+    classified = classify_rows(df, dimension_columns=["비용명", "비용명_2"])
+    result, _ = execute_analysis_plan(classified, plan)
+    assert "차이" in result.columns and "구분" in result.columns
+    assert len(result) == 17
+    inc = result[result["구분"] == "증가"]
+    dec = result[result["구분"] == "감소"]
+    same = result[result["구분"] == "동일"]
+    assert len(inc) == 4
+    assert len(dec) == 11
+    assert len(same) == 2
+    assert abs(float(inc["차이"].sum()) - 25_302_382) < 1
+    assert abs(float(dec["차이"].sum()) + 25_302_382) < 1
+    assert set(inc["비용명_2"].astype(str).str.strip()) == {
+        "내부인건비",
+        "계약직내부인건비",
+        "국외여비",
+        "네트워크사용료",
+    }
+    assert "과제이월액" in set(dec["비용명_2"].astype(str).str.strip())
+    # 증가가 먼저(내림차순)
+    assert str(result.iloc[0]["구분"]) == "증가"
+
+
+def test_split_by_difference_prefs_override_top_n() -> None:
+    from core.analysis_plan_builder import build_analysis_plan
+
+    df = pd.DataFrame(
+        {
+            "비목분류": ["A", "A", "B", "B"],
+            "비용명": [1, 2, 3, 4],
+            "비용명_2": ["up1", "down1", "up2", "same"],
+            "계획예산": [100, 200, 0, 50],
+            "실행예산_합계": [150, 50, 40, 50],
+        }
+    )
+    prompt = "계획예산보다 실행예산이 늘어난 항목과 줄어든 항목을 나눠서 설명해줘"
+
+    def fake_chat_json(*_a, **_k):
+        return {
+            "operation": "top_n_difference",
+            "value_columns": ["실행예산_합계", "계획예산"],
+            "difference_mode": "absolute",
+            "limit": 5,
+            "interpret": False,
+        }
+
+    plan = build_analysis_plan(
+        prompt,
+        df,
+        base_url="http://localhost:11434",
+        model="dummy",
+        chat_json_fn=fake_chat_json,
+    )
+    assert plan.interpret
+    assert not any(s.op == "limit" for s in plan.steps)
+    classified = classify_rows(df, dimension_columns=["비용명", "비용명_2"])
+    result, _ = execute_analysis_plan(classified, plan)
+    assert len(result) == 4
+    assert (result["구분"] == "증가").sum() == 2
+    assert (result["구분"] == "감소").sum() == 1
+    assert (result["구분"] == "동일").sum() == 1

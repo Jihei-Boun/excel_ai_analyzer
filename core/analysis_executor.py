@@ -252,6 +252,24 @@ def _derive_column(df: pd.DataFrame, payload: dict[str, Any]) -> pd.DataFrame:
         work[name] = pd.to_numeric(work[col], errors="coerce").abs()
         return work
 
+    if kind == "sign_label":
+        if len(operands) == 1:
+            series = pd.to_numeric(work[operands[0]], errors="coerce")
+        elif len(operands) == 2:
+            left_c, right_c = operands
+            if left_c not in work.columns or right_c not in work.columns:
+                raise ValueError(f"derive 피연산자 없음: {operands}")
+            series = pd.to_numeric(work[left_c], errors="coerce") - pd.to_numeric(
+                work[right_c], errors="coerce"
+            )
+        else:
+            raise ValueError("sign_label는 피연산자 1~2개가 필요합니다.")
+        labels = pd.Series("동일", index=work.index, dtype=object)
+        labels = labels.mask(series > 0, "증가").mask(series < 0, "감소")
+        labels = labels.mask(series.isna(), pd.NA)
+        work[name] = labels
+        return work
+
     if kind in {"diff", "abs_diff", "ratio", "percent_ratio"}:
         if len(operands) != 2:
             raise ValueError(f"{kind}는 피연산자 2개가 필요합니다.")

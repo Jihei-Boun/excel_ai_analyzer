@@ -47,6 +47,10 @@ def interpret_analysis_result(
         "항목 탐색(이월예산·당해집행 0 등)이면: 조건 정의, "
         "완전 미집행 vs 이월집행만 있는 유형, 규모상 우선 점검 항목, "
         "잔액/불용 리스크를 짧게 설명하세요. "
+        "구분 열(증가/감소/동일)이나 계획·실행 차이가 있으면: "
+        "1) 증가 건수·합계와 대표 항목 2) 감소 건수·합계와 대표 항목 "
+        "3) 동일 여부 4) 총액 유지·항목 간 재배분 여부를 나눠 설명하세요. "
+        "증가분과 감소분이 상쇄되면 그 점을 명시하세요. "
         "집행률이 낮다는 사실만으로 비효율·문제라고 단정하지 마세요. "
         "한국어로 간결히 작성하세요. "
         "correlation이면 1) 전체 상관 2) 분포·양수 표본 3) 결론 순으로, "
@@ -71,7 +75,7 @@ def _df_to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
     if df is None or df.empty:
         return []
     records: list[dict[str, Any]] = []
-    for _, row in df.head(50).iterrows():
+    for _, row in df.head(80).iterrows():
         item: dict[str, Any] = {}
         for col in df.columns:
             val = row[col]

@@ -25,7 +25,9 @@ SUPPORTED_ANALYSIS_OPS = frozenset(
     }
 )
 
-SUPPORTED_DERIVE_EXPRS = frozenset({"diff", "abs", "abs_diff", "ratio", "percent_ratio"})
+SUPPORTED_DERIVE_EXPRS = frozenset(
+    {"diff", "abs", "abs_diff", "ratio", "percent_ratio", "sign_label"}
+)
 
 ROW_TYPES = frozenset({"detail", "subtotal", "total", "footer", "blank"})
 
@@ -49,6 +51,9 @@ HIGH_LEVEL_OPERATIONS = frozenset(
         "top_n_per_group",
         "top_per_group",
         "rank_per_group",
+        "split_by_difference",
+        "increase_decrease_split",
+        "budget_change_split",
     }
 )
 
@@ -221,6 +226,9 @@ def analysis_plan_from_dict(
         "find_items",
         "item_filter",
         "condition_select",
+        "split_by_difference",
+        "increase_decrease_split",
+        "budget_change_split",
     }:
         interpret = True if "interpret" not in data else interpret
 
@@ -258,6 +266,12 @@ def _compile_high_level(data: dict[str, Any], columns: set[str]) -> dict[str, An
         return _compile_rate_vs_mean(data, columns)
     if operation in {"top_n_per_group", "top_per_group", "rank_per_group"}:
         return _compile_top_n_per_group(data, columns)
+    if operation in {
+        "split_by_difference",
+        "increase_decrease_split",
+        "budget_change_split",
+    }:
+        return _compile_split_by_difference(data, columns)
     return {}
 
 
@@ -356,6 +370,96 @@ def _compile_top_n_per_group(data: dict[str, Any], columns: set[str]) -> dict[st
         "steps": steps,
         "criteria_note": note,
         "dimension_columns": [group_col],
+        "output_columns": out_cols,
+        "interpret": interpret,
+    }
+
+
+def _compile_split_by_difference(
+    data: dict[str, Any], columns: set[str]
+) -> dict[str, Any]:
+    """계획 vs 실행(또는 left−right) 차이로 증가/감소 전체를 유지한다.
+
+    ``top_n_difference``와 달리 limit으로 자르지 않는다.
+    """
+    values = [str(c) for c in (data.get("value_columns") or []) if str(c) in columns]
+    left = str(
+        data.get("left") or data.get("after") or data.get("executed_column") or ""
+    )
+    right = str(
+        data.get("right") or data.get("before") or data.get("planned_column") or ""
+    )
+    if left not in columns or right not in columns:
+        if len(values) >= 2:
+            left, right = values[0], values[1]
+        else:
+            return {}
+    if left not in columns or right not in columns or left == right:
+        return {}
+
+    diff_name = str(data.get("diff_name") or "차이").strip() or "차이"
+    label_name = str(data.get("label_name") or "구분").strip() or "구분"
+
+    label_prefs = [
+        c
+        for c in ("비목분류", "비용명_2", "비용명", "항목명", "항목")
+        if c in columns
+    ]
+    explicit = [
+        str(c)
+        for c in (data.get("output_columns") or data.get("select_columns") or [])
+        if str(c) in columns or str(c) in {diff_name, label_name}
+    ]
+    out_cols: list[str] = []
+    seen: set[str] = set()
+    for col in [*label_prefs, right, left, diff_name, label_name, *explicit]:
+        if col in seen:
+            continue
+        if col in columns or col in {diff_name, label_name}:
+            out_cols.append(col)
+            seen.add(col)
+    if not explicit:
+        keep = set(label_prefs) | {left, right, diff_name, label_name}
+        out_cols = [c for c in out_cols if c in keep]
+
+    note = str(
+        data.get("criteria_note")
+        or (
+            f"{diff_name} = {left} − {right}. "
+            f"{label_name}=증가/감소/동일. 세부행 전체(상위 N 절단 없음)."
+        )
+    )
+    interpret = bool(data.get("interpret", True))
+
+    steps: list[dict[str, Any]] = [
+        {"op": "annotate_row_types"},
+        {
+            "op": "filter_rows",
+            "include_row_types": ["detail"],
+            "drop_blank_dimensions": True,
+            "exclude_uncertain": False,
+        },
+        {
+            "op": "derive_column",
+            "name": diff_name,
+            "expr": {"diff": [left, right]},
+        },
+        {
+            "op": "derive_column",
+            "name": label_name,
+            "expr": {"sign_label": [left, right]},
+        },
+        {
+            "op": "sort",
+            "by": [diff_name],
+            "ascending": [False],
+        },
+        {"op": "select_columns", "columns": out_cols},
+    ]
+    return {
+        "steps": steps,
+        "criteria_note": note,
+        "dimension_columns": [c for c in ("비용명_2", "비용명") if c in columns][:1],
         "output_columns": out_cols,
         "interpret": interpret,
     }
@@ -915,8 +1019,13 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
         operands = [str(x) for x in operands]
         if kind == "abs" and len(operands) != 1:
             return None
+        if kind == "sign_label" and len(operands) not in {1, 2}:
+            return None
         if kind in {"diff", "abs_diff", "ratio", "percent_ratio"} and len(operands) != 2:
             return None
+        # sign_label 1피연산자는 직전 파생열(차이)일 수 있어 columns 소속을 강제하지 않는다.
+        if kind == "sign_label" and len(operands) == 1:
+            return AnalysisStep(op, {"name": name, "expr": {kind: operands}})
         if any(opnd not in columns for opnd in operands):
             return None
         return AnalysisStep(op, {"name": name, "expr": {kind: operands}})
