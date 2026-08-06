@@ -40,7 +40,6 @@ def route_multi_prompt(
     base_url: str,
     model: str,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
     context_label: str | None,
     filter_df: pd.DataFrame | None,
     sheet_info: dict[str, dict] | None = None,
@@ -52,7 +51,7 @@ def route_multi_prompt(
         reply = build_multi_file_summary(
             prepared,
             sheet_info=sheet_info,
-            profile_name=profile_name, use_budget_profile=use_budget_profile,
+            profile_name=profile_name,
             unit_label=unit_label,
         )
         return SingleRouteOutcome(reply=reply, dataframe=None)
@@ -101,7 +100,7 @@ def route_multi_prompt(
             prompt,
             prepared,
             unit_label=unit_label,
-            profile_name=profile_name, use_budget_profile=use_budget_profile,
+            profile_name=profile_name,
         )
         return SingleRouteOutcome(
             reply=reply,
@@ -158,7 +157,7 @@ def route_multi_prompt(
                 prepared,
                 base_url=base_url,
                 model=model,
-                profile_name=profile_name, use_budget_profile=use_budget_profile,
+                profile_name=profile_name,
             )
         except Exception as exc:
             integrate_error = str(exc)
@@ -208,7 +207,7 @@ def route_multi_prompt(
         prompt,
         base_url=base_url,
         model=model,
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
         skip_metric_aggregate=True,
     )
 

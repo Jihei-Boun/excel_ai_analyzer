@@ -162,8 +162,16 @@ def _run_step(
             df,
             group_column=step.payload.get("group_column"),
             item_column=step.payload.get("item_column"),
-            budget_column=str(step.payload.get("budget_column") or ""),
-            executed_column=str(step.payload.get("executed_column") or ""),
+            denominator_column=str(
+                step.payload.get("denominator_column")
+                or step.payload.get("budget_column")
+                or ""
+            ),
+            numerator_column=str(
+                step.payload.get("numerator_column")
+                or step.payload.get("executed_column")
+                or ""
+            ),
             group_value=step.payload.get("group_value"),
             zero_threshold=float(step.payload.get("zero_threshold") or 0.0),
         )

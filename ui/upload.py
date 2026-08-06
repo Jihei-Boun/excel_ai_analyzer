@@ -157,12 +157,30 @@ def _handle_uploads(uploaded_list) -> None:
             excluded.discard(file_id)
         st.session_state.preview_file_id = new_ids[-1]
         st.session_state._pending_preview_radio = new_ids[-1]
+        _maybe_apply_suggested_profile(new_ids[-1])
         if len(st.session_state.get("uploaded_files") or []) >= 2:
             all_ids = [meta["id"] for meta in st.session_state.uploaded_files]
             activate_files(all_ids, reset_analysis=True)
         else:
             activate_file(new_ids[-1], reset_analysis=True)
         st.rerun()
+
+
+def _maybe_apply_suggested_profile(file_id: str) -> None:
+    """사용자가 프로필을 수동 고정하지 않았다면 업로드 표로 자동 추천한다."""
+    if st.session_state.get("profile_manually_set"):
+        return
+    from core.profile_loader import suggest_profile_name
+
+    frames = st.session_state.get("file_frames") or {}
+    df = frames.get(file_id)
+    if df is None:
+        return
+    suggested, score = suggest_profile_name(df)
+    st.session_state.suggested_profile = suggested
+    st.session_state.suggested_profile_score = score
+    st.session_state.analysis_profile = suggested
+    st.session_state.budget_table_mode = suggested == "budget"
 
 
 def _render_file_list() -> None:

@@ -49,18 +49,23 @@ def _build_list_seed_frame(df: pd.DataFrame, prompt: str) -> pd.DataFrame | None
     return prepared[[text_cols[-1]]].reset_index(drop=True)
 
 
-def _is_budget_footer_label(value: object) -> bool:
+def _is_footer_label(value: object, footer_labels: tuple[str, ...] | list[str]) -> bool:
     """프로필 footer_labels에 해당하는 하단 요약 라벨인지."""
     text = _cell_match_text(value)
-    if not text:
+    if not text or not footer_labels:
         return False
     compact = normalize_text(text)
+    return compact in {normalize_text(label) for label in footer_labels}
+
+
+def _is_budget_footer_label(value: object) -> bool:
+    """하위 호환: 활성 프로필 footer 또는 budget 상수."""
     from core.profile_loader import footer_labels_for
 
     labels = footer_labels_for()
     if not labels:
         labels = BUDGET_FOOTER_LABELS
-    return compact in {normalize_text(label) for label in labels}
+    return _is_footer_label(value, labels)
 
 
 def _aggregate_reducer(op: str) -> tuple[str, object]:
@@ -78,12 +83,11 @@ def build_groupby_aggregate_table(
     prompt: str,
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> tuple[pd.DataFrame, str] | None:
     """'비용명별 집행계 합계'처럼 그룹별 집계 표를 만든다.
 
     '비목분류별 계획예산'처럼 합계 단어가 없어도 X별 Y 요청이면 합산으로 처리한다.
-    use_budget_profile=True이면 내부흡수액·외부유출액 등 예산 footer 행을 제외한다.
+    profile_name="budget"이면 내부흡수액·외부유출액 등 예산 footer 행을 제외한다.
 
     NOTE: 질의 해석 단축 경로이다. 장기적으로는 LLM + 범용 실행 유틸로 이관 대상.
     """
@@ -128,7 +132,8 @@ def build_groupby_aggregate_table(
     if work.empty:
         return None
 
-    drop_footers = use_budget_profile or bool(footer_labels_for())
+    footer_labels = footer_labels_for(profile_name=profile_name)
+    drop_footers = bool(footer_labels)
 
     # 파일에 처음 등장하는 순서 유지 (가나다·금액 정렬 금지)
     ordered_labels: list[str] = []
@@ -137,7 +142,7 @@ def build_groupby_aggregate_table(
         text = str(label)
         if not text or text in seen_labels or is_total_label(text):
             continue
-        if drop_footers and _is_budget_footer_label(text):
+        if drop_footers and _is_footer_label(text, footer_labels):
             continue
         seen_labels.add(text)
         ordered_labels.append(text)

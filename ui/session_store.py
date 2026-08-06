@@ -84,6 +84,11 @@ def init_session_state() -> None:
         "analysis_mode": "single",  # "single" | "multi"
         "uploader_nonce": 0,
         "_uploader_excluded_names": set(),
+        "analysis_profile": "generic",
+        "budget_table_mode": False,
+        "profile_manually_set": False,
+        "suggested_profile": "generic",
+        "suggested_profile_score": 0,
         "selected_df": None,
         "analysis_filter_df": None,
         "operation_result": None,
@@ -102,8 +107,6 @@ def init_session_state() -> None:
         "last_analysis_prompt": "",
         "_df_sanitized": False,
         "show_analysis_code": False,
-        "budget_table_mode": False,
-        "analysis_profile": "generic",
     }
     for key, value in defaults.items():
         if key not in st.session_state:

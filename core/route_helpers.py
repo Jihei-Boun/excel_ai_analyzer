@@ -49,7 +49,6 @@ def resolve_chart_table(
     *,
     context_label: str | None,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
     prior_aggregate_df: pd.DataFrame | None = None,
     prior_aggregate_prompt: str | None = None,
     last_assistant_df: pd.DataFrame | None = None,
@@ -62,7 +61,7 @@ def resolve_chart_table(
         grouped = build_groupby_aggregate_table(
             source,
             prompt,
-            profile_name=profile_name, use_budget_profile=use_budget_profile,
+            profile_name=profile_name,
         )
         if grouped is not None:
             return grouped[0], prompt
@@ -86,7 +85,7 @@ def resolve_chart_table(
         grouped = build_groupby_aggregate_table(
             source,
             prior_user_prompt,
-            profile_name=profile_name, use_budget_profile=use_budget_profile,
+            profile_name=profile_name,
         )
         if grouped is not None:
             return grouped[0], prior_user_prompt

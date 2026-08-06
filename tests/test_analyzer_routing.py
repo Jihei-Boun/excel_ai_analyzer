@@ -417,7 +417,7 @@ def test_groupby_preserves_file_order() -> None:
     result = build_groupby_aggregate_table(
         df,
         "비목분류별 계획예산을 알려줘",
-        use_budget_profile=True,
+        profile_name="budget",
     )
     assert result is not None
     table, _ = result
@@ -442,7 +442,7 @@ def test_groupby_without_budget_profile_keeps_footer_labels() -> None:
     result = build_groupby_aggregate_table(
         df,
         "비목분류별 계획예산을 알려줘",
-        use_budget_profile=False,
+        profile_name="generic",
     )
     assert result is not None
     table, _ = result

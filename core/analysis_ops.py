@@ -108,7 +108,6 @@ def project_readable_columns(
     keep_columns: list[str] | None = None,
     preferred_labels: tuple[str, ...] | None = None,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> pd.DataFrame:
     """식별·조건 확인에 필요한 열만 남긴다. keep가 없으면 라벨 열만.
 
@@ -120,7 +119,7 @@ def project_readable_columns(
         from core.profile_loader import preferred_labels_for
 
         preferred_labels = preferred_labels_for(
-            profile_name=profile_name, use_budget_profile=use_budget_profile,
+            profile_name=profile_name,
         )
     ordered: list[str] = []
     seen: set[str] = set()
@@ -436,12 +435,20 @@ def distribution_summary(
     *,
     group_column: str | None,
     item_column: str | None,
-    budget_column: str,
-    executed_column: str,
+    denominator_column: str | None = None,
+    numerator_column: str | None = None,
+    budget_column: str | None = None,
+    executed_column: str | None = None,
     group_value: str | None = None,
     zero_threshold: float = 0.0,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """그룹 내 집행률 분포 요약 (0%·고/저집행 등)."""
+    """그룹 내 비율(분자/분모) 분포 요약.
+
+    ``denominator_column`` / ``numerator_column`` 이 정식 이름이다,
+    하위 호환으로 ``budget_column`` / ``executed_column`` 별칭을 받는다.
+    """
+    den_col = str(denominator_column or budget_column or "").strip()
+    num_col = str(numerator_column or executed_column or "").strip()
     work = ensure_row_types(df)
     if ROW_TYPE_COL in work.columns:
         work = work.loc[work[ROW_TYPE_COL].astype(str) == "detail"].copy()
@@ -452,16 +459,20 @@ def distribution_summary(
             work[group_column].map(lambda v: normalize_text(cell_text(v)) == target)
         ].copy()
 
-    if budget_column not in work.columns or executed_column not in work.columns:
-        raise ValueError("distribution_summary에 예산/집행 컬럼이 필요합니다.")
+    if den_col not in work.columns or num_col not in work.columns:
+        raise ValueError(
+            "distribution_summary에 denominator/numerator(또는 budget/executed) 컬럼이 필요합니다."
+        )
 
-    budget = pd.to_numeric(work[budget_column], errors="coerce")
-    executed = pd.to_numeric(work[executed_column], errors="coerce")
+    budget = pd.to_numeric(work[den_col], errors="coerce")
+    executed = pd.to_numeric(work[num_col], errors="coerce")
     rate = executed / budget.replace(0, pd.NA)
     work = work.copy()
     work["_budget"] = budget
     work["_executed"] = executed
     work["_rate"] = rate
+    work["_denominator"] = budget
+    work["_numerator"] = executed
 
     item_col = item_column
     if not item_col or item_col not in work.columns:

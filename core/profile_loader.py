@@ -306,19 +306,14 @@ def load_profile(name: str) -> dict[str, Any]:
 def resolve_profile_name(
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> str:
-    """명시 이름 → 컨텍스트 → (deprecated) budget/generic 폴백.
-
-    ``use_budget_profile`` 은 하위 호환용이다. 신규 코드는 ``profile_name`` 또는
-    ``use_profile()`` 컨텍스트만 사용한다.
-    """
+    """명시 이름 → 컨텍스트 → generic 폴백."""
     if profile_name:
         return str(profile_name).strip().lower()
     ctx = _active_profile_name.get()
     if ctx:
         return str(ctx).strip().lower()
-    return "budget" if use_budget_profile else "generic"
+    return "generic"
 
 
 def set_active_profile_name(name: str | None) -> None:
@@ -338,12 +333,11 @@ def use_profile(name: str | None) -> Iterator[None]:
 def active_profile(
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> dict[str, Any]:
     """활성 도메인 프로필."""
     return load_profile(
         resolve_profile_name(
-            profile_name=profile_name, use_budget_profile=use_budget_profile,
+            profile_name=profile_name,
         )
     )
 
@@ -351,11 +345,10 @@ def active_profile(
 def preferred_labels_for(
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> tuple[str, ...]:
     return tuple(
         active_profile(
-            profile_name=profile_name, use_budget_profile=use_budget_profile,
+            profile_name=profile_name,
         ).get("preferred_labels")
         or ()
     )
@@ -364,11 +357,10 @@ def preferred_labels_for(
 def footer_labels_for(
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> tuple[str, ...]:
     return tuple(
         active_profile(
-            profile_name=profile_name, use_budget_profile=use_budget_profile,
+            profile_name=profile_name,
         ).get("footer_labels")
         or ()
     )
@@ -377,12 +369,11 @@ def footer_labels_for(
 def column_prefs_for(
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> dict[str, Any]:
     """활성 프로필의 column_prefs dict."""
     return dict(
         active_profile(
-            profile_name=profile_name, use_budget_profile=use_budget_profile,
+            profile_name=profile_name,
         ).get("column_prefs")
         or {}
     )
@@ -391,10 +382,9 @@ def column_prefs_for(
 def roles_for(
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> dict[str, tuple[str, ...]]:
     profile = active_profile(
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     )
     roles = profile.get("roles") or {}
     return {key: tuple(roles.get(key) or ()) for key in _ROLE_KEYS}
@@ -403,12 +393,11 @@ def roles_for(
 def column_hints_for(
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> dict[str, tuple[str, ...]]:
     """공유 힌트 + 활성 프로필 column_hint_extras 병합."""
     base = load_column_hints()
     extras = active_profile(
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     ).get("column_hint_extras") or {}
     merged: dict[str, tuple[str, ...]] = {}
     for key in _HINT_KEYS:
@@ -424,12 +413,11 @@ def column_hints_for(
 def load_meaning_rules(
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> tuple[tuple[tuple[str, ...], str], ...]:
     """의미 규칙. 도메인 meanings를 앞에 두고 일반 규칙을 이어 붙인다."""
     generic = load_column_meanings()
     name = resolve_profile_name(
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     )
     if name in {"generic", ""}:
         return generic
@@ -442,6 +430,75 @@ def clear_profile_cache() -> None:
     load_column_hints.cache_clear()
     load_column_meanings.cache_clear()
     _load_named_profile.cache_clear()
+
+
+def score_profile_for_frame(
+    df: Any,
+    profile_name: str,
+) -> int:
+    """컬럼명 기준으로 프로필 적합 점수를 계산한다."""
+    try:
+        columns = [str(c) for c in getattr(df, "columns", [])]
+    except Exception:  # noqa: BLE001
+        return 0
+    if not columns:
+        return 0
+    joined = " ".join(columns)
+    joined_norm = joined.lower()
+    profile = load_profile(profile_name)
+    hits = 0
+    seen: set[str] = set()
+
+    def _count(candidates: Any) -> None:
+        nonlocal hits
+        for raw in candidates or ():
+            hint = str(raw).strip()
+            if not hint or hint in seen:
+                continue
+            seen.add(hint)
+            if hint in joined or hint.lower() in joined_norm:
+                hits += 1
+
+    _count(profile.get("column_hints"))
+    extras = profile.get("column_hint_extras") or {}
+    for key in (
+        "group_column_hints",
+        "group_column_exact",
+        "item_column_hints",
+        "amount_column_hints",
+        "code_column_hints",
+    ):
+        _count(extras.get(key))
+    roles = profile.get("roles") or {}
+    for key in _ROLE_KEYS:
+        _count(roles.get(key))
+    _count(profile.get("preferred_labels"))
+    return hits
+
+
+def suggest_profile_name(
+    df: Any,
+    *,
+    candidates: tuple[str, ...] | None = None,
+) -> tuple[str, int]:
+    """업로드 표에 맞는 프로필을 추정한다. (이름, 점수).
+
+    generic은 후보에서 제외하고, detect_min_hits 미만이면 generic을 반환한다.
+    """
+    names = candidates or tuple(n for n in list_profile_names() if n != "generic")
+    best_name = "generic"
+    best_score = 0
+    for name in names:
+        try:
+            profile = load_profile(name)
+        except ValueError:
+            continue
+        score = score_profile_for_frame(df, name)
+        min_hits = int(profile.get("detect_min_hits") or 2)
+        if score >= min_hits and score > best_score:
+            best_name = name
+            best_score = score
+    return best_name, best_score
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:

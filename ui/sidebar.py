@@ -148,7 +148,7 @@ def render_sidebar() -> None:
 
 
 def _render_profile_selector() -> None:
-    """도메인 프로필 선택. budget 선택 시 하위 호환용 budget_table_mode도 맞춤."""
+    """도메인 프로필 선택. 업로드 기반 자동 추천 + 사용자 변경."""
     names = list(list_profile_names())
     if not names:
         names = ["generic", "budget"]
@@ -167,17 +167,25 @@ def _render_profile_selector() -> None:
             current = ordered[0]
         st.session_state.analysis_profile = current
 
+    def _mark_manual() -> None:
+        st.session_state.profile_manually_set = True
+
     chosen = st.selectbox(
         "분석 프로필",
         options=ordered,
         format_func=profile_display_label,
         help=(
             "도메인 프로필은 추천 질문·라벨·footer·계획 가이던스에 영향을 줍니다. "
-            "profiles/*.yaml 을 추가하면 목록에 나타납니다."
+            "업로드 시 컬럼으로 자동 추천되며, 여기서 바꾸면 수동 고정됩니다."
         ),
         key="analysis_profile",
+        on_change=_mark_manual,
     )
     st.session_state.budget_table_mode = chosen == "budget"
+
+    suggested = str(st.session_state.get("suggested_profile") or "").strip().lower()
+    score = int(st.session_state.get("suggested_profile_score") or 0)
+    manual = bool(st.session_state.get("profile_manually_set"))
     try:
         profile = load_profile(chosen)
         domain = str(profile.get("domain") or chosen)
@@ -187,6 +195,17 @@ def _render_profile_selector() -> None:
             st.caption("일반 분석 (도메인 가정 없음)")
         else:
             st.caption(f"도메인: {domain}")
+        if suggested and suggested != "generic" and score > 0:
+            if not manual and chosen == suggested:
+                st.caption(f"업로드 컬럼 기준 자동 추천 적용 (점수 {score})")
+            elif manual and chosen != suggested:
+                st.caption(
+                    f"수동 선택 중 · 자동 추천은 {profile_display_label(suggested)}"
+                )
+            elif not manual and chosen != suggested:
+                st.caption(
+                    f"자동 추천: {profile_display_label(suggested)} (점수 {score})"
+                )
     except Exception:  # noqa: BLE001
         st.caption(f"프로필: {chosen}")
 

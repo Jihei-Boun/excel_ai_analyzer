@@ -94,14 +94,12 @@ _MEANING_PHRASES = (
 def _column_meaning_rules(
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> tuple[tuple[tuple[str, ...], str], ...]:
     """컬럼 의미 규칙. YAML(profiles/)에서 로드한다."""
     from core.profile_loader import load_meaning_rules
 
     return load_meaning_rules(
         profile_name=profile_name,
-        use_budget_profile=use_budget_profile,
     )
 
 
@@ -180,10 +178,8 @@ def build_schema_outcome(
     *,
     unit_label: str = "파일",
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> tuple[str, pd.DataFrame | None]:
     """스키마 요청에 대한 (reply, dataframe)을 만든다."""
-    del use_budget_profile  # 의미 추정 규칙 경로 제거 후 미사용 (호환용 인자)
     if not named_frames:
         return f"비교할 {unit_label}이(가) 없습니다.", None
 
@@ -236,11 +232,10 @@ def estimate_column_meaning(
     series: pd.Series | None = None,
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> str:
     """컬럼명(·샘플)으로 의미를 추정한다."""
     compact = re.sub(r"[\s_\-]+", "", str(column)).lower()
-    for hints, meaning in _column_meaning_rules(profile_name=profile_name, use_budget_profile=use_budget_profile):
+    for hints, meaning in _column_meaning_rules(profile_name=profile_name):
         for hint in hints:
             hint_compact = re.sub(r"[\s_\-]+", "", hint).lower()
             if hint_compact and hint_compact in compact:

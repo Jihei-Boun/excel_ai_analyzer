@@ -57,7 +57,6 @@ def run_analysis(
     base_url: str,
     model: str,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
     skip_aggregate_shortcuts: bool = False,
 ) -> tuple[object, str, dict]:
     """DataFrame과 사용자 요청을 PandasAI에 전달해 결과를 반환한다."""
@@ -65,7 +64,6 @@ def run_analysis(
 
     name = resolve_profile_name(
         profile_name=profile_name,
-        use_budget_profile=use_budget_profile,
     )
     with use_profile(name):
         return _run_analysis_impl(
@@ -74,7 +72,6 @@ def run_analysis(
             base_url=base_url,
             model=model,
             profile_name=name,
-            use_budget_profile=use_budget_profile,
             skip_aggregate_shortcuts=skip_aggregate_shortcuts,
         )
 
@@ -86,7 +83,6 @@ def _run_analysis_impl(
     base_url: str,
     model: str,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
     skip_aggregate_shortcuts: bool = False,
 ) -> tuple[object, str, dict]:
     """run_analysis 본문 (활성 프로필 컨텍스트 안에서 실행)."""
@@ -115,7 +111,7 @@ def _run_analysis_impl(
     from core.file_summary import build_file_summary, is_summary_request
 
     if is_summary_request(prompt):
-        summary = build_file_summary(df, profile_name=profile_name, use_budget_profile=use_budget_profile)
+        summary = build_file_summary(df, profile_name=profile_name)
         return None, summary, {}
 
     # '비용명별 실행예산 합계' 등 그룹 집계 단축 경로 (질의 해석형 — 축소 후보).
@@ -123,7 +119,7 @@ def _run_analysis_impl(
         grouped = build_groupby_aggregate_table(
             df,
             prompt,
-            profile_name=profile_name, use_budget_profile=use_budget_profile,
+            profile_name=profile_name,
         )
         if grouped is not None:
             table, summary = grouped
@@ -132,7 +128,7 @@ def _run_analysis_impl(
     # '집행계가 0인데 실행예산이 있는' 같은 조건 필터는 값 일치보다 먼저.
     if output_type == "dataframe":
         conditioned = try_condition_row_filter(
-            df, prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+            df, prompt, profile_name=profile_name
         )
         if conditioned is not None:
             return (
@@ -165,7 +161,7 @@ def _run_analysis_impl(
             df,
             base_url=base_url,
             model=model,
-            profile_name=profile_name, use_budget_profile=use_budget_profile,
+            profile_name=profile_name,
         )
         if planned is not None:
             return planned.dataframe, planned.reply, dict(planned.meta)
@@ -243,7 +239,6 @@ def run_multi_analysis(
     base_url: str,
     model: str,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
     skip_metric_aggregate: bool = False,
 ) -> tuple[object, str, dict]:
     """여러 DataFrame을 SmartDatalake로 동시에 분석한다."""
@@ -251,7 +246,6 @@ def run_multi_analysis(
 
     name = resolve_profile_name(
         profile_name=profile_name,
-        use_budget_profile=use_budget_profile,
     )
     with use_profile(name):
         return _run_multi_analysis_impl(
@@ -260,7 +254,6 @@ def run_multi_analysis(
             base_url=base_url,
             model=model,
             profile_name=name,
-            use_budget_profile=use_budget_profile,
             skip_metric_aggregate=skip_metric_aggregate,
         )
 
@@ -272,7 +265,6 @@ def _run_multi_analysis_impl(
     base_url: str,
     model: str,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
     skip_metric_aggregate: bool = False,
 ) -> tuple[object, str, dict]:
     """run_multi_analysis 본문 (활성 프로필 컨텍스트 안에서 실행)."""
@@ -303,7 +295,7 @@ def _run_multi_analysis_impl(
     if is_summary_request(prompt):
         summary = build_multi_file_summary(
             named_dfs,
-            profile_name=profile_name, use_budget_profile=use_budget_profile,
+            profile_name=profile_name,
         )
         return None, summary, {}
 
@@ -319,7 +311,7 @@ def _run_multi_analysis_impl(
         conditioned_any = False
         for name, frame in named_dfs:
             part = try_condition_row_filter(
-                frame, prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+                frame, prompt, profile_name=profile_name
             )
             if part is None:
                 continue

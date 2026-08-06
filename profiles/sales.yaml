@@ -6,7 +6,15 @@ currency: krw
 domain: sales
 summary_builder: generic
 
+detect_min_hits: 2
 enable_column_prefs: false
+
+column_hints:
+  - 매출
+  - 판매액
+  - 상품명
+  - 고객명
+  - 수량
 
 preferred_labels:
   - 상품명

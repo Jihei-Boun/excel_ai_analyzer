@@ -40,7 +40,6 @@ def suggest_example_prompts(
     df: pd.DataFrame | None,
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
     multi_file: bool = False,
     multi_sheet: bool = False,
     limit: int = CHAT_EXAMPLE_LIMIT,
@@ -54,7 +53,7 @@ def suggest_example_prompts(
 
     limit = max(1, int(limit))
     name = resolve_profile_name(
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     )
     if name != "generic":
         return list(

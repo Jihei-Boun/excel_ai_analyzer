@@ -89,7 +89,6 @@ def run_integrate_pipeline(
     base_url: str,
     model: str,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
     max_retries: int = 1,
     export: bool = True,
     chat_json_fn: Callable[..., dict[str, Any]] | None = None,
@@ -119,7 +118,7 @@ def run_integrate_pipeline(
                 sources,
                 base_url=base_url,
                 model=model,
-                profile_name=profile_name, use_budget_profile=use_budget_profile,
+                profile_name=profile_name,
                 example_frames=examples or None,
                 chat_json_fn=json_fn,
             )
@@ -133,7 +132,7 @@ def run_integrate_pipeline(
                 schemas=next_schemas,
                 base_url=base_url,
                 model=model,
-                profile_name=profile_name, use_budget_profile=use_budget_profile,
+                profile_name=profile_name,
                 example_frames=examples or None,
                 previous_errors=previous_errors or None,
                 chat_json_fn=json_fn,
@@ -212,7 +211,6 @@ def try_integrate_pipeline(
     base_url: str,
     model: str,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> IntegrateResult | None:
     """요청이 구조적 통합이면 파이프라인을 실행하고, 아니면 None."""
     if len(named_frames) < 2:
@@ -224,7 +222,7 @@ def try_integrate_pipeline(
         named_frames,
         base_url=base_url,
         model=model,
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     )
 
 

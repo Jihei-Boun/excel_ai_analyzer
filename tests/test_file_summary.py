@@ -88,7 +88,7 @@ def test_budget_summary_matches_twin_totals() -> None:
         sheet_name="Sheet1",
         sheet_names=["Sheet1"],
         file_path=path,
-        use_budget_profile=True,
+        profile_name="budget",
     )
 
     assert "예실대비표" in text
@@ -117,7 +117,7 @@ def test_budget_summary_avoids_double_counting() -> None:
         budget_with_totals(),
         sheet_name="Sheet1",
         sheet_names=["Sheet1"],
-        use_budget_profile=True,
+        profile_name="budget",
     )
     assert "전체 예산: **150원**" in text
     assert "누적 집행액: **50원**" in text
@@ -146,7 +146,7 @@ def test_budget_fixture_takes_budget_path() -> None:
         budget_with_totals(),
         sheet_name="Sheet1",
         sheet_names=["Sheet1"],
-        use_budget_profile=True,
+        profile_name="budget",
     )
     assert "예실대비표" in text
     assert "전체 예산" in text
@@ -160,7 +160,7 @@ def test_budget_profile_off_uses_generic_summary() -> None:
         file_name="budget.xlsx",
         sheet_name="Sheet1",
         sheet_names=["Sheet1"],
-        use_budget_profile=False,
+        profile_name="generic",
     )
     assert "예실대비표" not in text
     assert "전체 예산" not in text

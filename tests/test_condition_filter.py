@@ -49,7 +49,7 @@ def test_try_condition_zero_and_exists() -> None:
         }
     )
     prompt = "집행계가 0인데 실행예산이 있는 행만 골라줘"
-    result = try_condition_row_filter(df, prompt, use_budget_profile=True)
+    result = try_condition_row_filter(df, prompt, profile_name="budget")
     assert result is not None
     assert len(result) == 2
     assert set(result["비용명_2"]) == {"사무용소모품비", "연구수당"}
@@ -71,7 +71,7 @@ def test_twin_file_zero_exec_with_budget(monkeypatch) -> None:
         prompt,
         base_url="http://localhost",
         model="dummy",
-        use_budget_profile=True,
+        profile_name="budget",
     )
     assert isinstance(result, pd.DataFrame)
     assert "조건 필터" in summary

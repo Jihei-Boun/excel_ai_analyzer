@@ -1131,17 +1131,24 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
         )
 
     if op == "distribution_summary":
-        budget = str(item.get("budget_column") or "")
-        executed = str(item.get("executed_column") or "")
-        if not budget or not executed:
+        denominator = str(
+            item.get("denominator_column") or item.get("budget_column") or ""
+        )
+        numerator = str(
+            item.get("numerator_column") or item.get("executed_column") or ""
+        )
+        if not denominator or not numerator:
             return None
         return AnalysisStep(
             op,
             {
                 "group_column": str(item.get("group_column") or "") or None,
                 "item_column": str(item.get("item_column") or "") or None,
-                "budget_column": budget,
-                "executed_column": executed,
+                "denominator_column": denominator,
+                "numerator_column": numerator,
+                # 하위 호환 별칭
+                "budget_column": denominator,
+                "executed_column": numerator,
                 "group_value": str(item.get("group_value") or "") or None,
                 "zero_threshold": float(item.get("zero_threshold") or 0.0),
             },

@@ -46,7 +46,6 @@ def build_file_summary(
     sheet_names: list[str] | None = None,
     file_path: str | Path | None = None,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> str:
     """DataFrame을 읽어 사람이 읽을 수 있는 파일 요약 문장을 만든다.
 
@@ -61,7 +60,7 @@ def build_file_summary(
     sheets = sheet_names or ([sheet_name] if sheet_name else [])
     shape = excel_shape(file_path) if file_path else None
     profile = active_profile(
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     )
     builder = str(profile.get("summary_builder") or profile.get("summary") or "")
 
@@ -87,7 +86,6 @@ def build_multi_file_summary(
     *,
     sheet_info: dict[str, dict] | None = None,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
     unit_label: str = "파일",
 ) -> str:
     """여러 파일(또는 시트)을 짧게 이어서 요약한다."""
@@ -103,7 +101,7 @@ def build_multi_file_summary(
             sheet_name=info.get("current_sheet"),
             sheet_names=info.get("sheet_names"),
             file_path=info.get("path"),
-            profile_name=profile_name, use_budget_profile=use_budget_profile,
+            profile_name=profile_name,
         )
         parts.append(f"### {name}\n{block}")
     return "\n\n".join(parts)

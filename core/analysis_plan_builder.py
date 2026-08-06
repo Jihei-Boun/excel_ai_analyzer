@@ -33,7 +33,8 @@ _GENERIC_PLAN_SYSTEM = (
     "ratio_of_aggregates: name, numerator, denominator — compute sum-level ratio "
     "(NOT the mean of row ratios). Apply after aggregate. "
     "compare_groups: group_column, groups, metrics, rate_columns. "
-    "distribution_summary: budget_column, executed_column, optional group_column/group_value. "
+    "distribution_summary: denominator_column, numerator_column "
+    "(aliases: budget_column, executed_column), optional group_column/group_value. "
     "correlation: x_column, y_column, optional label_column, methods "
     "— row-level Pearson/Spearman on detail rows (NOT a ratio, NOT group aggregate). "
     "filter_vs_mean: column, relation(below|above) — keep rows vs arithmetic mean. "
@@ -71,10 +72,9 @@ _GENERIC_PLAN_SYSTEM = (
 def _plan_system_prompt(
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> str:
     profile = active_profile(
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     )
     guidance = str(profile.get("plan_guidance") or "").strip()
     if not guidance:
@@ -90,7 +90,6 @@ def build_analysis_plan(
     model: str,
     classified_df: pd.DataFrame | None = None,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
     previous_errors: list[str] | None = None,
     chat_json_fn: Callable[..., dict[str, Any]] = chat_json,
 ) -> AnalysisPlan:
@@ -100,7 +99,7 @@ def build_analysis_plan(
     columns = [str(c) for c in df.columns]
 
     system = _plan_system_prompt(
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     )
 
     user_parts = [
@@ -128,7 +127,7 @@ def build_analysis_plan(
         ),
     ]
     hint = semantic_hints_text(
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     )
     if hint:
         user_parts.append(hint)
@@ -146,7 +145,7 @@ def build_analysis_plan(
     )
     category_labels: list[str] = []
     profile = active_profile(
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     )
     label_cols = list(profile.get("group_columns") or ()) + list(
         profile.get("preferred_labels") or ()
@@ -164,7 +163,7 @@ def build_analysis_plan(
         prompt,
         data,
         columns,
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
         category_labels=category_labels,
     )
     plan = analysis_plan_from_dict(data, available_columns=columns)

@@ -110,8 +110,8 @@ def test_is_schema_request_for_meanings_and_type_groups() -> None:
 def test_column_meanings_generic_avoids_budget_wording() -> None:
     from core.schema_compare import estimate_column_meaning
 
-    assert "예산" not in estimate_column_meaning("비용명", use_budget_profile=False)
-    assert "예산" in estimate_column_meaning("비용명", use_budget_profile=True)
+    assert "예산" not in estimate_column_meaning("비용명", profile_name="generic")
+    assert "예산" in estimate_column_meaning("비용명", profile_name="budget")
 
 
 def test_type_groups_outcome() -> None:

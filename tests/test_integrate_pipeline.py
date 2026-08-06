@@ -246,7 +246,7 @@ def test_pipeline_with_mocked_llm(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         named,
         base_url="http://localhost:11434",
         model="dummy",
-        use_budget_profile=True,
+        profile_name="budget",
         export=True,
         chat_json_fn=fake_chat_json,
         # schemas/plan을 None으로 두어 mock 경로를 탄다
@@ -305,7 +305,7 @@ def test_route_multi_uses_structured_integrate(monkeypatch: pytest.MonkeyPatch, 
         named_frames=named,
         base_url="http://localhost:11434",
         model="dummy",
-        use_budget_profile=True,
+        profile_name="budget",
         context_label=None,
         filter_df=None,
     )

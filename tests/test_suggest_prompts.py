@@ -9,7 +9,7 @@ from core.suggest_prompts import suggest_example_prompts
 
 def test_budget_mode_uses_fixed_prompts() -> None:
     df = pd.DataFrame({"상품": ["A", "B"], "매출": [100, 200]})
-    prompts = suggest_example_prompts(df, use_budget_profile=True, limit=4)
+    prompts = suggest_example_prompts(df, profile_name="budget", limit=4)
     joined = " ".join(prompts)
     assert "실행예산" in joined or "비목" in joined or "비용명" in joined
     assert all("매출" not in p for p in prompts)
@@ -23,7 +23,7 @@ def test_generic_dynamic_from_columns() -> None:
             "비용명": [121, 201, 121, 142],
         }
     )
-    prompts = suggest_example_prompts(df, use_budget_profile=False, limit=4)
+    prompts = suggest_example_prompts(df, profile_name="generic", limit=4)
     joined = " ".join(prompts)
     assert "파일을 요약해줘" in prompts
     assert "지역" in joined
@@ -52,7 +52,7 @@ def test_use_profile_context_switches_labels() -> None:
 
 
 def test_empty_df_falls_back_to_generic() -> None:
-    prompts = suggest_example_prompts(None, use_budget_profile=False, limit=4)
+    prompts = suggest_example_prompts(None, profile_name="generic", limit=4)
     assert "파일을 요약해줘" in prompts
     assert len(prompts) <= 4
 
@@ -60,7 +60,7 @@ def test_empty_df_falls_back_to_generic() -> None:
 def test_multi_file_fallback() -> None:
     prompts = suggest_example_prompts(
         None,
-        use_budget_profile=False,
+        profile_name="generic",
         multi_file=True,
         limit=4,
     )

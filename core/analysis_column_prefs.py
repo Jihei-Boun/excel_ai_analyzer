@@ -11,10 +11,9 @@ from core.text_normalize import normalize_text
 def _prefs(
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> dict[str, Any]:
     return column_prefs_for(
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     )
 
 
@@ -36,11 +35,10 @@ def is_execution_efficiency_prompt(
     prompt: str,
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> bool:
     if not prompt:
         return False
-    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    prefs = _prefs(profile_name=profile_name)
     tokens = _tok(prefs, "efficiency_tokens")
     if not tokens:
         return False
@@ -53,11 +51,10 @@ def asks_current_year_scope(
     prompt: str,
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> bool:
     if not prompt:
         return False
-    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    prefs = _prefs(profile_name=profile_name)
     tokens = _tok(prefs, "current_year_tokens")
     if not tokens:
         return False
@@ -69,12 +66,11 @@ def is_carryover_no_current_exec_prompt(
     prompt: str,
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> bool:
     """이월예산은 있는데 당해집행이 없는 항목 탐색 질의."""
     if not prompt:
         return False
-    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    prefs = _prefs(profile_name=profile_name)
     carry_tokens = _tok(prefs, "carryover_tokens")
     zero_tokens = _tok(prefs, "zero_exec_tokens")
     find_tokens = _tok(prefs, "find_tokens")
@@ -92,17 +88,16 @@ def pick_execution_rate_columns(
     columns: list[str] | set[str],
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> tuple[str, str] | None:
     """(numerator, denominator) 또는 None."""
-    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    prefs = _prefs(profile_name=profile_name)
     colset = {str(c) for c in columns}
     default_num = _tok(prefs, "default_numerator")
     default_den = _tok(prefs, "default_denominator")
     current_num = _tok(prefs, "current_numerator")
     current_den = _tok(prefs, "current_denominator")
     if asks_current_year_scope(
-        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+        prompt, profile_name=profile_name
     ):
         num = _first_present(colset, current_num) or _first_present(colset, default_num)
         den = _first_present(colset, current_den) or _first_present(colset, default_den)
@@ -120,7 +115,6 @@ def apply_analysis_column_prefs(
     columns: list[str],
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
     enable_column_prefs: bool | None = None,
     category_labels: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -131,13 +125,13 @@ def apply_analysis_column_prefs(
     if enable_column_prefs is None:
         enable_column_prefs = bool(
             active_profile(
-                profile_name=profile_name, use_budget_profile=use_budget_profile,
+                profile_name=profile_name,
             ).get("enable_column_prefs")
         )
     if not enable_column_prefs:
         return data
 
-    kw = {"profile_name": profile_name, "use_budget_profile": use_budget_profile}
+    kw = {"profile_name": profile_name}
     data = apply_split_by_difference_prefs(prompt, data, columns, **kw)
     if str((data or {}).get("operation") or "") in {
         "split_by_difference",
@@ -182,12 +176,11 @@ def is_provisional_share_prompt(
     prompt: str,
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> bool:
     """가집행 비중 질의 등 — prefs에 provisional 컬럼이 있을 때만."""
     if not prompt:
         return False
-    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    prefs = _prefs(profile_name=profile_name)
     if not _tok(prefs, "provisional_columns") or not _tok(prefs, "provisional_base_columns"):
         return False
     compact = normalize_text(prompt)
@@ -206,13 +199,12 @@ def apply_provisional_share_prefs(
     columns: list[str],
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(data, dict) or not is_provisional_share_prompt(
-        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+        prompt, profile_name=profile_name
     ):
         return data
-    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    prefs = _prefs(profile_name=profile_name)
     colset = {str(c) for c in columns}
     prov = _first_present(colset, _tok(prefs, "provisional_columns"))
     base = _first_present(colset, _tok(prefs, "provisional_base_columns"))
@@ -242,12 +234,11 @@ def is_rate_vs_mean_prompt(
     prompt: str,
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> bool:
     if not prompt:
         return False
     has_rate = is_execution_efficiency_prompt(
-        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+        prompt, profile_name=profile_name
     ) or ("비율" in prompt)
     has_mean = "평균" in prompt
     has_cmp = any(
@@ -269,14 +260,13 @@ def apply_rate_vs_mean_prefs(
     columns: list[str],
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(data, dict) or not is_rate_vs_mean_prompt(
-        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+        prompt, profile_name=profile_name
     ):
         return data
     picked = pick_execution_rate_columns(
-        prompt, columns, profile_name=profile_name, use_budget_profile=use_budget_profile
+        prompt, columns, profile_name=profile_name
     )
     if not picked:
         return data
@@ -285,7 +275,7 @@ def apply_rate_vs_mean_prefs(
         tok in prompt for tok in ("높은", "이상", "초과", "큰")
     ) and not any(tok in prompt for tok in ("낮은", "미만", "아래", "작은")) else "below"
 
-    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    prefs = _prefs(profile_name=profile_name)
     colset = {str(c) for c in columns}
     label_order = _tok(prefs, "rate_label_columns") or _tok(prefs, "label_columns")
     labels = [c for c in label_order if c in colset]
@@ -310,11 +300,10 @@ def is_split_by_difference_prompt(
     prompt: str,
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> bool:
     if not prompt:
         return False
-    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    prefs = _prefs(profile_name=profile_name)
     if not _tok(prefs, "plan_columns") or not _tok(prefs, "exec_columns"):
         return False
     has_up = any(tok in prompt for tok in ("늘어난", "증가", "증액", "커진"))
@@ -332,11 +321,10 @@ def pick_plan_vs_exec_columns(
     columns: list[str],
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> tuple[str, str] | None:
     """(left=exec/이후, right=plan/이전). 차이 = left − right."""
     del prompt
-    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    prefs = _prefs(profile_name=profile_name)
     colset = {str(c) for c in columns}
     left = _first_present(colset, _tok(prefs, "exec_columns"))
     right = _first_present(colset, _tok(prefs, "plan_columns"))
@@ -351,19 +339,18 @@ def apply_split_by_difference_prefs(
     columns: list[str],
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(data, dict) or not is_split_by_difference_prompt(
-        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+        prompt, profile_name=profile_name
     ):
         return data
     picked = pick_plan_vs_exec_columns(
-        prompt, columns, profile_name=profile_name, use_budget_profile=use_budget_profile
+        prompt, columns, profile_name=profile_name
     )
     if not picked:
         return data
     left, right = picked
-    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    prefs = _prefs(profile_name=profile_name)
     colset = {str(c) for c in columns}
     labels = [c for c in _tok(prefs, "label_columns") if c in colset]
     diff_name = _str(prefs, "diff_name", "차이")
@@ -390,11 +377,10 @@ def is_top_n_per_group_prompt(
     prompt: str,
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> bool:
     if not prompt:
         return False
-    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    prefs = _prefs(profile_name=profile_name)
     group_tokens = _tok(prefs, "top_n_group_tokens")
     group_words = _tok(prefs, "top_n_group_words")
     pick_tokens = _tok(prefs, "top_n_pick_tokens")
@@ -414,9 +400,8 @@ def pick_balance_column(
     columns: list[str],
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> str | None:
-    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    prefs = _prefs(profile_name=profile_name)
     colset = {str(c) for c in columns}
     year_tokens = _tok(prefs, "current_year_tokens")
     wants_current = any(tok in prompt for tok in year_tokens) and ("잔액" in prompt)
@@ -431,13 +416,12 @@ def apply_top_n_per_group_prefs(
     columns: list[str],
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(data, dict) or not is_top_n_per_group_prompt(
-        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+        prompt, profile_name=profile_name
     ):
         return data
-    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    prefs = _prefs(profile_name=profile_name)
     colset = {str(c) for c in columns}
     group_col = _first_present(colset, _tok(prefs, "group_columns"))
     if not group_col:
@@ -448,7 +432,7 @@ def apply_top_n_per_group_prefs(
         value_col = pick_balance_column(
             prompt,
             columns,
-            profile_name=profile_name, use_budget_profile=use_budget_profile,
+            profile_name=profile_name,
         )
     if not value_col:
         candidate = str(data.get("value_column") or data.get("metric") or "").strip()
@@ -458,7 +442,7 @@ def apply_top_n_per_group_prefs(
             value_col = pick_balance_column(
                 prompt,
                 columns,
-                profile_name=profile_name, use_budget_profile=use_budget_profile,
+                profile_name=profile_name,
             ) or _first_present(colset, _tok(prefs, "top_n_fallback_metrics"))
     if not value_col:
         return data
@@ -491,19 +475,18 @@ def apply_execution_rate_column_prefs(
     columns: list[str],
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(data, dict) or not is_execution_efficiency_prompt(
-        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+        prompt, profile_name=profile_name
     ):
         return data
     picked = pick_execution_rate_columns(
-        prompt, columns, profile_name=profile_name, use_budget_profile=use_budget_profile
+        prompt, columns, profile_name=profile_name
     )
     if not picked:
         return data
     numerator, denominator = picked
-    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    prefs = _prefs(profile_name=profile_name)
     rate_name = _str(prefs, "rate_name", "비율")
     out = dict(data)
 
@@ -515,7 +498,7 @@ def apply_execution_rate_column_prefs(
         note = str(out.get("criteria_note") or "")
         preferred_note = (
             f"{rate_name} = {numerator} ÷ {denominator} "
-            f"({'당년 기준' if asks_current_year_scope(prompt, profile_name=profile_name, use_budget_profile=use_budget_profile) else '합계 기준'})"
+            f"({'당년 기준' if asks_current_year_scope(prompt, profile_name=profile_name) else '합계 기준'})"
         )
         plan_cols = _tok(prefs, "plan_columns")
         if any(p in note for p in plan_cols) or "당년도" in note or not note:
@@ -532,10 +515,9 @@ def is_group_efficiency_compare_prompt(
     prompt: str,
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> bool:
     if not prompt or not is_execution_efficiency_prompt(
-        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+        prompt, profile_name=profile_name
     ):
         return False
     has_pair = any(tok in prompt for tok in ("와", "과", "대비", "사이"))
@@ -579,19 +561,18 @@ def apply_group_efficiency_compare_prefs(
     *,
     category_labels: list[str] | None = None,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(data, dict) or not is_group_efficiency_compare_prompt(
-        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+        prompt, profile_name=profile_name
     ):
         return data
     picked = pick_execution_rate_columns(
-        prompt, columns, profile_name=profile_name, use_budget_profile=use_budget_profile
+        prompt, columns, profile_name=profile_name
     )
     if not picked:
         return data
     numerator, denominator = picked
-    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    prefs = _prefs(profile_name=profile_name)
     colset = {str(c) for c in columns}
     group_col = _first_present(colset, _tok(prefs, "group_columns"))
     if not group_col:
@@ -630,13 +611,12 @@ def apply_find_items_column_prefs(
     columns: list[str],
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(data, dict) or not is_carryover_no_current_exec_prompt(
-        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+        prompt, profile_name=profile_name
     ):
         return data
-    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    prefs = _prefs(profile_name=profile_name)
     colset = {str(c) for c in columns}
     carry = _first_present(colset, _tok(prefs, "carryover_columns"))
     curr_exec = _first_present(colset, _tok(prefs, "current_exec_columns"))

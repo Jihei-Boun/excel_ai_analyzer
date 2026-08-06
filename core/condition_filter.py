@@ -30,7 +30,6 @@ def try_condition_row_filter(
     prompt: str,
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> pd.DataFrame | None:
     """조건형 행 필터. 현재는 'A가 0인데 B가 있는' (==0 & >0)만 규칙 처리한다."""
     if df is None or df.empty or not is_condition_filter_request(prompt):
@@ -43,7 +42,7 @@ def try_condition_row_filter(
     work = exclude_total_rows(prepare_dataframe_for_ai(df))
     work = _drop_footer_and_empty_items(
         work,
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     )
 
     zero_vals = pd.to_numeric(work[zero_col], errors="coerce")
@@ -54,7 +53,7 @@ def try_condition_row_filter(
         result = result.sort_values(exists_col, ascending=False, kind="mergesort")
 
     prefs = column_prefs_for(
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     )
     related_candidates = tuple(prefs.get("condition_related_metrics") or ())
     related = [
@@ -65,7 +64,7 @@ def try_condition_row_filter(
     return project_readable_columns(
         result.reset_index(drop=True),
         keep_columns=[exists_col, zero_col, *related],
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     )
 
 
@@ -141,20 +140,19 @@ def _drop_footer_and_empty_items(
     df: pd.DataFrame,
     *,
     profile_name: str | None = None,
-    use_budget_profile: bool = False,
 ) -> pd.DataFrame:
     """소계·footer·빈 라벨 요약 행을 제외한다."""
     if df is None or df.empty:
         return df
     footer_labels = footer_labels_for(
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     )
     footer = {compact(label) for label in footer_labels}
     label_candidates = preferred_labels_for(
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     )
     prefs = column_prefs_for(
-        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        profile_name=profile_name,
     )
     detail_code = str(prefs.get("detail_code_column") or "")
     detail_name = str(prefs.get("detail_name_column") or "")

@@ -200,7 +200,6 @@ streamlit run app.py
 ### 🚀 Planned
 
 - [ ] 도메인 프로필 YAML 확장 샘플 추가 (`inventory` / `custom`)
-- [ ] 업로드 기반 프로필 자동 추천 + 사용자 변경
 - [ ] PDF 데이터 입력 지원
 - [ ] 여러 파일 간 자동 비교 리포트 강화 (수치·품질 요약 포함)
 - [ ] 차트 유형 확장 (라인/파이 등)
@@ -214,7 +213,9 @@ streamlit run app.py
 - [x] CSV 업로드 + 사이드바 프로필 선택 UI
 - [x] `column_prefs` / `roles` 를 YAML로 이전 (`analysis_column_prefs` 하드코딩 제거)
 - [x] 공유 `column_hints.yaml` 예산 토큰 → `budget.column_hint_extras` 분리
-- [x] UI·라우팅 `profile_name` 우선 (`use_budget_profile` 은 하위 호환 shim)
+- [x] UI·라우팅 `profile_name` 우선 (`use_budget_profile` shim 제거)
+- [x] 업로드 기반 프로필 자동 추천 + 수동 변경 고정
+- [x] `distribution_summary` 필드명 일반화 (`denominator_column` / `numerator_column`)
 
 ---
 

@@ -33,7 +33,7 @@ def test_use_profile_context() -> None:
     with use_profile("sales"):
         assert preferred_labels_for()[0] in {"상품명", "제품명", "고객", "고객명", "지역", "채널", "카테고리"}
     # 컨텍스트 종료 후 generic
-    assert "비목분류" not in preferred_labels_for(use_budget_profile=False)
+    assert "비목분류" not in preferred_labels_for(profile_name="generic")
 
 
 def test_profiles_dir_exists() -> None:
@@ -68,6 +68,40 @@ def test_budget_column_hint_extras_merge() -> None:
     generic = column_hints_for(profile_name="generic")
     assert "예산" not in generic["amount_column_hints"]
     assert "비목분류" not in generic["group_column_hints"]
+
+
+def test_suggest_profile_name_budget_and_sales() -> None:
+    import pandas as pd
+    from core.profile_loader import clear_profile_cache, suggest_profile_name
+
+    clear_profile_cache()
+    budget_df = pd.DataFrame(
+        {
+            "비목분류": ["A"],
+            "계획예산": [1],
+            "실행예산": [2],
+            "집행계": [3],
+        }
+    )
+    name, score = suggest_profile_name(budget_df)
+    assert name == "budget"
+    assert score >= 2
+
+    sales_df = pd.DataFrame(
+        {
+            "상품명": ["X"],
+            "매출": [100],
+            "수량": [2],
+            "고객명": ["Y"],
+        }
+    )
+    name, score = suggest_profile_name(sales_df)
+    assert name == "sales"
+    assert score >= 2
+
+    generic_df = pd.DataFrame({"col_a": [1], "col_b": [2]})
+    name, score = suggest_profile_name(generic_df)
+    assert name == "generic"
 
 
 def test_budget_roles_and_column_prefs() -> None:
@@ -166,8 +200,8 @@ def test_load_profile_and_active() -> None:
     assert active_profile(profile_name="generic")["name"] == "generic"
     assert active_profile(profile_name="budget")["name"] == "budget"
     # deprecated shim
-    assert active_profile(use_budget_profile=False)["name"] == "generic"
-    assert active_profile(use_budget_profile=True)["name"] == "budget"
+    assert active_profile(profile_name="generic")["name"] == "generic"
+    assert active_profile(profile_name="budget")["name"] == "budget"
 
 
 def test_column_meanings_and_merge() -> None:
@@ -176,14 +210,14 @@ def test_column_meanings_and_merge() -> None:
     assert generic
     assert any("식별자" in meaning for _, meaning in generic)
 
-    merged = load_meaning_rules(use_budget_profile=True)
+    merged = load_meaning_rules(profile_name="budget")
     assert len(merged) >= len(generic)
     # budget 규칙이 앞에 오므로 실행예산은 예산 문구
     from core.schema_compare import estimate_column_meaning
 
-    budget_meaning = estimate_column_meaning("실행예산", use_budget_profile=True)
+    budget_meaning = estimate_column_meaning("실행예산", profile_name="budget")
     assert "예산" in budget_meaning
-    generic_meaning = estimate_column_meaning("매출", use_budget_profile=False)
+    generic_meaning = estimate_column_meaning("매출", profile_name="generic")
     assert "금액" in generic_meaning
 
 

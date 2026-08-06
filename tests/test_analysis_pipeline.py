@@ -72,7 +72,7 @@ def test_generic_mode_skips_budget_column_prefs() -> None:
         df,
         base_url="http://localhost:11434",
         model="dummy",
-        use_budget_profile=False,
+        profile_name="generic",
         chat_json_fn=fake_chat_json,
     )
     ratio_steps = [s for s in plan.steps if s.op == "ratio_of_aggregates"]
@@ -236,7 +236,7 @@ def test_pipeline_on_twin_sample_with_mock() -> None:
         df,
         base_url="http://localhost:11434",
         model="dummy",
-        use_budget_profile=True,
+        profile_name="budget",
         chat_json_fn=fake_chat_json,
     )
     assert result is not None
@@ -332,7 +332,7 @@ def test_pipeline_group_comparison_with_interpretation_mock() -> None:
         df,
         base_url="http://localhost:11434",
         model="dummy",
-        use_budget_profile=True,
+        profile_name="budget",
         chat_json_fn=fake_chat_json,
         chat_text_fn=fake_chat_text,
     )
@@ -469,7 +469,7 @@ def test_execution_rate_prefs_override_wrong_llm_columns() -> None:
         df,
         base_url="http://localhost:11434",
         model="dummy",
-        use_budget_profile=True,
+        profile_name="budget",
         chat_json_fn=fake_chat_json,
     )
     ratio_steps = [s for s in plan.steps if s.op == "ratio_of_aggregates"]
@@ -728,7 +728,7 @@ def test_find_items_prefs_override_wide_llm_plan() -> None:
         df,
         base_url="http://localhost:11434",
         model="dummy",
-        use_budget_profile=True,
+        profile_name="budget",
         chat_json_fn=fake_chat_json,
     )
     assert plan.interpret
@@ -755,7 +755,7 @@ def test_condition_filter_projects_columns() -> None:
         }
     )
     result = try_condition_row_filter(
-        df, "집행계가 0인데 실행예산이 있는 행만 골라줘", use_budget_profile=True
+        df, "집행계가 0인데 실행예산이 있는 행만 골라줘", profile_name="budget"
     )
     assert result is not None
     assert "기타열" not in result.columns
@@ -844,7 +844,7 @@ def test_rate_vs_mean_prefs_override_wrong_plan() -> None:
         df,
         base_url="http://localhost:11434",
         model="dummy",
-        use_budget_profile=True,
+        profile_name="budget",
         chat_json_fn=fake_chat_json,
     )
     assert any(s.op == "filter_vs_mean" for s in plan.steps)
@@ -878,7 +878,7 @@ def test_provisional_share_includes_ratio_column() -> None:
         df,
         base_url="http://localhost:11434",
         model="dummy",
-        use_budget_profile=True,
+        profile_name="budget",
         chat_json_fn=fake_chat_json,
     )
     assert any(s.op == "derive_column" for s in plan.steps)
@@ -983,7 +983,7 @@ def test_top_n_per_group_prefs_override_wrong_plan() -> None:
         df,
         base_url="http://localhost:11434",
         model="dummy",
-        use_budget_profile=True,
+        profile_name="budget",
         chat_json_fn=fake_chat_json,
     )
     assert any(s.op == "top_per_group" for s in plan.steps)
@@ -1075,7 +1075,7 @@ def test_split_by_difference_prefs_override_top_n() -> None:
         df,
         base_url="http://localhost:11434",
         model="dummy",
-        use_budget_profile=True,
+        profile_name="budget",
         chat_json_fn=fake_chat_json,
     )
     assert plan.interpret
@@ -1118,7 +1118,7 @@ def test_group_efficiency_compare_indirect_vs_allowance_on_twin() -> None:
         base_url="http://localhost:11434",
         model="dummy",
         chat_json_fn=fake_chat_json,
-        use_budget_profile=True,
+        profile_name="budget",
     )
     assert any(s.op == "compare_groups" or s.op == "aggregate" for s in plan.steps)
     assert plan.interpret
