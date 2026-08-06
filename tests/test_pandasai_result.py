@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from core.chart_utils import (
+from core.display.chart_utils import (
     _format_axis_number,
     _simplify_axis_labels,
     generate_fallback_chart,
     materialize_chart,
 )
-from core.pandasai_config import _build_summary, _unwrap_result
+from core.pai.pandasai_config import _build_summary, _unwrap_result
 
 
 def test_unwrap_preserves_plot_chart_path(tmp_path: Path) -> None:
@@ -58,7 +58,7 @@ def test_generate_fallback_chart_creates_png() -> None:
 
 
 def test_generate_multi_file_chart() -> None:
-    from core.chart_utils import generate_multi_file_chart
+    from core.display.chart_utils import generate_multi_file_chart
 
     named = [
         ("a.xlsx", pd.DataFrame({"계획예산": [10, 20]})),
@@ -70,7 +70,7 @@ def test_generate_multi_file_chart() -> None:
 
 
 def test_sum_metric_excludes_subtotal_rows() -> None:
-    from core.pandasai_config import sum_metric_excluding_totals
+    from core.pai.pandasai_config import sum_metric_excluding_totals
 
     df = pd.DataFrame(
         {
@@ -82,7 +82,7 @@ def test_sum_metric_excludes_subtotal_rows() -> None:
 
 
 def test_multi_file_chart_excludes_subtotals() -> None:
-    from core.chart_utils import generate_multi_file_chart
+    from core.display.chart_utils import generate_multi_file_chart
 
     named = [
         (

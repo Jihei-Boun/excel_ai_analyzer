@@ -8,8 +8,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from core.excel_loader import load_excel
-from core.file_summary import build_file_summary, is_summary_request
+from core.io.excel_loader import load_excel
+from core.summary.file_summary import build_file_summary, is_summary_request
 
 
 def _twin_path() -> Path:

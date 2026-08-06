@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from core.excel_loader import load_tabular
+from core.io.excel_loader import load_tabular
 from ui.session_store import clear_analysis_result_state, clear_selection_and_operation
 
 

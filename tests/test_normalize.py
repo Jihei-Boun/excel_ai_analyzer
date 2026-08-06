@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from core.normalize import (
+from core.io.normalize import (
     align_column_names,
     canonicalize_column_name,
     column_match_key,

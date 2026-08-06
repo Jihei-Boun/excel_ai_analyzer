@@ -6,8 +6,8 @@ import pandas as pd
 import streamlit as st
 
 from core.constants import UPLOAD_DIR
-from core.excel_loader import CSV_SHEET_NAME, is_csv_path, load_tabular
-from core.quality import friendly_load_error
+from core.io.excel_loader import CSV_SHEET_NAME, is_csv_path, load_tabular
+from core.schema.quality import friendly_load_error
 from ui.file_state import (
     _ensure_file_frame,
     _format_size,

@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 from openpyxl import Workbook
 
-from core.excel_loader import (
+from core.io.excel_loader import (
     CSV_SHEET_NAME,
     is_csv_path,
     load_csv,

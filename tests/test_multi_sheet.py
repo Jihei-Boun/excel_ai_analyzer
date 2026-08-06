@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from core.file_summary import build_multi_file_summary
+from core.summary.file_summary import build_multi_file_summary
 from ui.file_state import (
     _normalize_active_sheets,
     activate_files,

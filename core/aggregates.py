@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from core.column_match import (
+from core.schema.column_match import (
     _is_explicit_groupby_prompt,
     find_groupby_column,
     find_mentioned_column,
@@ -13,10 +13,10 @@ from core.column_match import (
     resolve_metric_column,
 )
 from core.constants import BUDGET_FOOTER_LABELS, SUMMARY_RANKING_BITS
-from core.pandasai_config import prepare_dataframe_for_ai
-from core.prompt_intent import _match_aggregate_op
-from core.text_normalize import normalize_text
-from core.value_filter import (
+from core.pai.pandasai_config import prepare_dataframe_for_ai
+from core.routing.prompt_intent import _match_aggregate_op
+from core.io.text_normalize import normalize_text
+from core.filter.value_filter import (
     _cell_match_text,
     format_context_label,
 )
@@ -109,7 +109,7 @@ def build_groupby_aggregate_table(
     if not metric_cols:
         return None
 
-    from core.pandasai_config import (
+    from core.pai.pandasai_config import (
         exclude_total_rows,
         is_total_label,
         prepare_dataframe_for_ai,
@@ -230,7 +230,7 @@ def build_context_aggregate_table(
         col = resolve_metric_column(df, metric_col)
         if col is None:
             continue
-        from core.pandasai_config import (
+        from core.pai.pandasai_config import (
             exclude_total_rows,
             prepare_dataframe_for_ai,
             sum_metric_excluding_totals,
@@ -311,7 +311,7 @@ def build_multi_context_aggregate_table(
             col = resolve_metric_column(df, metric_col)
             if col is None:
                 continue
-            from core.pandasai_config import (
+            from core.pai.pandasai_config import (
                 exclude_total_rows,
                 prepare_dataframe_for_ai,
                 sum_metric_excluding_totals,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from core.aggregates import build_context_aggregate_table
-from core.value_filter import (
+from core.filter.value_filter import (
     _label_from_prompt_text,
     format_context_label,
     infer_context_label,

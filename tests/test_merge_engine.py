@@ -7,9 +7,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from core.export_utils import dataframe_to_xlsx_bytes, export_dataframe_xlsx, safe_download_name
-from core.merge_engine import infer_common_keys, merge_named_frames
-from core.normalize import normalize_dataframe
+from core.io.export_utils import dataframe_to_xlsx_bytes, export_dataframe_xlsx, safe_download_name
+from core.io.merge_engine import infer_common_keys, merge_named_frames
+from core.io.normalize import normalize_dataframe
 
 
 def test_infer_common_keys_and_outer_merge() -> None:

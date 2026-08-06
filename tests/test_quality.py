@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from core.prompt_router import route_multi_prompt, route_single_prompt
-from core.quality import (
+from core.routing.prompt_router import route_multi_prompt, route_single_prompt
+from core.schema.quality import (
     build_quality_outcome,
     detect_quality_intent,
     diagnose_dataframe,

@@ -7,11 +7,11 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from core.analysis_executor import execute_analysis_plan
-from core.analysis_pipeline import run_analysis_pipeline, try_analysis_pipeline
-from core.analysis_plan_types import analysis_plan_from_dict
-from core.analysis_validate import validate_analysis_result
-from core.row_classify import ROW_TYPE_COL, classify_rows
+from core.analysis.analysis_executor import execute_analysis_plan
+from core.analysis.analysis_pipeline import run_analysis_pipeline, try_analysis_pipeline
+from core.analysis.analysis_plan_types import analysis_plan_from_dict
+from core.analysis.analysis_validate import validate_analysis_result
+from core.schema.row_classify import ROW_TYPE_COL, classify_rows
 
 
 def _sample_budget_like_df() -> pd.DataFrame:
@@ -44,7 +44,7 @@ def test_row_classify_marks_subtotal_footer_and_detail() -> None:
 
 def test_generic_mode_skips_budget_column_prefs() -> None:
     """일반 모드에서는 예산 컬럼 강제 보정을 하지 않는다."""
-    from core.analysis_plan_builder import build_analysis_plan
+    from core.analysis.analysis_plan_builder import build_analysis_plan
 
     cols = [
         "비목분류",
@@ -211,7 +211,7 @@ def test_pipeline_on_twin_sample_with_mock() -> None:
     if not path.is_file():
         pytest.skip("sample upload missing")
 
-    from core.excel_loader import load_excel
+    from core.io.excel_loader import load_excel
 
     df = load_excel(path)
 
@@ -265,9 +265,9 @@ def test_group_comparison_execution_rate_on_twin() -> None:
     if not path.is_file():
         pytest.skip("sample upload missing")
 
-    from core.excel_loader import load_excel
-    from core.pandasai_frame import prepare_dataframe_for_ai
-    from core.prompt_intent import wants_structured_analysis
+    from core.io.excel_loader import load_excel
+    from core.pai.pandasai_frame import prepare_dataframe_for_ai
+    from core.routing.prompt_intent import wants_structured_analysis
 
     assert wants_structured_analysis(
         "내부인건비와 연구활동비의 집행 효율을 비교해서 해석해줘"
@@ -304,7 +304,7 @@ def test_pipeline_group_comparison_with_interpretation_mock() -> None:
     if not path.is_file():
         pytest.skip("sample upload missing")
 
-    from core.excel_loader import load_excel
+    from core.io.excel_loader import load_excel
 
     df = load_excel(path)
 
@@ -419,8 +419,8 @@ def test_filter_rows_column_values() -> None:
 
 
 def test_execution_rate_prefs_override_wrong_llm_columns() -> None:
-    from core.analysis_column_prefs import apply_execution_rate_column_prefs
-    from core.analysis_plan_builder import build_analysis_plan
+    from core.analysis.analysis_column_prefs import apply_execution_rate_column_prefs
+    from core.analysis.analysis_plan_builder import build_analysis_plan
 
     cols = [
         "비목분류",
@@ -511,7 +511,7 @@ def _sample_corr_budget_df() -> pd.DataFrame:
 
 
 def test_correlation_on_detail_rows_near_zero() -> None:
-    from core.prompt_intent import wants_structured_analysis
+    from core.routing.prompt_intent import wants_structured_analysis
 
     assert wants_structured_analysis("당년도집행과 가집행금액의 상관관계를 분석해줘")
 
@@ -552,7 +552,7 @@ def test_correlation_on_detail_rows_near_zero() -> None:
 
 
 def test_correlation_plan_not_ratio_group_comparison() -> None:
-    from core.analysis_plan_builder import build_analysis_plan
+    from core.analysis.analysis_plan_builder import build_analysis_plan
 
     df = _sample_corr_budget_df()
 
@@ -655,7 +655,7 @@ def _sample_carryover_df() -> pd.DataFrame:
 
 
 def test_find_items_selects_minimal_columns_and_excludes_meeting() -> None:
-    from core.prompt_intent import wants_structured_analysis
+    from core.routing.prompt_intent import wants_structured_analysis
 
     prompt = "이월예산은 많은데 당해집행이 없는 항목을 찾고 그 의미를 설명해줘"
     assert wants_structured_analysis(prompt)
@@ -708,7 +708,7 @@ def test_find_items_selects_minimal_columns_and_excludes_meeting() -> None:
 
 
 def test_find_items_prefs_override_wide_llm_plan() -> None:
-    from core.analysis_plan_builder import build_analysis_plan
+    from core.analysis.analysis_plan_builder import build_analysis_plan
 
     df = _sample_carryover_df()
 
@@ -742,7 +742,7 @@ def test_find_items_prefs_override_wide_llm_plan() -> None:
 
 
 def test_condition_filter_projects_columns() -> None:
-    from core.value_filter import try_condition_row_filter
+    from core.filter.value_filter import try_condition_row_filter
 
     df = pd.DataFrame(
         {
@@ -766,9 +766,9 @@ def test_condition_filter_projects_columns() -> None:
 def test_rate_vs_mean_below_average_on_twin() -> None:
     from pathlib import Path
 
-    from core.excel_loader import load_excel
-    from core.pandasai_config import prepare_dataframe_for_ai
-    from core.prompt_intent import wants_structured_analysis
+    from core.io.excel_loader import load_excel
+    from core.pai.pandasai_config import prepare_dataframe_for_ai
+    from core.routing.prompt_intent import wants_structured_analysis
 
     prompt = "비용명별 집행률을 구한 뒤 평균보다 낮은 항목만 표로 보여줘"
     assert wants_structured_analysis(prompt)
@@ -819,7 +819,7 @@ def test_rate_vs_mean_below_average_on_twin() -> None:
 
 
 def test_rate_vs_mean_prefs_override_wrong_plan() -> None:
-    from core.analysis_plan_builder import build_analysis_plan
+    from core.analysis.analysis_plan_builder import build_analysis_plan
 
     df = pd.DataFrame(
         {
@@ -858,10 +858,10 @@ def test_rate_vs_mean_prefs_override_wrong_plan() -> None:
 def test_provisional_share_includes_ratio_column() -> None:
     from pathlib import Path
 
-    from core.excel_loader import load_excel
-    from core.pandasai_config import prepare_dataframe_for_ai
-    from core.analysis_plan_builder import build_analysis_plan
-    from core.prompt_intent import wants_structured_analysis
+    from core.io.excel_loader import load_excel
+    from core.pai.pandasai_config import prepare_dataframe_for_ai
+    from core.analysis.analysis_plan_builder import build_analysis_plan
+    from core.routing.prompt_intent import wants_structured_analysis
 
     prompt = "가집행금액이 있는 항목만 골라 당해누계에서 차지하는 비중을 계산해줘"
     assert wants_structured_analysis(prompt)
@@ -900,10 +900,10 @@ def test_provisional_share_includes_ratio_column() -> None:
 def test_top_n_per_group_balance_on_twin() -> None:
     from pathlib import Path
 
-    from core.list_display import expects_list_display
-    from core.excel_loader import load_excel
-    from core.pandasai_config import prepare_dataframe_for_ai
-    from core.prompt_intent import is_list_request, wants_structured_analysis
+    from core.display.list_display import expects_list_display
+    from core.io.excel_loader import load_excel
+    from core.pai.pandasai_config import prepare_dataframe_for_ai
+    from core.routing.prompt_intent import is_list_request, wants_structured_analysis
 
     prompt = "비목분류별로 가장 잔액이 큰 비용명 하나씩 뽑아줘"
     assert wants_structured_analysis(prompt)
@@ -958,7 +958,7 @@ def test_top_n_per_group_balance_on_twin() -> None:
 
 
 def test_top_n_per_group_prefs_override_wrong_plan() -> None:
-    from core.analysis_plan_builder import build_analysis_plan
+    from core.analysis.analysis_plan_builder import build_analysis_plan
 
     df = pd.DataFrame(
         {
@@ -997,9 +997,9 @@ def test_top_n_per_group_prefs_override_wrong_plan() -> None:
 
 
 def test_split_by_difference_plan_vs_exec_on_twin() -> None:
-    from core.excel_loader import load_excel
-    from core.pandasai_config import prepare_dataframe_for_ai
-    from core.prompt_intent import wants_structured_analysis
+    from core.io.excel_loader import load_excel
+    from core.pai.pandasai_config import prepare_dataframe_for_ai
+    from core.routing.prompt_intent import wants_structured_analysis
 
     prompt = "계획예산보다 실행예산이 늘어난 항목과 줄어든 항목을 나눠서 설명해줘"
     assert wants_structured_analysis(prompt)
@@ -1051,7 +1051,7 @@ def test_split_by_difference_plan_vs_exec_on_twin() -> None:
 
 
 def test_split_by_difference_prefs_override_top_n() -> None:
-    from core.analysis_plan_builder import build_analysis_plan
+    from core.analysis.analysis_plan_builder import build_analysis_plan
 
     df = pd.DataFrame(
         {
@@ -1092,10 +1092,10 @@ def test_split_by_difference_prefs_override_top_n() -> None:
 
 
 def test_group_efficiency_compare_indirect_vs_allowance_on_twin() -> None:
-    from core.excel_loader import load_excel
-    from core.pandasai_config import prepare_dataframe_for_ai
-    from core.prompt_intent import is_complex_analysis, wants_structured_analysis
-    from core.analysis_plan_builder import build_analysis_plan
+    from core.io.excel_loader import load_excel
+    from core.pai.pandasai_config import prepare_dataframe_for_ai
+    from core.routing.prompt_intent import is_complex_analysis, wants_structured_analysis
+    from core.analysis.analysis_plan_builder import build_analysis_plan
 
     prompt = "간접비와 연구수당의 집행률 차이를 기준으로 어느 쪽이 더 효율적인지 설명해줘"
     assert wants_structured_analysis(prompt)
@@ -1138,7 +1138,7 @@ def test_group_efficiency_compare_indirect_vs_allowance_on_twin() -> None:
 
 
 def test_value_filter_skipped_for_efficiency_compare_intent() -> None:
-    from core.prompt_intent import is_complex_analysis, wants_structured_analysis
+    from core.routing.prompt_intent import is_complex_analysis, wants_structured_analysis
 
     prompt = "간접비와 연구수당의 집행률 차이를 기준으로 어느 쪽이 더 효율적인지 설명해줘"
     assert wants_structured_analysis(prompt)

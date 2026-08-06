@@ -6,10 +6,10 @@ from collections.abc import Sequence
 
 import pandas as pd
 
-from core.column_match import looks_like_code_metric_column
+from core.schema.column_match import looks_like_code_metric_column
 from core.constants import CHAT_EXAMPLE_LIMIT
 from core.profile_loader import column_hints_for, load_profile
-from core.text_normalize import normalize_text
+from core.io.text_normalize import normalize_text
 
 
 _FALLBACK_GENERIC = (

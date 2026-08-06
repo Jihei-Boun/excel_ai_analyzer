@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from core.prompt_router import postprocess_table_result
-from core.result_format import (
+from core.routing.prompt_router import postprocess_table_result
+from core.display.result_format import (
     exclude_aggregate_rows,
     expects_list_display,
     restore_source_row_order,

@@ -93,6 +93,19 @@ flowchart TD
 excel_ai_analyzer/
 ├── app.py
 ├── core/
+│   ├── routing/      # 의도 판별·단일/다중 라우팅
+│   ├── analysis/     # 채팅 분석 계획 파이프라인
+│   ├── integrate/    # 다중 파일 구조화 통합
+│   ├── pai/          # PandasAI / Ollama 어댑터
+│   ├── filter/       # 값·조건 필터
+│   ├── summary/      # 파일 요약
+│   ├── schema/       # 스키마·품질·행 분류
+│   ├── io/           # 로딩·정규화·병합·export
+│   ├── display/      # 결과 표시·차트
+│   ├── common/       # plan retry 등 공통 헬퍼
+│   ├── aggregates.py
+│   ├── profile_loader.py
+│   └── ...
 ├── ui/
 ├── profiles/
 │   ├── generic.yaml
@@ -114,7 +127,7 @@ excel_ai_analyzer/
 ```
 
 - `app.py`: Streamlit 앱 진입점
-- `core/`: 엑셀 로딩, 프롬프트 라우팅, 자연어 분석, 요약/집계 등 핵심 로직
+- `core/`: 도메인 패키지로 나눈 핵심 로직 (라우팅·분석·통합·필터·요약 등)
 - `ui/`: 업로드/미리보기/채팅/사이드바 등 화면 구성
 - `profiles/`: 일반·예산 프로필, 컬럼 힌트·의미 규칙 YAML
 - `docs/images/`: README 프리뷰 스크린샷

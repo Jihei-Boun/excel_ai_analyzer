@@ -193,9 +193,9 @@ def test_profile_column_helpers() -> None:
 
 
 def test_structured_keywords_profile_scoped() -> None:
-    from core.prompt_intent import expects_dataframe, wants_structured_analysis
+    from core.routing.prompt_intent import expects_dataframe, wants_structured_analysis
     from core.profile_loader import use_profile
-    from core.text_normalize import keyword_in_text
+    from core.io.text_normalize import keyword_in_text
 
     clear_profile_cache()
     # '행'이 한글 단어 중간에 있어도 오탐하지 않음
@@ -218,7 +218,7 @@ def test_structured_keywords_profile_scoped() -> None:
 
 def test_guardrail_hints_and_summary_registry() -> None:
     from core.profile_loader import guardrail_hints_for, use_profile
-    from core.summary_builders import list_summary_builders, run_summary_builder
+    from core.summary.summary_builders import list_summary_builders, run_summary_builder
     import pandas as pd
 
     clear_profile_cache()
@@ -298,7 +298,7 @@ def test_column_meanings_and_merge() -> None:
     merged = load_meaning_rules(profile_name="budget")
     assert len(merged) >= len(generic)
     # budget 규칙이 앞에 오므로 실행예산은 예산 문구
-    from core.schema_compare import estimate_column_meaning
+    from core.schema.schema_compare import estimate_column_meaning
 
     budget_meaning = estimate_column_meaning("실행예산", profile_name="budget")
     assert "예산" in budget_meaning

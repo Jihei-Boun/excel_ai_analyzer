@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from core.analyzer import run_analysis
-from core.excel_loader import load_excel
-from core.prompt_intent import is_complex_analysis, is_condition_filter_request
-from core.value_filter import _filter_by_mentioned_value, try_condition_row_filter
+from core.analysis.analyzer import run_analysis
+from core.io.excel_loader import load_excel
+from core.routing.prompt_intent import is_complex_analysis, is_condition_filter_request
+from core.filter.value_filter import _filter_by_mentioned_value, try_condition_row_filter
 
 
 def test_condition_filter_detected() -> None:
@@ -65,7 +65,7 @@ def test_twin_file_zero_exec_with_budget(monkeypatch) -> None:
     def _fail_chat(*_a, **_k):
         raise AssertionError("조건 필터로 충분하면 LLM을 호출하면 안 됨")
 
-    monkeypatch.setattr("core.analyzer.chat", _fail_chat)
+    monkeypatch.setattr("core.analysis.analyzer.chat", _fail_chat)
     result, summary, _meta = run_analysis(
         df,
         prompt,

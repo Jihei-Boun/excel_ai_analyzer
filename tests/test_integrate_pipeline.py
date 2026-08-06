@@ -7,16 +7,16 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from core.excel_loader import load_excel
-from core.integrate_pipeline import (
+from core.io.excel_loader import load_excel
+from core.integrate.integrate_pipeline import (
     looks_like_structural_integrate,
     run_integrate_pipeline,
     split_sources_and_examples,
 )
-from core.plan_engine import execute_plan
-from core.plan_types import DerivedRowSpec, ExecutionPlan, FileSchema
-from core.plan_validate import validate_integrate_result
-from core.prompt_router import route_multi_prompt
+from core.integrate.plan_engine import execute_plan
+from core.integrate.plan_types import DerivedRowSpec, ExecutionPlan, FileSchema
+from core.integrate.plan_validate import validate_integrate_result
+from core.routing.prompt_router import route_multi_prompt
 from core.profile_loader import clear_profile_cache, load_budget_profile, load_generic_profile
 
 
@@ -238,7 +238,7 @@ def test_pipeline_with_mocked_llm(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         return dict(schema_payload)
 
     monkeypatch.setattr(
-        "core.integrate_pipeline.MERGES_DIR",
+        "core.integrate.integrate_pipeline.MERGES_DIR",
         tmp_path,
     )
     result = run_integrate_pipeline(
@@ -284,7 +284,7 @@ def test_route_multi_uses_structured_integrate(monkeypatch: pytest.MonkeyPatch, 
             "column_renames": plan.renames,
         }
 
-    monkeypatch.setattr("core.integrate_pipeline.MERGES_DIR", tmp_path)
+    monkeypatch.setattr("core.integrate.integrate_pipeline.MERGES_DIR", tmp_path)
 
     def fake_try(prompt, named_frames, **kwargs):
         return run_integrate_pipeline(
@@ -296,7 +296,7 @@ def test_route_multi_uses_structured_integrate(monkeypatch: pytest.MonkeyPatch, 
         )
 
     monkeypatch.setattr(
-        "core.route_multi.try_integrate_pipeline",
+        "core.routing.route_multi.try_integrate_pipeline",
         fake_try,
     )
 

@@ -8,7 +8,7 @@ from typing import Any
 
 import pandas as pd
 
-from core.column_match import _is_amount_metric_column
+from core.schema.column_match import _is_amount_metric_column
 
 _PIVOT_CALL_RE = re.compile(r"\.pivot\s*\(")
 _PIVOT_TABLE_RE = re.compile(r"\.pivot_table\s*\(")

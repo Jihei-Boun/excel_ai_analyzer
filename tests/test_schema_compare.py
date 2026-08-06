@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pandas as pd
 
-from core.prompt_intent import is_list_request
-from core.prompt_router import route_multi_prompt, route_single_prompt
-from core.result_format import expects_list_display
-from core.schema_compare import (
+from core.routing.prompt_intent import is_list_request
+from core.routing.prompt_router import route_multi_prompt, route_single_prompt
+from core.display.result_format import expects_list_display
+from core.schema.schema_compare import (
     build_schema_compare_table,
     build_schema_outcome,
     is_column_meaning_request,
@@ -67,7 +67,7 @@ def test_route_missing_rows_shows_rows_not_schema() -> None:
 
 
 def test_resolve_filter_resets_for_collapsed_groupby() -> None:
-    from core.value_filter import resolve_filter_source
+    from core.filter.value_filter import resolve_filter_source
 
     full = pd.DataFrame(
         {
@@ -108,7 +108,7 @@ def test_is_schema_request_for_meanings_and_type_groups() -> None:
 
 
 def test_column_meanings_generic_avoids_budget_wording() -> None:
-    from core.schema_compare import estimate_column_meaning
+    from core.schema.schema_compare import estimate_column_meaning
 
     assert "예산" not in estimate_column_meaning("비용명", profile_name="generic")
     assert "예산" in estimate_column_meaning("비용명", profile_name="budget")

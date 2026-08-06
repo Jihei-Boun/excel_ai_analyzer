@@ -287,7 +287,7 @@ def _render_operation_result() -> None:
             export_df = st.session_state.get("selected_df")
 
     if export_df is not None and isinstance(export_df, pd.DataFrame):
-        from core.export_utils import dataframe_to_xlsx_bytes
+        from core.io.export_utils import dataframe_to_xlsx_bytes
 
         st.download_button(
             "Excel 다운로드",

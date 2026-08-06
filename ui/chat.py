@@ -7,17 +7,17 @@ import re
 import pandas as pd
 import streamlit as st
 
-from core.excel_loader import sanitize_dataframe
-from core.file_summary import is_summary_request
-from core.pandasai_config import _friendly_error
-from core.prompt_intent import _expects_plot, detect_aggregate_op
-from core.prompt_router import (
+from core.io.excel_loader import sanitize_dataframe
+from core.summary.file_summary import is_summary_request
+from core.pai.pandasai_config import _friendly_error
+from core.routing.prompt_intent import _expects_plot, detect_aggregate_op
+from core.routing.prompt_router import (
     SingleRouteOutcome,
     needs_chart_context,
     route_multi_prompt,
     route_single_prompt,
 )
-from core.value_filter import infer_context_label, resolve_filter_source
+from core.filter.value_filter import infer_context_label, resolve_filter_source
 from core.profile_loader import use_profile
 from ui.file_state import (
     find_file,
@@ -234,9 +234,9 @@ def _resolve_context_label(source: pd.DataFrame, prompt: str) -> str | None:
 
 def _is_meta_user_prompt(content: str) -> bool:
     """스키마/품질/요약/의미추정 등 집계 맥락이 아닌 메타 질문."""
-    from core.file_summary import is_summary_request
-    from core.quality import is_quality_request
-    from core.schema_compare import is_column_meaning_request, is_schema_request
+    from core.summary.file_summary import is_summary_request
+    from core.schema.quality import is_quality_request
+    from core.schema.schema_compare import is_column_meaning_request, is_schema_request
 
     return (
         is_schema_request(content)
@@ -289,7 +289,7 @@ def _run_multi_prompt(
 
 def _build_summary_reply(df: pd.DataFrame) -> str:
     """세션의 시트·경로 메타를 붙여 파일 요약을 만든다."""
-    from core.file_summary import build_file_summary
+    from core.summary.file_summary import build_file_summary
 
     active_id = st.session_state.get("active_file_id")
     meta = find_file(active_id) if active_id else None

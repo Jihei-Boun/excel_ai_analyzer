@@ -5,8 +5,8 @@ from __future__ import annotations
 import pandas as pd
 
 from core.aggregates import build_groupby_aggregate_table, build_multi_context_aggregate_table
-from core.column_match import find_mentioned_numeric_columns
-from core.prompt_intent import (
+from core.schema.column_match import find_mentioned_numeric_columns
+from core.routing.prompt_intent import (
     detect_aggregate_op,
     expects_dataframe,
     expects_plot,
@@ -14,7 +14,7 @@ from core.prompt_intent import (
     is_list_request,
     resolve_output_type,
 )
-from core.value_filter import (
+from core.filter.value_filter import (
     _filter_by_mentioned_value,
     build_filter_summary,
     extract_matched_detail,
@@ -101,7 +101,7 @@ def test_filter_numeric_code_value() -> None:
 
 def test_run_analysis_filters_before_list_seed(monkeypatch) -> None:
     """리스트 요청이라도 값 필터가 리스트 시드보다 먼저 적용된다."""
-    from core import analyzer as analyzer_mod
+    from core.analysis import analyzer as analyzer_mod
 
     df = pd.DataFrame(
         {
@@ -231,7 +231,7 @@ def test_build_multi_all_numeric_column_sums_by_sheet() -> None:
     assert table.loc[table["출처파일"] == "2월", "매출"].iloc[0] == 1500
     assert "시트별" in summary
 
-    from core.prompt_router import route_multi_prompt
+    from core.routing.prompt_router import route_multi_prompt
 
     outcome = route_multi_prompt(
         prompt,
@@ -249,7 +249,7 @@ def test_build_multi_all_numeric_column_sums_by_sheet() -> None:
 
 def test_chart_from_aggregate_table_uses_same_totals() -> None:
     """집계 표를 차트로 그릴 때 표와 동일한 파일별 합계를 사용한다."""
-    from core.chart_utils import generate_fallback_chart
+    from core.display.chart_utils import generate_fallback_chart
 
     prompt = "파일별로 실행예산_합계의 총 합을 차트로 보여줘"
     named = [
@@ -289,7 +289,7 @@ def test_chart_from_aggregate_table_uses_same_totals() -> None:
         "내부인건비 · 5예실.xlsx",
     ]
 
-    from core.chart_utils import _simplify_axis_labels
+    from core.display.chart_utils import _simplify_axis_labels
 
     short, context = _simplify_axis_labels(table["출처파일"].astype(str).tolist())
     assert context == "내부인건비"
@@ -301,7 +301,7 @@ def test_chart_from_aggregate_table_uses_same_totals() -> None:
 
 def test_chart_follow_up_uses_aggregate_table_not_raw_codes() -> None:
     """'차트로 보여줘' 후속 요청은 집계 표(계획예산)를 쓰고 비용명 코드를 쓰지 않는다."""
-    from core.chart_utils import _pick_chart_columns
+    from core.display.chart_utils import _pick_chart_columns
     from core.profile_loader import use_profile
 
     raw = pd.DataFrame(
@@ -495,7 +495,7 @@ def test_groupby_shortcut_skips_topn_ranking_prompt() -> None:
 
 def test_pivot_request_does_not_use_shortcut(monkeypatch) -> None:
     """피벗 질의는 단축 경로 없이 LLM chat으로 보낸다."""
-    import core.analyzer as analyzer_mod
+    import core.analysis.analyzer as analyzer_mod
 
     df = pd.DataFrame(
         {
@@ -527,9 +527,9 @@ def test_pivot_request_does_not_use_shortcut(monkeypatch) -> None:
 
 def test_schema_hints_expose_compound_metric_without_rewrite() -> None:
     """복합 지표는 rewrite하지 않고 힌트로만 노출한다."""
-    from core.column_match import resolve_metric_column
+    from core.schema.column_match import resolve_metric_column
     from core.profile_loader import use_profile
-    from core.schema_hints import build_schema_hints, format_schema_hints_for_prompt
+    from core.schema.schema_hints import build_schema_hints, format_schema_hints_for_prompt
 
     df = pd.DataFrame(
         {
@@ -551,7 +551,7 @@ def test_schema_hints_expose_compound_metric_without_rewrite() -> None:
 
 def test_hierarchical_fill_only_on_analysis_copy() -> None:
     """원본은 유지하고 분석용 복사본만 forward-fill한다."""
-    from core.schema_hints import prepare_analysis_frame
+    from core.schema.schema_hints import prepare_analysis_frame
 
     raw = pd.DataFrame(
         {
@@ -631,7 +631,7 @@ def test_code_guardrails_flag_pivot_without_forcing_rewrite() -> None:
 def test_code_columns_are_stringified_on_analysis_copy_only() -> None:
     """비용명 코드는 분석 복사본에서만 '121' 문자열로 바뀐다."""
     from core.profile_loader import use_profile
-    from core.schema_hints import prepare_analysis_frame
+    from core.schema.schema_hints import prepare_analysis_frame
 
     raw = pd.DataFrame(
         {
@@ -647,7 +647,7 @@ def test_code_columns_are_stringified_on_analysis_copy_only() -> None:
 
 
 def test_friendly_error_explains_code_key_error() -> None:
-    from core.pandasai_config import _friendly_error
+    from core.pai.pandasai_config import _friendly_error
     from core.profile_loader import use_profile
 
     with use_profile("budget"):

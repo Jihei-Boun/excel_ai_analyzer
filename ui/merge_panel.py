@@ -6,9 +6,9 @@ from datetime import datetime
 
 import streamlit as st
 
-from core.export_utils import dataframe_to_xlsx_bytes, export_dataframe_xlsx, safe_download_name
-from core.merge_engine import infer_common_keys, merge_named_frames
-from core.normalize import align_column_names, column_match_key
+from core.io.export_utils import dataframe_to_xlsx_bytes, export_dataframe_xlsx, safe_download_name
+from core.io.merge_engine import infer_common_keys, merge_named_frames
+from core.io.normalize import align_column_names, column_match_key
 from ui.file_state import (
     _ensure_file_frame,
     find_file,

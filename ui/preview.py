@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import streamlit as st
 
-from core.excel_loader import load_tabular, sanitize_dataframe
-from core.quality import diagnose_dataframe, format_quality_summary, friendly_load_error
+from core.io.excel_loader import load_tabular, sanitize_dataframe
+from core.schema.quality import diagnose_dataframe, format_quality_summary, friendly_load_error
 from ui.display import for_preview_display, preview_column_labels, render_dataframe
 from ui.file_state import (
     get_preview_context,
