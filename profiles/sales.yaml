@@ -1,0 +1,65 @@
+# 매출/거래 표용 샘플 도메인 프로필
+# profiles/ 에 YAML만 추가하면 사이드바 목록에 나타납니다.
+
+summary: sales
+currency: krw
+domain: sales
+
+enable_column_prefs: false
+
+preferred_labels:
+  - 상품명
+  - 제품명
+  - 고객
+  - 고객명
+  - 지역
+  - 채널
+  - 카테고리
+
+footer_labels: []
+
+plan_guidance: >-
+  Prefer product/customer/region columns as labels when present.
+  For ranking top products by revenue use top_n_per_group or sort+limit.
+  Sum quantity and amount columns; do not sum unit price or rate columns.
+
+semantic_hints:
+  likely_identifier_concepts:
+    - 상품코드
+    - sku
+    - 고객id
+    - order_id
+  likely_label_concepts:
+    - 상품명
+    - 고객명
+    - 지역
+    - 채널
+  likely_additive_concepts:
+    - 매출
+    - 판매액
+    - 수량
+    - 금액
+  cautions:
+    - do not sum unit prices or rates
+    - summary rows should not be mixed with detail rows during aggregation
+
+suggested_prompts:
+  - 파일을 요약해줘
+  - 상품별 매출 합계를 표로 보여줘
+  - 지역별 판매 수량을 비교해줘
+  - 매출이 가장 큰 상위 5개 상품을 보여줘
+
+suggested_prompts_multi_file:
+  - 선택한 파일들을 통합해줘
+  - 파일별 매출 합계를 표로 비교해줘
+  - 두 파일에서 공통 상품을 알려줘
+
+meanings:
+  - hints: [매출, 판매액, revenue, sales]
+    meaning: 판매로 발생한 금액
+  - hints: [수량, qty, quantity]
+    meaning: 판매 수량
+  - hints: [상품명, 제품명, product]
+    meaning: 판매 상품 이름
+  - hints: [고객, 고객명, customer]
+    meaning: 구매 고객

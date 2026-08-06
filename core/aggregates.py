@@ -50,12 +50,17 @@ def _build_list_seed_frame(df: pd.DataFrame, prompt: str) -> pd.DataFrame | None
 
 
 def _is_budget_footer_label(value: object) -> bool:
-    """내부흡수액·외부유출액처럼 비목 집계에서 제외할 하단 요약 라벨인지."""
+    """프로필 footer_labels에 해당하는 하단 요약 라벨인지."""
     text = _cell_match_text(value)
     if not text:
         return False
     compact = normalize_text(text)
-    return compact in {normalize_text(label) for label in BUDGET_FOOTER_LABELS}
+    from core.profile_loader import footer_labels_for
+
+    labels = footer_labels_for()
+    if not labels:
+        labels = BUDGET_FOOTER_LABELS
+    return compact in {normalize_text(label) for label in labels}
 
 
 def _aggregate_reducer(op: str) -> tuple[str, object]:
@@ -105,6 +110,7 @@ def build_groupby_aggregate_table(
         prepare_dataframe_for_ai,
         sum_metric_excluding_totals,
     )
+    from core.profile_loader import footer_labels_for
 
     work = exclude_total_rows(prepare_dataframe_for_ai(df))
     if work.empty or group_col not in work.columns:
@@ -121,6 +127,8 @@ def build_groupby_aggregate_table(
     if work.empty:
         return None
 
+    drop_footers = use_budget_profile or bool(footer_labels_for())
+
     # 파일에 처음 등장하는 순서 유지 (가나다·금액 정렬 금지)
     ordered_labels: list[str] = []
     seen_labels: set[str] = set()
@@ -128,7 +136,7 @@ def build_groupby_aggregate_table(
         text = str(label)
         if not text or text in seen_labels or is_total_label(text):
             continue
-        if use_budget_profile and _is_budget_footer_label(text):
+        if drop_footers and _is_budget_footer_label(text):
             continue
         seen_labels.add(text)
         ordered_labels.append(text)

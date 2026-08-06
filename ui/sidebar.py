@@ -6,6 +6,11 @@ import requests
 import streamlit as st
 
 from core.constants import DEFAULT_OLLAMA_BASE_URL, OLLAMA_TIMEOUT_SEC
+from core.profile_loader import (
+    list_profile_names,
+    load_profile,
+    profile_display_label,
+)
 
 
 def _fetch_ollama_models(base_url: str) -> list[str]:
@@ -40,19 +45,7 @@ def render_sidebar() -> None:
             value=bool(st.session_state.get("show_analysis_code", False)),
             help="PandasAI가 생성·실행한 코드를 채팅에서 확인합니다.",
         )
-        st.session_state.budget_table_mode = st.checkbox(
-            "예산 표 모드",
-            value=bool(st.session_state.get("budget_table_mode", False)),
-            help=(
-                "기본은 일반 분석 모드입니다. "
-                "켜면 예실대비표 전용 요약·하단 요약행(내부흡수액·외부유출액) 제외·"
-                "예산 추천 질문을 사용합니다."
-            ),
-        )
-        if st.session_state.budget_table_mode:
-            st.caption("예실대비표(예산) 특화 모드")
-        else:
-            st.caption("일반 분석 모드 (기본)")
+        _render_profile_selector()
 
         st.subheader("연결")
         st.session_state.ollama_base_url = st.text_input(
@@ -152,6 +145,50 @@ def render_sidebar() -> None:
             "테마 변경: 화면 우측 상단 ⋮(또는 ☰) → Settings → Theme 에서 "
             "Light / Dark / Use system setting 을 선택하세요."
         )
+
+
+def _render_profile_selector() -> None:
+    """도메인 프로필 선택. budget 선택 시 하위 호환용 budget_table_mode도 맞춤."""
+    names = list(list_profile_names())
+    if not names:
+        names = ["generic", "budget"]
+    # generic → budget → 나머지
+    ordered = [n for n in ("generic", "budget") if n in names]
+    ordered.extend(n for n in names if n not in ordered)
+
+    current = str(st.session_state.get("analysis_profile") or "").strip().lower()
+    if current not in ordered:
+        current = (
+            "budget"
+            if st.session_state.get("budget_table_mode")
+            else "generic"
+        )
+        if current not in ordered:
+            current = ordered[0]
+        st.session_state.analysis_profile = current
+
+    chosen = st.selectbox(
+        "분석 프로필",
+        options=ordered,
+        format_func=profile_display_label,
+        help=(
+            "도메인 프로필은 추천 질문·라벨·footer·계획 가이던스에 영향을 줍니다. "
+            "profiles/*.yaml 을 추가하면 목록에 나타납니다."
+        ),
+        key="analysis_profile",
+    )
+    st.session_state.budget_table_mode = chosen == "budget"
+    try:
+        profile = load_profile(chosen)
+        domain = str(profile.get("domain") or chosen)
+        if chosen == "budget":
+            st.caption("예실대비표 특화 · footer 제외 · 예산 추천 질문")
+        elif chosen == "generic":
+            st.caption("일반 분석 (도메인 가정 없음)")
+        else:
+            st.caption(f"도메인: {domain}")
+    except Exception:  # noqa: BLE001
+        st.caption(f"프로필: {chosen}")
 
 
 def _render_multi_file_sheet_selectors(active_ids: list[str]) -> None:

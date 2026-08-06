@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from core.excel_loader import load_excel, sanitize_dataframe
+from core.excel_loader import load_tabular, sanitize_dataframe
 from core.quality import diagnose_dataframe, format_quality_summary, friendly_load_error
 from ui.display import for_preview_display, preview_column_labels, render_dataframe
 from ui.file_state import (
@@ -18,7 +18,7 @@ from ui.session_store import clear_selection_and_operation
 def render_preview_section() -> None:
     files = st.session_state.get("uploaded_files") or []
     if not files:
-        st.info("엑셀 파일을 업로드하면 미리보기가 표시됩니다.")
+        st.info("파일을 업로드하면 미리보기가 표시됩니다.")
         return
 
     _render_preview_file_picker(files)
@@ -125,7 +125,7 @@ def _switch_preview_sheet(file_id: str, meta: dict, sheet_name: str) -> None:
         return
 
     try:
-        df = load_excel(path, sheet_name=sheet_name)
+        df = load_tabular(path, sheet_name=sheet_name)
     except Exception as exc:  # noqa: BLE001
         st.error(friendly_load_error(exc, path=str(path)))
         return

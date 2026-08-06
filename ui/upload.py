@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from core.constants import UPLOAD_DIR
-from core.excel_loader import load_excel
+from core.excel_loader import CSV_SHEET_NAME, is_csv_path, load_tabular
 from core.quality import friendly_load_error
 from ui.file_state import (
     _ensure_file_frame,
@@ -63,13 +63,13 @@ __all__ = [
 def render_upload_section() -> None:
     st.subheader("데이터")
     st.caption(
-        "엑셀을 여러 개 올릴 수 있습니다. "
+        "엑셀·CSV를 여러 개 올릴 수 있습니다. "
         "분석할 파일은 왼쪽 사이드바에서, 미리보기는 아래에서 선택하세요."
     )
 
     uploaded_list = st.file_uploader(
-        "엑셀 파일을 업로드하세요.",
-        type=["xlsx", "xls"],
+        "엑셀 또는 CSV 파일을 업로드하세요.",
+        type=["xlsx", "xls", "csv"],
         accept_multiple_files=True,
         key=f"excel_uploader_{st.session_state.get('uploader_nonce', 0)}",
     )
@@ -116,12 +116,17 @@ def _handle_uploads(uploaded_list) -> None:
         save_path.write_bytes(uploaded.getbuffer())
 
         try:
-            excel = pd.ExcelFile(save_path)
-            sheet_names = excel.sheet_names
-            if not sheet_names:
-                raise ValueError("시트가 없는 엑셀 파일입니다.")
-            current_sheet = sheet_names[0]
-            df = load_excel(save_path, sheet_name=current_sheet)
+            if is_csv_path(save_path):
+                sheet_names = [CSV_SHEET_NAME]
+                current_sheet = CSV_SHEET_NAME
+                df = load_tabular(save_path)
+            else:
+                excel = pd.ExcelFile(save_path)
+                sheet_names = excel.sheet_names
+                if not sheet_names:
+                    raise ValueError("시트가 없는 엑셀 파일입니다.")
+                current_sheet = sheet_names[0]
+                df = load_tabular(save_path, sheet_name=current_sheet)
         except Exception as exc:  # noqa: BLE001
             st.error(friendly_load_error(exc, path=uploaded.name))
             continue

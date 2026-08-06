@@ -73,13 +73,20 @@ def is_grand_total_label(value: object) -> bool:
     return bool(_GRAND_TOTAL_RE.fullmatch(text))
 
 
-def is_excluded_summary_label(value: object) -> bool:
+def is_excluded_summary_label(
+    value: object,
+    *,
+    footer_labels: tuple[str, ...] | list[str] | None = None,
+) -> bool:
     text = cell_text(value)
     if not text:
         return False
     if is_total_label(text) or is_grand_total_label(text) or _SUBTOTAL_RE.fullmatch(text):
         return True
-    return compact(text) in {compact(label) for label in BUDGET_FOOTER_LABELS}
+    labels = footer_labels if footer_labels is not None else ()
+    if not labels:
+        return False
+    return compact(text) in {compact(label) for label in labels}
 
 
 def fmt_won(value: float) -> str:

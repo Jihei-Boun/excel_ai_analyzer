@@ -7,7 +7,7 @@ from typing import Any, Iterable
 
 import pandas as pd
 
-from core.constants import AMOUNT_COLUMN_HINTS, BUDGET_FOOTER_LABELS, ITEM_COLUMN_HINTS
+from core.constants import AMOUNT_COLUMN_HINTS, ITEM_COLUMN_HINTS
 from core.summary_utils import cell_text, compact, is_excluded_summary_label, is_grand_total_label
 from core.text_normalize import normalize_text
 
@@ -22,8 +22,12 @@ def classify_rows(
     *,
     dimension_columns: list[str] | None = None,
     summary_row_labels: Iterable[str] | None = None,
+    footer_labels: Iterable[str] | None = None,
 ) -> pd.DataFrame:
-    """행별 역할 메타 컬럼을 부여한 복사본을 반환한다. 불확실해도 삭제하지 않는다."""
+    """행별 역할 메타 컬럼을 부여한 복사본을 반환한다. 불확실해도 삭제하지 않는다.
+
+    footer_labels는 프로필에서 주입한다. 기본값은 빈 튜플(도메인 footer 가정 없음).
+    """
     if df is None or df.empty:
         return df
 
@@ -31,6 +35,7 @@ def classify_rows(
     dims = dimension_columns or infer_dimension_columns(work)
     amount_cols = infer_amount_columns(work)
     extra_labels = {normalize_text(x) for x in (summary_row_labels or []) if x}
+    footer_set = {compact(str(x)) for x in (footer_labels or []) if x}
 
     types: list[str] = []
     confs: list[str] = []
@@ -44,6 +49,7 @@ def classify_rows(
             position=pos,
             n_rows=n,
             extra_labels=extra_labels,
+            footer_set=footer_set,
         )
         types.append(row_type)
         confs.append(conf)
@@ -115,6 +121,7 @@ def _classify_one(
     position: int,
     n_rows: int,
     extra_labels: set[str],
+    footer_set: set[str] | None = None,
 ) -> tuple[str, str, list[str]]:
     reasons: list[str] = []
     dim_texts = [cell_text(row[c]) for c in dims if c in row.index]
@@ -122,6 +129,7 @@ def _classify_one(
     all_dims_blank = bool(dims) and not non_empty_dims
     # 소계/합계 라벨은 dimension 후보 밖(예: 비목분류)에 있을 수 있다.
     label_texts = _label_texts_from_row(row, amount_cols=amount_cols)
+    footers = footer_set or set()
 
     label_hit = None
     for text in label_texts:
@@ -135,7 +143,7 @@ def _classify_one(
             label_hit = "subtotal"
             reasons.append(f"label_subtotal:{text}")
             break
-        if _is_footer_like(text):
+        if _is_footer_like(text, footer_set=footers):
             label_hit = "footer"
             reasons.append(f"label_footer:{text}")
             break
@@ -235,13 +243,10 @@ def _is_total_like(text: str) -> bool:
     return compact_text in {"합계", "총계"} or norm in {"합계", "총계", "total", "grandtotal"}
 
 
-def _is_footer_like(text: str) -> bool:
-    compact_text = compact(text)
-    footer = {compact(label) for label in BUDGET_FOOTER_LABELS}
-    if compact_text in footer:
-        return True
-    # 일반적 footer 패턴: ~계 이지만 소계/합계가 아닌 흡수/유출 등
-    return False
+def _is_footer_like(text: str, *, footer_set: set[str] | None = None) -> bool:
+    if not footer_set:
+        return False
+    return compact(text) in footer_set
 
 
 def classification_summary(df: pd.DataFrame) -> dict[str, Any]:

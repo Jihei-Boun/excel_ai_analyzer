@@ -94,6 +94,7 @@ def validate_analysis_result(
         classified = classify_rows(
             result,
             dimension_columns=plan.dimension_columns or None,
+            footer_labels=plan.footer_labels,
         )
         bad = classified[ROW_TYPE_COL].isin(["subtotal", "total", "footer"])
         if bool(bad.any()):

@@ -33,7 +33,7 @@
 
 | Feature | Description |
 | --- | --- |
-| Excel Upload | `xlsx/xls` 파일 업로드 지원 |
+| Excel / CSV Upload | `xlsx/xls/csv` 파일 업로드 지원 |
 | Multi File | 여러 파일 동시 업로드 및 파일별 분석 |
 | Multi Sheet | 시트 선택 후 원하는 데이터 분석 |
 | Multi File × Sheet | 동시 분석 모드에서 파일별 시트를 여러 개 골라 시트 단위로 펼쳐 비교 |
@@ -194,16 +194,24 @@ streamlit run app.py
 - [x] 입력 정규화·품질 진단
 - [x] N개 파일 비교 병합 및 xlsx export
 - [x] 일반·예산 모드 UX 분리 (추천 질문·프로필)
+- [x] CSV 업로드 지원
+- [x] 사이드바 도메인 프로필 선택 (`profiles/*.yaml`)
 
 ### 🚀 Planned
 
-- [ ] 도메인 프로필 YAML 확장 (`sales` / `inventory` / `custom`)
+- [ ] 도메인 프로필 YAML 확장 샘플 추가 (`inventory` / `custom`)
 - [ ] 업로드 기반 프로필 자동 추천 + 사용자 변경
-- [ ] CSV 업로드 지원
 - [ ] PDF 데이터 입력 지원
 - [ ] 여러 파일 간 자동 비교 리포트 강화 (수치·품질 요약 포함)
 - [ ] 차트 유형 확장 (라인/파이 등)
 - [ ] 분석 결과 Export 강화 (리포트 템플릿)
+
+### ✅ Generality hardening (recent)
+
+- [x] 예산 컬럼 prefs·계획 가이던스를 프로필/`use_budget_profile` 뒤로 이동
+- [x] `preferred_labels` / `footer_labels` / `plan_guidance` 프로필 주입
+- [x] 프로필 화이트리스트 해제 (`profiles/<name>.yaml` 동적 로드)
+- [x] CSV 업로드 + 사이드바 프로필 선택 UI
 
 ---
 

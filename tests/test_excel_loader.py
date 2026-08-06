@@ -7,7 +7,15 @@ from pathlib import Path
 import pandas as pd
 from openpyxl import Workbook
 
-from core.excel_loader import load_excel, merged_header_base, sanitize_dataframe
+from core.excel_loader import (
+    CSV_SHEET_NAME,
+    is_csv_path,
+    load_csv,
+    load_excel,
+    load_tabular,
+    merged_header_base,
+    sanitize_dataframe,
+)
 
 
 def test_sanitize_drops_all_empty_rows() -> None:
@@ -114,3 +122,24 @@ def test_merged_header_base_supports_compound_names() -> None:
     assert merged_header_base("실행예산_2") == "실행예산"
     assert merged_header_base("실행예산_이월예산") == "실행예산"
     assert merged_header_base("계획예산") == "계획예산"
+
+
+def test_load_csv_and_tabular(tmp_path: Path) -> None:
+    path = tmp_path / "sales.csv"
+    path.write_text("상품명,매출\n노트북,1000\n마우스,200\n", encoding="utf-8")
+    assert is_csv_path(path)
+    loaded = load_csv(path)
+    assert list(loaded.columns) == ["상품명", "매출"]
+    assert len(loaded) == 2
+    assert int(loaded.iloc[0]["매출"]) == 1000
+    via_tabular = load_tabular(path)
+    assert list(via_tabular.columns) == ["상품명", "매출"]
+    assert CSV_SHEET_NAME == "CSV"
+
+
+def test_load_csv_cp949(tmp_path: Path) -> None:
+    path = tmp_path / "kr.csv"
+    path.write_bytes("상품,금액\n연필,10\n".encode("cp949"))
+    loaded = load_csv(path)
+    assert list(loaded.columns) == ["상품", "금액"]
+    assert loaded.iloc[0]["상품"] == "연필"

@@ -40,18 +40,27 @@ def suggest_example_prompts(
     df: pd.DataFrame | None,
     *,
     use_budget_profile: bool = False,
+    profile_name: str | None = None,
     multi_file: bool = False,
     multi_sheet: bool = False,
     limit: int = CHAT_EXAMPLE_LIMIT,
 ) -> list[str]:
     """모드·컬럼에 맞춰 채팅 예시 프롬프트를 만든다.
 
-    예산 모드 ON이면 프로필 고정 세트를 우선한다.
-    일반 모드에서는 컬럼 기반 동적 질문을 앞에 두고 부족분을 고정 문구로 채운다.
+    도메인 프로필에 suggested_prompts가 있으면 우선한다.
+    일반(generic)에서는 컬럼 기반 동적 질문을 앞에 두고 부족분을 고정 문구로 채운다.
     """
+    from core.profile_loader import resolve_profile_name
+
     limit = max(1, int(limit))
-    if use_budget_profile:
-        return list(_budget_prompts(multi_file=multi_file))[:limit]
+    name = resolve_profile_name(
+        profile_name=profile_name,
+        use_budget_profile=use_budget_profile,
+    )
+    if name != "generic":
+        return list(
+            _profile_prompts(name, multi_file=multi_file, multi_sheet=multi_sheet)
+        )[:limit]
 
     fallback = _fallback_prompts(multi_file=multi_file, multi_sheet=multi_sheet)
     if df is None or df.empty or len(df.columns) == 0:
@@ -61,8 +70,17 @@ def suggest_example_prompts(
     return _merge_unique(dynamic, fallback, limit=limit)
 
 
-def _budget_prompts(*, multi_file: bool = False) -> tuple[str, ...]:
-    profile = load_profile("budget")
+def _profile_prompts(
+    profile_name: str,
+    *,
+    multi_file: bool = False,
+    multi_sheet: bool = False,
+) -> tuple[str, ...]:
+    profile = load_profile(profile_name)
+    if multi_sheet:
+        sheet = profile.get("suggested_prompts_multi_sheet") or ()
+        if sheet:
+            return tuple(str(p) for p in sheet)
     if multi_file:
         multi = profile.get("suggested_prompts_multi_file") or ()
         if multi:
@@ -70,12 +88,18 @@ def _budget_prompts(*, multi_file: bool = False) -> tuple[str, ...]:
     prompts = profile.get("suggested_prompts") or ()
     if prompts:
         return tuple(str(p) for p in prompts)
-    return (
-        "파일을 요약해줘",
-        "실행예산 합계를 알려줘",
-        "비목분류별 집행계 합계를 표로 보여줘",
-        "비용명이 121인 데이터만 보여줘",
-    )
+    if profile_name == "budget":
+        return (
+            "파일을 요약해줘",
+            "실행예산 합계를 알려줘",
+            "비목분류별 집행계 합계를 표로 보여줘",
+            "비용명이 121인 데이터만 보여줘",
+        )
+    return _FALLBACK_GENERIC
+
+
+def _budget_prompts(*, multi_file: bool = False) -> tuple[str, ...]:
+    return _profile_prompts("budget", multi_file=multi_file)
 
 
 def _fallback_prompts(*, multi_file: bool, multi_sheet: bool) -> tuple[str, ...]:

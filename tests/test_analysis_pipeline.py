@@ -33,12 +33,54 @@ def test_row_classify_marks_subtotal_footer_and_detail() -> None:
     classified = classify_rows(
         df,
         dimension_columns=["카테고리", "항목명"],
+        footer_labels=("내부흡수액", "외부유출액"),
     )
     types = classified[ROW_TYPE_COL].tolist()
     assert types[0] == "detail"
     assert types[2] == "subtotal"
     assert types[5] == "footer"
     assert types[3] == "detail"
+
+
+def test_generic_mode_skips_budget_column_prefs() -> None:
+    """일반 모드에서는 예산 컬럼 강제 보정을 하지 않는다."""
+    from core.analysis_plan_builder import build_analysis_plan
+
+    cols = [
+        "비목분류",
+        "계획예산",
+        "당년도집행",
+        "실행예산_합계",
+        "집행계_합계",
+    ]
+    wrong = {
+        "operation": "group_comparison",
+        "group_column": "비목분류",
+        "groups": ["내부인건비", "연구활동비"],
+        "numerator": "당년도집행",
+        "denominator": "계획예산",
+        "rate_name": "집행률",
+    }
+    df = pd.DataFrame({c: [1, 2] for c in cols})
+    df["비목분류"] = ["내부인건비", "연구활동비"]
+
+    def fake_chat_json(prompt: str, **kwargs):
+        return dict(wrong)
+
+    plan = build_analysis_plan(
+        "내부인건비와 연구활동비의 집행 효율을 비교해서 해석해줘",
+        df,
+        base_url="http://localhost:11434",
+        model="dummy",
+        use_budget_profile=False,
+        chat_json_fn=fake_chat_json,
+    )
+    ratio_steps = [s for s in plan.steps if s.op == "ratio_of_aggregates"]
+    assert ratio_steps
+    # prefs 미적용 → LLM이 고른 당년도/계획예산 유지
+    assert ratio_steps[0].payload["numerator"] == "당년도집행"
+    assert ratio_steps[0].payload["denominator"] == "계획예산"
+    assert plan.footer_labels == []
 
 
 def test_executor_abs_diff_sort_limit() -> None:
@@ -425,6 +467,7 @@ def test_execution_rate_prefs_override_wrong_llm_columns() -> None:
         df,
         base_url="http://localhost:11434",
         model="dummy",
+        use_budget_profile=True,
         chat_json_fn=fake_chat_json,
     )
     ratio_steps = [s for s in plan.steps if s.op == "ratio_of_aggregates"]
@@ -683,6 +726,7 @@ def test_find_items_prefs_override_wide_llm_plan() -> None:
         df,
         base_url="http://localhost:11434",
         model="dummy",
+        use_budget_profile=True,
         chat_json_fn=fake_chat_json,
     )
     assert plan.interpret
@@ -709,7 +753,7 @@ def test_condition_filter_projects_columns() -> None:
         }
     )
     result = try_condition_row_filter(
-        df, "집행계가 0인데 실행예산이 있는 행만 골라줘"
+        df, "집행계가 0인데 실행예산이 있는 행만 골라줘", use_budget_profile=True
     )
     assert result is not None
     assert "기타열" not in result.columns
@@ -798,6 +842,7 @@ def test_rate_vs_mean_prefs_override_wrong_plan() -> None:
         df,
         base_url="http://localhost:11434",
         model="dummy",
+        use_budget_profile=True,
         chat_json_fn=fake_chat_json,
     )
     assert any(s.op == "filter_vs_mean" for s in plan.steps)
@@ -831,6 +876,7 @@ def test_provisional_share_includes_ratio_column() -> None:
         df,
         base_url="http://localhost:11434",
         model="dummy",
+        use_budget_profile=True,
         chat_json_fn=fake_chat_json,
     )
     assert any(s.op == "derive_column" for s in plan.steps)
@@ -876,10 +922,15 @@ def test_top_n_per_group_balance_on_twin() -> None:
         },
         available_columns=list(df.columns),
     )
+    plan.footer_labels = ["내부흡수액", "외부유출액"]
     assert any(s.op == "top_per_group" for s in plan.steps)
     assert not plan.interpret
 
-    classified = classify_rows(df, dimension_columns=["비용명", "비용명_2"])
+    classified = classify_rows(
+        df,
+        dimension_columns=["비용명", "비용명_2"],
+        footer_labels=plan.footer_labels,
+    )
     result, meta = execute_analysis_plan(classified, plan)
     assert len(result) == 7
     assert list(result.columns) == ["비목분류", "비용명_2", "비용명", "예산잔액_합계"]
@@ -930,6 +981,7 @@ def test_top_n_per_group_prefs_override_wrong_plan() -> None:
         df,
         base_url="http://localhost:11434",
         model="dummy",
+        use_budget_profile=True,
         chat_json_fn=fake_chat_json,
     )
     assert any(s.op == "top_per_group" for s in plan.steps)
@@ -1021,6 +1073,7 @@ def test_split_by_difference_prefs_override_top_n() -> None:
         df,
         base_url="http://localhost:11434",
         model="dummy",
+        use_budget_profile=True,
         chat_json_fn=fake_chat_json,
     )
     assert plan.interpret

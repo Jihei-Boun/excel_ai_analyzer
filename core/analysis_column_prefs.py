@@ -108,8 +108,25 @@ def apply_analysis_column_prefs(
     prompt: str,
     data: dict[str, Any],
     columns: list[str],
+    *,
+    use_budget_profile: bool = False,
+    enable_column_prefs: bool | None = None,
 ) -> dict[str, Any]:
-    """도메인 질의에 맞춰 계획 JSON을 보정한다."""
+    """도메인 질의에 맞춰 계획 JSON을 보정한다.
+
+    활성 프로필의 enable_column_prefs=true일 때만 동작한다.
+    """
+    if enable_column_prefs is None:
+        from core.profile_loader import active_profile
+
+        enable_column_prefs = bool(
+            active_profile(use_budget_profile=use_budget_profile).get(
+                "enable_column_prefs"
+            )
+        )
+    if not enable_column_prefs:
+        return data
+
     data = apply_split_by_difference_prefs(prompt, data, columns)
     if str((data or {}).get("operation") or "") in {
         "split_by_difference",

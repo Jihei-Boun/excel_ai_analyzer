@@ -17,6 +17,7 @@ from core.pandasai_config import prepare_dataframe_for_ai
 from core.plan_retry import RetryAttempt, run_plan_retries
 from core.plan_types import ValidationReport
 from core.row_classify import classify_rows, infer_dimension_columns
+from core.profile_loader import footer_labels_for
 
 
 @dataclass
@@ -61,7 +62,11 @@ def try_analysis_pipeline(
     text_fn = chat_text_fn or chat_text
     prepared = prepare_dataframe_for_ai(df)
     dims = infer_dimension_columns(prepared)
-    classified = classify_rows(prepared, dimension_columns=dims)
+    classified = classify_rows(
+        prepared,
+        dimension_columns=dims,
+        footer_labels=footer_labels_for(use_budget_profile=use_budget_profile),
+    )
 
     def _attempt(
         _attempt_index: int,

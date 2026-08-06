@@ -155,24 +155,27 @@ def _find_grand_total_row(
 
 def _detail_rows(df: pd.DataFrame, category_col: str | None) -> pd.DataFrame:
     """소계·합계·내부흡수액·외부유출액 행을 제외한 세부 항목."""
+    footer = tuple(BUDGET_FOOTER_LABELS)
+    exclude = lambda v: is_excluded_summary_label(v, footer_labels=footer)
     mask = pd.Series(True, index=df.index)
     for column in df.columns:
         if is_numeric_col(df, column):
             continue
-        mask &= ~df[column].map(is_excluded_summary_label)
+        mask &= ~df[column].map(exclude)
     if category_col and category_col in df.columns:
-        mask &= ~df[category_col].map(is_excluded_summary_label)
+        mask &= ~df[category_col].map(exclude)
     return df.loc[mask].copy()
 
 
 def _major_categories(df: pd.DataFrame, category_col: str | None) -> list[str]:
     if not category_col or category_col not in df.columns:
         return []
+    footer = tuple(BUDGET_FOOTER_LABELS)
     values: list[str] = []
     seen: set[str] = set()
     for value in df[category_col].tolist():
         text = cell_text(value)
-        if not text or is_excluded_summary_label(text):
+        if not text or is_excluded_summary_label(text, footer_labels=footer):
             continue
         if text in seen:
             continue
@@ -198,7 +201,9 @@ def _top_items(
     work[item_col] = work[item_col].map(cell_text)
     work = work.dropna(subset=[metric_col])
     work = work[work[item_col].astype(bool)]
-    work = work[~work[item_col].map(is_excluded_summary_label)]
+    work = work[~work[item_col].map(
+        lambda v: is_excluded_summary_label(v, footer_labels=tuple(BUDGET_FOOTER_LABELS))
+    )]
     if work.empty:
         return []
 
@@ -227,7 +232,9 @@ def _negative_items(
     items: list[tuple[str, float]] = []
     for _, row in detail.iterrows():
         name = cell_text(row.get(item_col))
-        if not name or is_excluded_summary_label(name):
+        if not name or is_excluded_summary_label(
+            name, footer_labels=tuple(BUDGET_FOOTER_LABELS)
+        ):
             continue
         value = pd.to_numeric(row.get(metric_col), errors="coerce")
         if pd.isna(value) or float(value) >= 0:

@@ -87,13 +87,18 @@ def _render_analysis_mode_setting() -> None:
 
 def _example_prompts() -> list[str]:
     """모드·업로드 데이터에 맞춰 채팅 예시 질문을 고른다."""
-    use_budget = bool(st.session_state.get("budget_table_mode", False))
+    profile_name = str(st.session_state.get("analysis_profile") or "").strip().lower()
+    if not profile_name:
+        profile_name = (
+            "budget" if st.session_state.get("budget_table_mode") else "generic"
+        )
     multi_sheet = is_multi_sheet_analysis() or is_cross_file_sheet_analysis()
     multi_file = is_multi_file_analysis()
     df = get_analysis_df()
     return suggest_example_prompts(
         df,
-        use_budget_profile=use_budget,
+        profile_name=profile_name,
+        use_budget_profile=profile_name == "budget",
         multi_file=multi_file,
         multi_sheet=multi_sheet,
         limit=CHAT_EXAMPLE_LIMIT,

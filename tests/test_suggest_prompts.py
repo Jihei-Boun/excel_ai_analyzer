@@ -35,6 +35,22 @@ def test_generic_dynamic_from_columns() -> None:
     assert "집행률" not in joined
 
 
+def test_sales_profile_prompts() -> None:
+    prompts = suggest_example_prompts(None, profile_name="sales", limit=4)
+    joined = " ".join(prompts)
+    assert "매출" in joined or "상품" in joined
+    assert "실행예산" not in joined
+
+
+def test_use_profile_context_switches_labels() -> None:
+    from core.profile_loader import preferred_labels_for, use_profile
+
+    with use_profile("sales"):
+        labels = preferred_labels_for()
+    assert "상품명" in labels
+    assert "비목분류" not in labels
+
+
 def test_empty_df_falls_back_to_generic() -> None:
     prompts = suggest_example_prompts(None, use_budget_profile=False, limit=4)
     assert "파일을 요약해줘" in prompts
@@ -48,5 +64,4 @@ def test_multi_file_fallback() -> None:
         multi_file=True,
         limit=4,
     )
-    joined = " ".join(prompts)
-    assert "파일" in joined
+    assert any("파일" in p for p in prompts)

@@ -2,6 +2,27 @@
 
 summary: generic
 currency: none
+domain: generic
+
+# 도메인 컬럼 강제 보정(집행률 등) — 일반 모드에서는 끔
+enable_column_prefs: false
+
+# 결과 표에 우선 남길 식별/라벨 열 (스키마에 있을 때만)
+preferred_labels:
+  - 항목명
+  - 항목
+  - 이름
+  - name
+  - label
+  - category
+  - 분류
+  - 구분
+
+# 집계에서 제외할 하단 요약 라벨 (일반 모드는 비움)
+footer_labels: []
+
+# LLM 계획 모듈에 붙는 도메인 가이던스 (없으면 범용 프롬프트만)
+plan_guidance: ""
 
 semantic_hints:
   likely_identifier_concepts:

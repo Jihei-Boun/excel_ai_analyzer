@@ -10,8 +10,70 @@ import pandas as pd
 from core.analysis_plan_types import AnalysisPlan, analysis_plan_from_dict
 from core.analysis_column_prefs import apply_analysis_column_prefs
 from core.llm_client import chat_json
+from core.profile_loader import active_profile
 from core.row_classify import classification_summary
 from core.schema_infer import build_frame_inventory, semantic_hints_text
+
+# 도메인 비의존 범용 계획 프롬프트
+_GENERIC_PLAN_SYSTEM = (
+    "You are a planning module for a generic Excel analyzer. "
+    "Given a pandas DataFrame inventory and optional row-type distribution, "
+    "produce ONE JSON analysis plan for a deterministic executor. "
+    "Do NOT write pandas code. Do NOT invent columns that are not in the inventory. "
+    "Prefer a pipeline of atomic steps. Allowed ops: "
+    "annotate_row_types, filter_rows, select_columns, derive_column, sort, limit, "
+    "drop_columns, aggregate, ratio_of_aggregates, compare_groups, "
+    "distribution_summary, correlation, filter_vs_mean. "
+    "filter_rows may include include_row_types, column_filters "
+    "[{column, values}] for label membership, and numeric_filters "
+    "[{column, op, value}] where op is eq|ne|gt|gte|lt|lte. "
+    "aggregate: group_by, metrics[{column, fn}], prefer_subtotals(bool), include_groups. "
+    "When prefer_subtotals=true, use trustworthy subtotal rows if present; "
+    "otherwise sum detail rows. Never double-count subtotals with details. "
+    "ratio_of_aggregates: name, numerator, denominator — compute sum-level ratio "
+    "(NOT the mean of row ratios). Apply after aggregate. "
+    "compare_groups: group_column, groups, metrics, rate_columns. "
+    "distribution_summary: budget_column, executed_column, optional group_column/group_value. "
+    "correlation: x_column, y_column, optional label_column, methods "
+    "— row-level Pearson/Spearman on detail rows (NOT a ratio, NOT group aggregate). "
+    "filter_vs_mean: column, relation(below|above) — keep rows vs arithmetic mean. "
+    "For ranking by 'largest difference' / '차이가 큰', use abs_diff and descending sort, "
+    "and set criteria_note explaining absolute difference. "
+    "For directional comparisons use signed diffs matching the user wording. "
+    "For '상관' / '상관관계' / 'correlation' / Pearson / Spearman: "
+    "MUST use operation='correlation' with x_column, y_column, optional label_column, "
+    "interpret=true. Never answer correlation with group_comparison or "
+    "ratio_of_aggregates. Zero denominator is not correlation. "
+    "For finding items by numeric conditions (많다/없는/0/=0/>0): "
+    "MUST use operation='find_items' with numeric_filters, sort_by, "
+    "output_columns (ONLY labels + condition columns + 1-2 related metrics — "
+    "NEVER return all source columns), interpret=true when 의미/설명 asked. "
+    "For rate vs mean comparisons: operation='rate_vs_mean' with numerator, "
+    "denominator, relation; exclude denominator==0; interpret=false for table-only. "
+    "For per-group top/bottom item: operation='top_n_per_group' with group_column, "
+    "value_column, n, ascending. Filter to detail rows only. "
+    "For splitting increases vs decreases between two numeric columns: "
+    "operation='split_by_difference' with left, right; keep ALL detail rows. "
+    "For comparing categories with a rate: prefer operation='group_comparison' "
+    "with group_column, groups, numerator, denominator, rate_name, "
+    "prefer_subtotals=true when useful. "
+    "Always exclude non-detail rows when the user asks for item rankings: "
+    "annotate_row_types then filter_rows with include_row_types=['detail'] "
+    "and drop_blank_dimensions=true. "
+    "You may return compact high-level forms: "
+    "operation='top_n_difference', operation='group_comparison', "
+    "operation='correlation', operation='find_items', operation='rate_vs_mean', "
+    "operation='top_n_per_group', or operation='split_by_difference'. "
+    "Return ONLY a JSON object."
+)
+
+
+def _plan_system_prompt(*, use_budget_profile: bool) -> str:
+    profile = active_profile(use_budget_profile=use_budget_profile)
+    guidance = str(profile.get("plan_guidance") or "").strip()
+    if not guidance:
+        return _GENERIC_PLAN_SYSTEM
+    return f"{_GENERIC_PLAN_SYSTEM} Domain guidance: {guidance}"
 
 
 def build_analysis_plan(
@@ -30,80 +92,7 @@ def build_analysis_plan(
     row_summary = classification_summary(classified_df if classified_df is not None else df)
     columns = [str(c) for c in df.columns]
 
-    system = (
-        "You are a planning module for a generic Excel analyzer. "
-        "Given a pandas DataFrame inventory and optional row-type distribution, "
-        "produce ONE JSON analysis plan for a deterministic executor. "
-        "Do NOT write pandas code. Do NOT invent columns that are not in the inventory. "
-        "Prefer a pipeline of atomic steps. Allowed ops: "
-        "annotate_row_types, filter_rows, select_columns, derive_column, sort, limit, "
-        "drop_columns, aggregate, ratio_of_aggregates, compare_groups, "
-        "distribution_summary, correlation, filter_vs_mean. "
-        "filter_rows may include include_row_types, column_filters "
-        "[{column, values}] for label membership, and numeric_filters "
-        "[{column, op, value}] where op is eq|ne|gt|gte|lt|lte. "
-        "aggregate: group_by, metrics[{column, fn}], prefer_subtotals(bool), include_groups. "
-        "When prefer_subtotals=true, use trustworthy subtotal rows if present; "
-        "otherwise sum detail rows. Never double-count subtotals with details. "
-        "ratio_of_aggregates: name, numerator, denominator — compute sum-level ratio "
-        "(NOT the mean of row ratios). Apply after aggregate. "
-        "compare_groups: group_column, groups, metrics, rate_columns. "
-        "distribution_summary: budget_column, executed_column, optional group_column/group_value. "
-        "correlation: x_column, y_column, optional label_column, methods "
-        "— row-level Pearson/Spearman on detail rows (NOT a ratio, NOT group aggregate). "
-        "filter_vs_mean: column, relation(below|above) — keep rows vs arithmetic mean. "
-        "For ranking by 'largest difference' / '차이가 큰', use abs_diff and descending sort, "
-        "and set criteria_note explaining absolute difference. "
-        "For '초과' / '더 많이 집행' use directional diff (e.g. executed - planned). "
-        "For '부족' / '미집행' use the opposite direction. "
-        "For '상관' / '상관관계' / 'correlation' / Pearson / Spearman: "
-        "MUST use operation='correlation' with x_column, y_column, label_column "
-        "(detail item name like 비용명), interpret=true. "
-        "Never answer correlation with group_comparison, ratio_of_aggregates, "
-        "or 가집행_대비_집행율 style ratios. Zero denominator is not correlation. "
-        "For finding items by numeric conditions (많다/없는/0/=0/>0) and explaining: "
-        "MUST use operation='find_items' with numeric_filters, sort_by, "
-        "output_columns (ONLY labels + condition columns + 1-2 related metrics — "
-        "NEVER return all source columns), interpret=true when 의미/설명 asked. "
-        "Example: 이월예산 많은데 당해집행 없는 항목 → "
-        "numeric_filters=[{실행예산_이월예산,gt,0},{집행계_당해집행,eq,0}], "
-        "sort_by=[실행예산_이월예산] descending, "
-        "output_columns=[비목분류,비용명_2,비용명,실행예산_이월예산,집행계_당해집행,"
-        "집행계_합계,집행계_이월집행]. "
-        "For 비용명별/항목별 집행률 then 평균보다 낮은/높은 항목 only: "
-        "MUST use operation='rate_vs_mean' with numerator, denominator, relation, "
-        "interpret=false when user asks for a table. "
-        "Default: numerator=집행계_합계, denominator=실행예산_합계. "
-        "Exclude denominator==0 from rate and mean. "
-        "Do NOT use group_comparison or 계획예산 for this. "
-        "For 비목분류별/그룹별 가장 잔액(또는 금액)이 큰/작은 항목 하나씩: "
-        "MUST use operation='top_n_per_group' with group_column, value_column, n=1, "
-        "ascending=false for 큰/최대, ascending=true for 작/최소. "
-        "Default value_column=예산잔액_합계 (use 예산잔액_당해잔액 only if 당해/당년 asked). "
-        "Filter to detail rows only. output_columns=labels+value only. "
-        "Do NOT answer with group_comparison aggregates or a full item list. "
-        "For 계획예산 vs 실행예산 늘어난/줄어든 항목을 나눠 설명: "
-        "MUST use operation='split_by_difference' with left=실행예산_합계, "
-        "right=계획예산, diff_name=차이, label_name=구분, interpret=true. "
-        "Do NOT use top_n_difference or limit — keep ALL detail rows "
-        "(increases and decreases). 차이 = left − right. "
-        "For comparing categories / execution efficiency between groups / 해석: "
-        "prefer operation='group_comparison' with group_column, groups, "
-        "numerator, denominator, rate_name, prefer_subtotals=true, interpret=true. "
-        "Default execution rate columns when present: "
-        "numerator=집행계_합계 (NOT 당년도집행), denominator=실행예산_합계 (NOT 계획예산). "
-        "Only use 당년도집행/당년도예산/계획예산 when the user explicitly asks for "
-        "당년·당해·올해 기준. "
-        "Do NOT answer efficiency comparisons with top_n_difference on detail rows. "
-        "Always exclude non-detail rows when the user asks for item rankings: "
-        "annotate_row_types then filter_rows with include_row_types=['detail'] "
-        "and drop_blank_dimensions=true. "
-        "You may return compact high-level forms: "
-        "operation='top_n_difference', operation='group_comparison', "
-        "operation='correlation', operation='find_items', operation='rate_vs_mean', "
-        "operation='top_n_per_group', or operation='split_by_difference'. "
-        "Return ONLY a JSON object."
-    )
+    system = _plan_system_prompt(use_budget_profile=use_budget_profile)
 
     user_parts = [
         f"User request:\n{prompt}",
@@ -144,5 +133,13 @@ def build_analysis_plan(
         base_url=base_url,
         model=model,
     )
-    data = apply_analysis_column_prefs(prompt, data, columns)
-    return analysis_plan_from_dict(data, available_columns=columns)
+    data = apply_analysis_column_prefs(
+        prompt,
+        data,
+        columns,
+        use_budget_profile=use_budget_profile,
+    )
+    plan = analysis_plan_from_dict(data, available_columns=columns)
+    profile = active_profile(use_budget_profile=use_budget_profile)
+    plan.footer_labels = [str(x) for x in (profile.get("footer_labels") or ())]
+    return plan

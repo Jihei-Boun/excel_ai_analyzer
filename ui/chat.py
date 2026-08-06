@@ -18,6 +18,7 @@ from core.prompt_router import (
     route_single_prompt,
 )
 from core.value_filter import infer_context_label, resolve_filter_source
+from core.profile_loader import use_profile
 from ui.file_state import (
     find_file,
     frame_label_parts,
@@ -31,8 +32,15 @@ from ui.file_state import (
 from ui.session_store import clear_filter_selection_context, clear_filter_state
 
 
+def _active_profile_name() -> str:
+    name = str(st.session_state.get("analysis_profile") or "").strip().lower()
+    if name:
+        return name
+    return "budget" if st.session_state.get("budget_table_mode") else "generic"
+
+
 def _use_budget_profile() -> bool:
-    return bool(st.session_state.get("budget_table_mode", False))
+    return _active_profile_name() == "budget"
 
 
 def process_user_prompt(prompt: str, *, user_already_added: bool = False) -> None:
@@ -48,7 +56,8 @@ def process_user_prompt(prompt: str, *, user_already_added: bool = False) -> Non
         unit = get_analysis_unit_label()
         with st.spinner(f"{len(named_frames)}개 {unit} 동시 분석 중..."):
             try:
-                reply, extra_df, extra_meta = _run_multi_prompt(prompt, named_frames)
+                with use_profile(_active_profile_name()):
+                    reply, extra_df, extra_meta = _run_multi_prompt(prompt, named_frames)
             except Exception as exc:
                 reply = f"오류가 발생했습니다: {_friendly_error(exc)}"
                 extra_df = None
@@ -57,7 +66,7 @@ def process_user_prompt(prompt: str, *, user_already_added: bool = False) -> Non
     else:
         df: pd.DataFrame | None = get_analysis_df()
         if df is None:
-            st.warning("먼저 엑셀 파일을 업로드하세요.")
+            st.warning("먼저 파일을 업로드하세요.")
             return
 
         df = sanitize_dataframe(df)
@@ -77,7 +86,8 @@ def process_user_prompt(prompt: str, *, user_already_added: bool = False) -> Non
 
         with st.spinner("분석 중..."):
             try:
-                reply, extra_df, extra_meta = _run_prompt(prompt, df)
+                with use_profile(_active_profile_name()):
+                    reply, extra_df, extra_meta = _run_prompt(prompt, df)
             except Exception as exc:
                 reply = f"오류가 발생했습니다: {_friendly_error(exc)}"
                 extra_df = None

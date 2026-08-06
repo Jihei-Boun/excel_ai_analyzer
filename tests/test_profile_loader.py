@@ -7,6 +7,7 @@ from core.profile_loader import (
     PROFILES_DIR,
     active_profile,
     clear_profile_cache,
+    list_profile_names,
     load_budget_profile,
     load_column_hints,
     load_column_meanings,
@@ -14,6 +15,25 @@ from core.profile_loader import (
     load_meaning_rules,
     load_profile,
 )
+
+
+def test_sales_profile_in_list() -> None:
+    clear_profile_cache()
+    assert "sales" in list_profile_names()
+    sales = load_profile("sales")
+    assert sales["domain"] == "sales"
+    assert sales["enable_column_prefs"] is False
+    assert "상품명" in sales["preferred_labels"]
+
+
+def test_use_profile_context() -> None:
+    from core.profile_loader import preferred_labels_for, use_profile
+
+    clear_profile_cache()
+    with use_profile("sales"):
+        assert preferred_labels_for()[0] in {"상품명", "제품명", "고객", "고객명", "지역", "채널", "카테고리"}
+    # 컨텍스트 종료 후 generic
+    assert "비목분류" not in preferred_labels_for(use_budget_profile=False)
 
 
 def test_profiles_dir_exists() -> None:
@@ -53,6 +73,59 @@ def test_generic_profile_load() -> None:
     assert generic["summary"] == "generic"
     assert generic["suggested_prompts"]
     assert "파일을 요약해줘" in generic["suggested_prompts"]
+
+
+def test_generic_profile_has_no_column_prefs() -> None:
+    clear_profile_cache()
+    generic = load_generic_profile()
+    assert generic["enable_column_prefs"] is False
+    assert generic["footer_labels"] == ()
+    assert "비목분류" not in generic["preferred_labels"]
+    assert generic["plan_guidance"] == ""
+
+
+def test_budget_profile_enables_prefs_and_guidance() -> None:
+    clear_profile_cache()
+    budget = load_budget_profile()
+    assert budget["enable_column_prefs"] is True
+    assert "내부흡수액" in budget["footer_labels"]
+    assert "비목분류" in budget["preferred_labels"]
+    assert "집행계_합계" in budget["plan_guidance"]
+
+
+def test_list_and_load_custom_profile(tmp_path, monkeypatch) -> None:
+    """profiles에 YAML만 추가하면 로드 가능해야 한다."""
+    import core.profile_loader as pl
+
+    monkeypatch.setattr(pl, "PROFILES_DIR", tmp_path)
+    (tmp_path / "column_hints.yaml").write_text(
+        "group_column_hints: []\n"
+        "group_column_suffixes: []\n"
+        "group_column_exact: []\n"
+        "item_column_hints: []\n"
+        "code_column_hints: []\n"
+        "code_metric_name_hints: []\n"
+        "amount_column_hints: []\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "column_meanings.yaml").write_text("meanings: []\n", encoding="utf-8")
+    (tmp_path / "sales.yaml").write_text(
+        "summary: sales\n"
+        "currency: none\n"
+        "domain: sales\n"
+        "enable_column_prefs: false\n"
+        "preferred_labels: [상품명, 고객]\n"
+        "footer_labels: []\n"
+        "plan_guidance: ''\n"
+        "suggested_prompts: [매출 합계를 구해줘]\n",
+        encoding="utf-8",
+    )
+    pl.clear_profile_cache()
+    assert "sales" in pl.list_profile_names()
+    sales = pl.load_profile("sales")
+    assert sales["name"] == "sales"
+    assert sales["preferred_labels"] == ("상품명", "고객")
+    assert sales["enable_column_prefs"] is False
 
 
 def test_load_profile_and_active() -> None:

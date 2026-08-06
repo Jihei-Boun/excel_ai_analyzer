@@ -80,7 +80,14 @@ def _run_step(
             df.drop(columns=[c for c in META_COLUMNS if c in df.columns], errors="ignore")
         )
         base = df.drop(columns=[c for c in META_COLUMNS if c in df.columns], errors="ignore")
-        return classify_rows(base, dimension_columns=dims), {}
+        return (
+            classify_rows(
+                base,
+                dimension_columns=dims,
+                footer_labels=plan.footer_labels,
+            ),
+            {},
+        )
 
     if op == "filter_rows":
         return _filter_rows(df, step.payload, plan), {}
@@ -199,7 +206,11 @@ def _filter_rows(
     payload: dict[str, Any],
     plan: AnalysisPlan,
 ) -> pd.DataFrame:
-    work = ensure_row_types(df, dimension_columns=plan.dimension_columns or None)
+    work = ensure_row_types(
+        df,
+        dimension_columns=plan.dimension_columns or None,
+        footer_labels=plan.footer_labels,
+    )
 
     include = set(payload.get("include_row_types") or ["detail"])
     mask = work[ROW_TYPE_COL].astype(str).isin(include)

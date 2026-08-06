@@ -39,6 +39,53 @@ def load_excel(path: str | Path, *, sheet_name: str | int = 0) -> pd.DataFrame:
     return sanitize_dataframe(df)
 
 
+def load_csv(path: str | Path, *, encoding: str | None = None) -> pd.DataFrame:
+    """CSV를 읽고 엑셀과 동일한 sanitize를 적용한다."""
+    csv_path = Path(path)
+    tried: list[str] = []
+    encodings = [encoding] if encoding else ["utf-8-sig", "utf-8", "cp949", "euc-kr"]
+    last_error: Exception | None = None
+    for enc in encodings:
+        if not enc or enc in tried:
+            continue
+        tried.append(enc)
+        try:
+            df = pd.read_csv(csv_path, encoding=enc)
+            return sanitize_dataframe(df)
+        except UnicodeDecodeError as exc:
+            last_error = exc
+            continue
+    if last_error is not None:
+        raise last_error
+    raise ValueError(f"CSV를 읽을 수 없습니다: {csv_path.name}")
+
+
+def is_csv_path(path: str | Path) -> bool:
+    return Path(path).suffix.lower() == ".csv"
+
+
+def is_excel_path(path: str | Path) -> bool:
+    return Path(path).suffix.lower() in {".xlsx", ".xls", ".xlsm"}
+
+
+# CSV는 시트가 없으므로 UI·캐시용 가상 시트명
+CSV_SHEET_NAME = "CSV"
+
+
+def load_tabular(
+    path: str | Path,
+    *,
+    sheet_name: str | int | None = 0,
+) -> pd.DataFrame:
+    """엑셀 또는 CSV를 DataFrame으로 로드한다."""
+    file_path = Path(path)
+    if is_csv_path(file_path):
+        return load_csv(file_path)
+    if sheet_name is None:
+        sheet_name = 0
+    return load_excel(file_path, sheet_name=sheet_name)
+
+
 def find_merged_header_pair(
     columns: pd.Index | list[str],
     base_name: str | None,

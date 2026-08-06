@@ -103,6 +103,7 @@ def init_session_state() -> None:
         "_df_sanitized": False,
         "show_analysis_code": False,
         "budget_table_mode": False,
+        "analysis_profile": "generic",
     }
     for key, value in defaults.items():
         if key not in st.session_state:

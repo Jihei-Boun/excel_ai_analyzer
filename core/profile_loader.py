@@ -1,16 +1,24 @@
-"""profiles/*.yaml 로더 — 컬럼 힌트·의미·일반/예산 프로필."""
+"""profiles/*.yaml 로더 — 컬럼 힌트·의미·도메인 프로필."""
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import yaml
 
 PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles"
 
-_PROFILE_NAMES = frozenset({"generic", "budget"})
+# 프로필이 아닌 공유 YAML
+_SHARED_YAML_NAMES = frozenset({"column_hints.yaml", "column_meanings.yaml"})
+
+# UI/요청 단위로 활성 프로필 이름을 주입 (미설정 시 use_budget_profile 폴백)
+_active_profile_name: ContextVar[str | None] = ContextVar(
+    "analysis_profile_name", default=None
+)
 
 
 def _as_tuple(value: Any, *, field: str) -> tuple[str, ...]:
@@ -33,6 +41,20 @@ def _as_int(value: Any, *, field: str, default: int) -> int:
     if value is None:
         return default
     return int(value)
+
+
+def _as_bool(value: Any, *, field: str, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    raise TypeError(f"{field} must be a boolean, got {type(value).__name__}")
 
 
 def _parse_meanings(value: Any, *, field: str) -> tuple[tuple[tuple[str, ...], str], ...]:
@@ -71,6 +93,71 @@ def _parse_semantic_hints(value: Any, *, field: str) -> dict[str, Any]:
     return result
 
 
+def _normalize_profile(name: str, data: dict[str, Any]) -> dict[str, Any]:
+    """도메인 YAML을 공통 프로필 dict로 정규화한다."""
+    domain = _as_str(data.get("domain"), field="domain") or name
+    meanings = _parse_meanings(data.get("meanings"), field="meanings")
+    if name == "generic" and not meanings:
+        meanings = load_column_meanings()
+
+    return {
+        "name": name,
+        "summary": _as_str(data.get("summary"), field="summary") or name,
+        "currency": _as_str(data.get("currency"), field="currency") or "none",
+        "domain": domain,
+        "detect_min_hits": _as_int(
+            data.get("detect_min_hits"), field="detect_min_hits", default=2
+        ),
+        "enable_column_prefs": _as_bool(
+            data.get("enable_column_prefs"),
+            field="enable_column_prefs",
+            default=(name == "budget"),
+        ),
+        "preferred_labels": _as_tuple(
+            data.get("preferred_labels"), field="preferred_labels"
+        ),
+        "plan_guidance": _as_str(data.get("plan_guidance"), field="plan_guidance"),
+        "column_hints": _as_tuple(data.get("column_hints"), field="column_hints"),
+        "item_column_candidates": _as_tuple(
+            data.get("item_column_candidates"), field="item_column_candidates"
+        ),
+        "category_column_candidates": _as_tuple(
+            data.get("category_column_candidates"), field="category_column_candidates"
+        ),
+        "budget_column_candidates": _as_tuple(
+            data.get("budget_column_candidates"), field="budget_column_candidates"
+        ),
+        "executed_column_candidates": _as_tuple(
+            data.get("executed_column_candidates"), field="executed_column_candidates"
+        ),
+        "remaining_column_candidates": _as_tuple(
+            data.get("remaining_column_candidates"), field="remaining_column_candidates"
+        ),
+        "current_remaining_column_candidates": _as_tuple(
+            data.get("current_remaining_column_candidates"),
+            field="current_remaining_column_candidates",
+        ),
+        "key_column_hints": _as_tuple(data.get("key_column_hints"), field="key_column_hints"),
+        "footer_labels": _as_tuple(data.get("footer_labels"), field="footer_labels"),
+        "intro": _as_str(data.get("intro"), field="intro"),
+        "semantic_hints": _parse_semantic_hints(
+            data.get("semantic_hints"), field="semantic_hints"
+        ),
+        "suggested_prompts": _as_tuple(
+            data.get("suggested_prompts"), field="suggested_prompts"
+        ),
+        "suggested_prompts_multi_file": _as_tuple(
+            data.get("suggested_prompts_multi_file"),
+            field="suggested_prompts_multi_file",
+        ),
+        "suggested_prompts_multi_sheet": _as_tuple(
+            data.get("suggested_prompts_multi_sheet"),
+            field="suggested_prompts_multi_sheet",
+        ),
+        "meanings": meanings,
+    }
+
+
 @lru_cache(maxsize=1)
 def load_column_hints() -> dict[str, tuple[str, ...]]:
     path = PROFILES_DIR / "column_hints.yaml"
@@ -100,115 +187,146 @@ def load_column_meanings() -> tuple[tuple[tuple[str, ...], str], ...]:
     return _parse_meanings(data.get("meanings"), field="meanings")
 
 
-@lru_cache(maxsize=1)
+def list_profile_names() -> tuple[str, ...]:
+    """profiles/*.yaml 중 공유 파일을 제외한 프로필 이름."""
+    if not PROFILES_DIR.is_dir():
+        return ()
+    names = sorted(
+        path.stem
+        for path in PROFILES_DIR.glob("*.yaml")
+        if path.name not in _SHARED_YAML_NAMES
+    )
+    return tuple(names)
+
+
+def profile_display_label(name: str) -> str:
+    """사이드바용 짧은 표시명."""
+    labels = {
+        "generic": "일반 (generic)",
+        "budget": "예산 표 (budget)",
+        "sales": "매출 (sales)",
+    }
+    return labels.get(name, name)
+
+
+@lru_cache(maxsize=16)
+def _load_named_profile(name: str) -> dict[str, Any]:
+    path = PROFILES_DIR / f"{name}.yaml"
+    if not path.is_file():
+        known = ", ".join(list_profile_names()) or "(none)"
+        raise ValueError(f"Unknown profile: {name!r} (available: {known})")
+    data = _load_yaml(path)
+    return _normalize_profile(name, data)
+
+
 def load_budget_profile() -> dict[str, Any]:
-    path = PROFILES_DIR / "budget.yaml"
-    data = _load_yaml(path)
-    return {
-        "name": "budget",
-        "summary": _as_str(data.get("summary"), field="summary") or "budget",
-        "currency": _as_str(data.get("currency"), field="currency") or "krw",
-        "detect_min_hits": _as_int(
-            data.get("detect_min_hits"), field="detect_min_hits", default=2
-        ),
-        "column_hints": _as_tuple(data.get("column_hints"), field="column_hints"),
-        "item_column_candidates": _as_tuple(
-            data.get("item_column_candidates"), field="item_column_candidates"
-        ),
-        "category_column_candidates": _as_tuple(
-            data.get("category_column_candidates"), field="category_column_candidates"
-        ),
-        "budget_column_candidates": _as_tuple(
-            data.get("budget_column_candidates"), field="budget_column_candidates"
-        ),
-        "executed_column_candidates": _as_tuple(
-            data.get("executed_column_candidates"), field="executed_column_candidates"
-        ),
-        "remaining_column_candidates": _as_tuple(
-            data.get("remaining_column_candidates"), field="remaining_column_candidates"
-        ),
-        "current_remaining_column_candidates": _as_tuple(
-            data.get("current_remaining_column_candidates"),
-            field="current_remaining_column_candidates",
-        ),
-        "key_column_hints": _as_tuple(data.get("key_column_hints"), field="key_column_hints"),
-        "footer_labels": _as_tuple(data.get("footer_labels"), field="footer_labels"),
-        "intro": _as_str(data.get("intro"), field="intro"),
-        "domain": _as_str(data.get("domain"), field="domain"),
-        "semantic_hints": _parse_semantic_hints(
-            data.get("semantic_hints"), field="semantic_hints"
-        ),
-        "suggested_prompts": _as_tuple(
-            data.get("suggested_prompts"), field="suggested_prompts"
-        ),
-        "suggested_prompts_multi_file": _as_tuple(
-            data.get("suggested_prompts_multi_file"),
-            field="suggested_prompts_multi_file",
-        ),
-        "meanings": _parse_meanings(data.get("meanings"), field="meanings"),
-    }
+    return _load_named_profile("budget")
 
 
-@lru_cache(maxsize=1)
 def load_generic_profile() -> dict[str, Any]:
-    path = PROFILES_DIR / "generic.yaml"
-    data = _load_yaml(path)
-    return {
-        "name": "generic",
-        "summary": _as_str(data.get("summary"), field="summary") or "generic",
-        "currency": _as_str(data.get("currency"), field="currency") or "none",
-        "suggested_prompts": _as_tuple(
-            data.get("suggested_prompts"), field="suggested_prompts"
-        ),
-        "suggested_prompts_multi_file": _as_tuple(
-            data.get("suggested_prompts_multi_file"),
-            field="suggested_prompts_multi_file",
-        ),
-        "suggested_prompts_multi_sheet": _as_tuple(
-            data.get("suggested_prompts_multi_sheet"),
-            field="suggested_prompts_multi_sheet",
-        ),
-        "domain": _as_str(data.get("domain"), field="domain") or "generic",
-        "semantic_hints": _parse_semantic_hints(
-            data.get("semantic_hints"), field="semantic_hints"
-        ),
-        "meanings": load_column_meanings(),
-        "footer_labels": (),
-    }
+    return _load_named_profile("generic")
 
 
 def load_profile(name: str) -> dict[str, Any]:
-    """프로필 이름으로 로드. ``generic`` | ``budget``."""
+    """프로필 이름으로 로드. ``profiles/<name>.yaml`` 이 있으면 허용."""
     key = str(name or "generic").strip().lower()
-    if key not in _PROFILE_NAMES:
-        raise ValueError(f"Unknown profile: {name!r} (expected generic|budget)")
-    if key == "budget":
-        return load_budget_profile()
-    return load_generic_profile()
+    if not key or "/" in key or "\\" in key or ".." in key:
+        raise ValueError(f"Invalid profile name: {name!r}")
+    return _load_named_profile(key)
 
 
-def active_profile(*, use_budget_profile: bool = False) -> dict[str, Any]:
-    """예산 표 모드 여부에 따른 활성 프로필."""
-    return load_profile("budget" if use_budget_profile else "generic")
+def resolve_profile_name(
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
+) -> str:
+    """명시 이름 → 컨텍스트 → budget/generic 폴백."""
+    if profile_name:
+        return str(profile_name).strip().lower()
+    ctx = _active_profile_name.get()
+    if ctx:
+        return str(ctx).strip().lower()
+    return "budget" if use_budget_profile else "generic"
 
 
-def load_meaning_rules(*, use_budget_profile: bool = False) -> tuple[
-    tuple[tuple[str, ...], str], ...
-]:
-    """의미 규칙. 예산 모드면 budget meanings를 앞에 두고 일반 규칙을 이어 붙인다."""
+def set_active_profile_name(name: str | None) -> None:
+    """요청 스코프에서 활성 프로필을 설정한다."""
+    _active_profile_name.set(str(name).strip().lower() if name else None)
+
+
+@contextmanager
+def use_profile(name: str | None) -> Iterator[None]:
+    token = _active_profile_name.set(str(name).strip().lower() if name else None)
+    try:
+        yield
+    finally:
+        _active_profile_name.reset(token)
+
+
+def active_profile(
+    *,
+    use_budget_profile: bool = False,
+    profile_name: str | None = None,
+) -> dict[str, Any]:
+    """활성 도메인 프로필."""
+    return load_profile(
+        resolve_profile_name(
+            profile_name=profile_name,
+            use_budget_profile=use_budget_profile,
+        )
+    )
+
+
+def preferred_labels_for(
+    *,
+    use_budget_profile: bool = False,
+    profile_name: str | None = None,
+) -> tuple[str, ...]:
+    return tuple(
+        active_profile(
+            use_budget_profile=use_budget_profile,
+            profile_name=profile_name,
+        ).get("preferred_labels")
+        or ()
+    )
+
+
+def footer_labels_for(
+    *,
+    use_budget_profile: bool = False,
+    profile_name: str | None = None,
+) -> tuple[str, ...]:
+    return tuple(
+        active_profile(
+            use_budget_profile=use_budget_profile,
+            profile_name=profile_name,
+        ).get("footer_labels")
+        or ()
+    )
+
+
+def load_meaning_rules(
+    *,
+    use_budget_profile: bool = False,
+    profile_name: str | None = None,
+) -> tuple[tuple[tuple[str, ...], str], ...]:
+    """의미 규칙. 도메인 meanings를 앞에 두고 일반 규칙을 이어 붙인다."""
     generic = load_column_meanings()
-    if not use_budget_profile:
+    name = resolve_profile_name(
+        profile_name=profile_name,
+        use_budget_profile=use_budget_profile,
+    )
+    if name in {"generic", ""}:
         return generic
-    budget = load_budget_profile().get("meanings") or ()
-    return tuple(budget) + tuple(generic)
+    domain = load_profile(name).get("meanings") or ()
+    return tuple(domain) + tuple(generic)
 
 
 def clear_profile_cache() -> None:
     """테스트·핫리로드용."""
     load_column_hints.cache_clear()
     load_column_meanings.cache_clear()
-    load_budget_profile.cache_clear()
-    load_generic_profile.cache_clear()
+    _load_named_profile.cache_clear()
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:

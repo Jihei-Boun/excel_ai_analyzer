@@ -1,11 +1,43 @@
 # 예산 표 모드(ON)일 때만 사용하는 예실대비표 프로필
-# semantic_hints는 LLM 추론을 돕는 힌트일 뿐, 전용 실행 경로로 연결되지 않는다.
+# semantic_hints / plan_guidance는 LLM 추론을 돕는 힌트이며,
+# enable_column_prefs=true일 때만 실행 경로에서 컬럼을 강제 보정한다.
 
 summary: budget
 currency: krw
 domain: budget_table
 
 detect_min_hits: 2
+enable_column_prefs: true
+
+preferred_labels:
+  - 비목분류
+  - 비용명_2
+  - 비용명
+  - 항목명
+  - 항목
+
+plan_guidance: >-
+  Domain examples for budget vs actual tables (use ONLY when matching columns exist).
+  For correlation: operation='correlation' with x_column, y_column, label_column
+  (detail item name like 비용명), interpret=true. Never answer correlation with
+  group_comparison or ratio_of_aggregates. Zero denominator is not correlation.
+  For finding items by numeric conditions: operation='find_items' with
+  numeric_filters, sort_by, output_columns (ONLY labels + condition columns +
+  1-2 related metrics). Example: 이월예산 많은데 당해집행 없는 항목 →
+  numeric_filters=[{실행예산_이월예산,gt,0},{집행계_당해집행,eq,0}],
+  sort_by=[실행예산_이월예산] descending,
+  output_columns=[비목분류,비용명_2,비용명,실행예산_이월예산,집행계_당해집행,
+  집행계_합계,집행계_이월집행].
+  For 비용명별/항목별 집행률 then 평균보다 낮은/높은 항목:
+  operation='rate_vs_mean'; default numerator=집행계_합계, denominator=실행예산_합계;
+  exclude denominator==0; do NOT use 계획예산 for this.
+  For 비목분류별 top item by 잔액: operation='top_n_per_group', default
+  value_column=예산잔액_합계 (예산잔액_당해잔액 only if 당해/당년 asked).
+  For 계획예산 vs 실행예산 늘어난/줄어든: operation='split_by_difference'
+  with left=실행예산_합계, right=계획예산; keep ALL detail rows.
+  For category execution efficiency: prefer operation='group_comparison' with
+  numerator=집행계_합계 (NOT 당년도집행), denominator=실행예산_합계 (NOT 계획예산);
+  use 당년도 columns only when user asks 당년·당해·올해.
 
 semantic_hints:
   likely_identifier_concepts:

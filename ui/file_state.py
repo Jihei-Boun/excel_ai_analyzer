@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from core.excel_loader import load_excel
+from core.excel_loader import load_tabular
 from ui.session_store import clear_analysis_result_state, clear_selection_and_operation
 
 
@@ -577,7 +577,7 @@ def _load_sheet_frame(file_id: str, meta: dict, sheet_name: str) -> pd.DataFrame
     cache = st.session_state.setdefault("sheet_frames", {})
     key = _sheet_frame_key(file_id, sheet_name)
     if key not in cache:
-        cache[key] = load_excel(meta["path"], sheet_name=sheet_name)
+        cache[key] = load_tabular(meta["path"], sheet_name=sheet_name)
     return cache[key]
 
 

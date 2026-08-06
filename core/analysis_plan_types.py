@@ -76,6 +76,7 @@ class AnalysisPlan:
     dimension_columns: list[str] = field(default_factory=list)
     output_columns: list[str] = field(default_factory=list)
     interpret: bool = False
+    footer_labels: list[str] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -85,6 +86,7 @@ class AnalysisPlan:
             "dimension_columns": list(self.dimension_columns),
             "output_columns": list(self.output_columns),
             "interpret": self.interpret,
+            "footer_labels": list(self.footer_labels),
         }
 
     @property

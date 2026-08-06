@@ -24,6 +24,7 @@ def ensure_row_types(
     df: pd.DataFrame,
     *,
     dimension_columns: list[str] | None = None,
+    footer_labels: list[str] | tuple[str, ...] | None = None,
 ) -> pd.DataFrame:
     if ROW_TYPE_COL in df.columns:
         return df
@@ -31,7 +32,11 @@ def ensure_row_types(
         df.drop(columns=[c for c in META_COLUMNS_SET if c in df.columns], errors="ignore")
     )
     base = df.drop(columns=[c for c in META_COLUMNS_SET if c in df.columns], errors="ignore")
-    return classify_rows(base, dimension_columns=dims)
+    return classify_rows(
+        base,
+        dimension_columns=dims,
+        footer_labels=footer_labels,
+    )
 
 
 def apply_column_filters(
@@ -101,17 +106,19 @@ def project_readable_columns(
     df: pd.DataFrame,
     *,
     keep_columns: list[str] | None = None,
-    preferred_labels: tuple[str, ...] = (
-        "비목분류",
-        "비용명_2",
-        "비용명",
-        "항목명",
-        "항목",
-    ),
+    preferred_labels: tuple[str, ...] | None = None,
+    use_budget_profile: bool = False,
 ) -> pd.DataFrame:
-    """식별·조건 확인에 필요한 열만 남긴다. keep가 없으면 라벨 열만."""
+    """식별·조건 확인에 필요한 열만 남긴다. keep가 없으면 라벨 열만.
+
+    preferred_labels 기본값은 활성 프로필에서 가져온다 (일반 모드는 도메인 비목 가정 없음).
+    """
     if df is None or df.empty:
         return df
+    if preferred_labels is None:
+        from core.profile_loader import preferred_labels_for
+
+        preferred_labels = preferred_labels_for(use_budget_profile=use_budget_profile)
     ordered: list[str] = []
     seen: set[str] = set()
 

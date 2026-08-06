@@ -101,7 +101,9 @@ def run_analysis(
 
     # '집행계가 0인데 실행예산이 있는' 같은 조건 필터는 값 일치보다 먼저.
     if output_type == "dataframe":
-        conditioned = try_condition_row_filter(df, prompt)
+        conditioned = try_condition_row_filter(
+            df, prompt, use_budget_profile=use_budget_profile
+        )
         if conditioned is not None:
             return (
                 conditioned,
@@ -256,7 +258,9 @@ def run_multi_analysis(
         cond_parts: list[pd.DataFrame] = []
         conditioned_any = False
         for name, frame in named_dfs:
-            part = try_condition_row_filter(frame, prompt)
+            part = try_condition_row_filter(
+                frame, prompt, use_budget_profile=use_budget_profile
+            )
             if part is None:
                 continue
             conditioned_any = True
