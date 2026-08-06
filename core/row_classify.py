@@ -7,7 +7,7 @@ from typing import Any, Iterable
 
 import pandas as pd
 
-from core.constants import AMOUNT_COLUMN_HINTS, ITEM_COLUMN_HINTS
+from core.profile_loader import column_hints_for
 from core.summary_utils import cell_text, compact, is_excluded_summary_label, is_grand_total_label
 from core.text_normalize import normalize_text
 
@@ -15,6 +15,14 @@ ROW_TYPE_COL = "_row_type"
 ROW_CONF_COL = "_row_type_confidence"
 ROW_REASONS_COL = "_row_type_reasons"
 META_COLUMNS_SET = frozenset({ROW_TYPE_COL, ROW_CONF_COL, ROW_REASONS_COL})
+
+
+def _item_hints() -> tuple[str, ...]:
+    return column_hints_for()["item_column_hints"]
+
+
+def _amount_hints() -> tuple[str, ...]:
+    return column_hints_for()["amount_column_hints"]
 
 
 def classify_rows(
@@ -64,7 +72,7 @@ def classify_rows(
 def infer_dimension_columns(df: pd.DataFrame) -> list[str]:
     """라벨/항목 후보 열을 고른다. 특정 파일 컬럼명에 고정하지 않는다."""
     preferred: list[str] = []
-    hint_norms = [normalize_text(h) for h in ITEM_COLUMN_HINTS]
+    hint_norms = [normalize_text(h) for h in _item_hints()]
     for col in df.columns:
         name = str(col)
         if name.startswith("_"):
@@ -211,7 +219,7 @@ def _label_texts_from_row(row: pd.Series, *, amount_cols: list[str]) -> list[str
 
 def _looks_like_amount_name(name: str) -> bool:
     norm = normalize_text(name)
-    return any(normalize_text(h) in norm for h in AMOUNT_COLUMN_HINTS)
+    return any(normalize_text(h) in norm for h in _amount_hints())
 
 
 def _looks_like_code_series(series: pd.Series) -> bool:

@@ -39,10 +39,6 @@ def _active_profile_name() -> str:
     return "budget" if st.session_state.get("budget_table_mode") else "generic"
 
 
-def _use_budget_profile() -> bool:
-    return _active_profile_name() == "budget"
-
-
 def process_user_prompt(prompt: str, *, user_already_added: bool = False) -> None:
     if is_multi_analysis_mode():
         named_frames = get_active_named_frames()
@@ -163,7 +159,7 @@ def _run_prompt(
         context_label=context_label,
         base_url=st.session_state.ollama_base_url,
         model=st.session_state.ollama_model,
-        use_budget_profile=_use_budget_profile(),
+        profile_name=_active_profile_name(),
         prior_aggregate_df=st.session_state.get("last_aggregate_df"),
         prior_aggregate_prompt=st.session_state.get("last_analysis_prompt"),
         prior_user_prompt=_prior_user_analysis_prompt(),
@@ -282,7 +278,7 @@ def _run_multi_prompt(
         named_frames=prepared,
         base_url=st.session_state.ollama_base_url,
         model=st.session_state.ollama_model,
-        use_budget_profile=_use_budget_profile(),
+        profile_name=_active_profile_name(),
         context_label=st.session_state.get("analysis_context_label"),
         filter_df=st.session_state.get("analysis_filter_df"),
         sheet_info=_multi_unit_sheet_info(prepared),
@@ -314,7 +310,7 @@ def _build_summary_reply(df: pd.DataFrame) -> str:
         sheet_name=current_sheet,
         sheet_names=list(sheet_names) if sheet_names else None,
         file_path=file_path,
-        use_budget_profile=_use_budget_profile(),
+        profile_name=_active_profile_name(),
     )
 
 

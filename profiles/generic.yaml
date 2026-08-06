@@ -3,9 +3,14 @@
 summary: generic
 currency: none
 domain: generic
+summary_builder: generic
 
 # 도메인 컬럼 강제 보정(집행률 등) — 일반 모드에서는 끔
 enable_column_prefs: false
+
+roles: {}
+column_prefs: {}
+column_hint_extras: {}
 
 # 결과 표에 우선 남길 식별/라벨 열 (스키마에 있을 때만)
 preferred_labels:

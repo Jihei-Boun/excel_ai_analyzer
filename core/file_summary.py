@@ -45,21 +45,27 @@ def build_file_summary(
     sheet_name: str | None = None,
     sheet_names: list[str] | None = None,
     file_path: str | Path | None = None,
+    profile_name: str | None = None,
     use_budget_profile: bool = False,
 ) -> str:
     """DataFrame을 읽어 사람이 읽을 수 있는 파일 요약 문장을 만든다.
 
-    use_budget_profile=True이고 예산 표로 보이면 예실대비표 전용 요약을 쓴다.
-    기본(False)은 범용 요약만 사용한다.
+    프로필 ``summary_builder`` 가 budget이고 예산 표로 보이면 전용 요약을 쓴다.
     """
     if df is None or df.empty:
         return "데이터가 비어 있어 요약할 내용이 없습니다."
 
+    from core.profile_loader import active_profile
+
     prepared = prepare_dataframe_for_ai(df)
     sheets = sheet_names or ([sheet_name] if sheet_name else [])
     shape = excel_shape(file_path) if file_path else None
+    profile = active_profile(
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
+    )
+    builder = str(profile.get("summary_builder") or profile.get("summary") or "")
 
-    if use_budget_profile and looks_like_budget_table(prepared):
+    if builder == "budget" and looks_like_budget_table(prepared):
         return build_budget_summary(
             prepared,
             file_name=file_name,
@@ -80,6 +86,7 @@ def build_multi_file_summary(
     named_dfs: list[tuple[str, pd.DataFrame]],
     *,
     sheet_info: dict[str, dict] | None = None,
+    profile_name: str | None = None,
     use_budget_profile: bool = False,
     unit_label: str = "파일",
 ) -> str:
@@ -96,7 +103,7 @@ def build_multi_file_summary(
             sheet_name=info.get("current_sheet"),
             sheet_names=info.get("sheet_names"),
             file_path=info.get("path"),
-            use_budget_profile=use_budget_profile,
+            profile_name=profile_name, use_budget_profile=use_budget_profile,
         )
         parts.append(f"### {name}\n{block}")
     return "\n\n".join(parts)

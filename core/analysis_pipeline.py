@@ -49,6 +49,7 @@ def try_analysis_pipeline(
     *,
     base_url: str,
     model: str,
+    profile_name: str | None = None,
     use_budget_profile: bool = False,
     max_retries: int = 2,
     chat_json_fn: Callable[..., dict[str, Any]] | None = None,
@@ -65,7 +66,7 @@ def try_analysis_pipeline(
     classified = classify_rows(
         prepared,
         dimension_columns=dims,
-        footer_labels=footer_labels_for(use_budget_profile=use_budget_profile),
+        footer_labels=footer_labels_for(profile_name=profile_name, use_budget_profile=use_budget_profile),
     )
 
     def _attempt(
@@ -79,7 +80,7 @@ def try_analysis_pipeline(
                 base_url=base_url,
                 model=model,
                 classified_df=classified,
-                use_budget_profile=use_budget_profile,
+                profile_name=profile_name, use_budget_profile=use_budget_profile,
                 previous_errors=previous_errors or None,
                 chat_json_fn=json_fn,
             )
@@ -141,6 +142,7 @@ def run_analysis_pipeline(
     *,
     base_url: str,
     model: str,
+    profile_name: str | None = None,
     use_budget_profile: bool = False,
     max_retries: int = 2,
     chat_json_fn: Callable[..., dict[str, Any]] | None = None,
@@ -152,7 +154,7 @@ def run_analysis_pipeline(
         df,
         base_url=base_url,
         model=model,
-        use_budget_profile=use_budget_profile,
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
         max_retries=max_retries,
         chat_json_fn=chat_json_fn,
         chat_text_fn=chat_text_fn,

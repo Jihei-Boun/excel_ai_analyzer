@@ -98,7 +98,6 @@ def _example_prompts() -> list[str]:
     return suggest_example_prompts(
         df,
         profile_name=profile_name,
-        use_budget_profile=profile_name == "budget",
         multi_file=multi_file,
         multi_sheet=multi_sheet,
         limit=CHAT_EXAMPLE_LIMIT,

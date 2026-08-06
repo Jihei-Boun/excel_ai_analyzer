@@ -1,104 +1,114 @@
-"""분석 계획 컬럼 선호·보정 (집행률 / 항목 탐색)."""
+"""분석 계획 컬럼 선호·보정 — 프로필 column_prefs 기반."""
 
 from __future__ import annotations
 
 from typing import Any
 
+from core.profile_loader import active_profile, column_prefs_for
 from core.text_normalize import normalize_text
 
-# 기본(누적) 집행효율: 집행계_합계 ÷ 실행예산_합계
-_DEFAULT_EXECUTED = (
-    "집행계_합계",
-    "집행계",
-    "누적집행",
-    "집행액",
-    "집행금액",
-)
-_DEFAULT_BUDGET = (
-    "실행예산_합계",
-    "실행예산",
-    "편성예산",
-)
 
-# 사용자가 당년을 명시한 경우
-_CURRENT_EXECUTED = (
-    "당년도집행",
-    "집행계_당해집행",
-    "당해집행",
-    "당해누계",
-)
-_CURRENT_BUDGET = (
-    "당년도예산",
-    "실행예산_당해예산",
-    "당해예산",
-    "계획예산",
-)
-
-_EFFICIENCY_TOKENS = (
-    "집행효율",
-    "집행 효율",
-    "집행률",
-    "집행율",
-    "executionefficiency",
-    "executionrate",
-)
-
-_CURRENT_YEAR_TOKENS = (
-    "당년",
-    "당해",
-    "올해",
-    "금년",
-    "당년도",
-)
-
-_CARRYOVER_TOKENS = ("이월예산", "이월", "실행예산_이월")
-_ZERO_EXEC_TOKENS = ("당해집행", "당년도집행", "집행계_당해")
-_FIND_TOKENS = ("찾", "골라", "추출", "필터", "없는", "미집행")
+def _prefs(
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
+) -> dict[str, Any]:
+    return column_prefs_for(
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
+    )
 
 
-def is_execution_efficiency_prompt(prompt: str) -> bool:
+def _tok(prefs: dict[str, Any], key: str) -> tuple[str, ...]:
+    value = prefs.get(key) or ()
+    if isinstance(value, str):
+        return (value,) if value else ()
+    return tuple(str(x) for x in value)
+
+
+def _str(prefs: dict[str, Any], key: str, default: str = "") -> str:
+    value = prefs.get(key)
+    if value is None or value == ():
+        return default
+    return str(value)
+
+
+def is_execution_efficiency_prompt(
+    prompt: str,
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
+) -> bool:
     if not prompt:
+        return False
+    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    tokens = _tok(prefs, "efficiency_tokens")
+    if not tokens:
         return False
     compact = normalize_text(prompt)
     lowered = prompt.lower()
-    return any(normalize_text(tok) in compact or tok.lower() in lowered for tok in _EFFICIENCY_TOKENS)
+    return any(normalize_text(tok) in compact or tok.lower() in lowered for tok in tokens)
 
 
-def asks_current_year_scope(prompt: str) -> bool:
+def asks_current_year_scope(
+    prompt: str,
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
+) -> bool:
     if not prompt:
         return False
+    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    tokens = _tok(prefs, "current_year_tokens")
+    if not tokens:
+        return False
     compact = normalize_text(prompt)
-    return any(normalize_text(tok) in compact for tok in _CURRENT_YEAR_TOKENS)
+    return any(normalize_text(tok) in compact for tok in tokens)
 
 
-def is_carryover_no_current_exec_prompt(prompt: str) -> bool:
+def is_carryover_no_current_exec_prompt(
+    prompt: str,
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
+) -> bool:
     """이월예산은 있는데 당해집행이 없는 항목 탐색 질의."""
     if not prompt:
         return False
+    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    carry_tokens = _tok(prefs, "carryover_tokens")
+    zero_tokens = _tok(prefs, "zero_exec_tokens")
+    find_tokens = _tok(prefs, "find_tokens")
+    if not carry_tokens or not zero_tokens:
+        return False
     compact = normalize_text(prompt)
-    has_carry = any(normalize_text(t) in compact for t in _CARRYOVER_TOKENS)
-    has_curr = any(normalize_text(t) in compact for t in _ZERO_EXEC_TOKENS)
-    has_find = any(t in prompt for t in _FIND_TOKENS) or "없" in prompt
+    has_carry = any(normalize_text(t) in compact for t in carry_tokens)
+    has_curr = any(normalize_text(t) in compact for t in zero_tokens)
+    has_find = any(t in prompt for t in find_tokens) or "없" in prompt
     return has_carry and has_curr and has_find
 
 
 def pick_execution_rate_columns(
     prompt: str,
     columns: list[str] | set[str],
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
 ) -> tuple[str, str] | None:
-    """(numerator=집행, denominator=예산) 또는 None."""
+    """(numerator, denominator) 또는 None."""
+    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
     colset = {str(c) for c in columns}
-    if asks_current_year_scope(prompt):
-        num = _first_present(colset, _CURRENT_EXECUTED) or _first_present(
-            colset, _DEFAULT_EXECUTED
-        )
-        den = _first_present(colset, _CURRENT_BUDGET) or _first_present(
-            colset, _DEFAULT_BUDGET
-        )
+    default_num = _tok(prefs, "default_numerator")
+    default_den = _tok(prefs, "default_denominator")
+    current_num = _tok(prefs, "current_numerator")
+    current_den = _tok(prefs, "current_denominator")
+    if asks_current_year_scope(
+        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+    ):
+        num = _first_present(colset, current_num) or _first_present(colset, default_num)
+        den = _first_present(colset, current_den) or _first_present(colset, default_den)
     else:
-        # 기본 집행효율은 누적(합계). 당년도/계획예산보다 합계열을 우선한다.
-        num = _first_present(colset, _DEFAULT_EXECUTED)
-        den = _first_present(colset, _DEFAULT_BUDGET)
+        num = _first_present(colset, default_num)
+        den = _first_present(colset, default_den)
     if not num or not den or num == den:
         return None
     return num, den
@@ -109,62 +119,83 @@ def apply_analysis_column_prefs(
     data: dict[str, Any],
     columns: list[str],
     *,
+    profile_name: str | None = None,
     use_budget_profile: bool = False,
     enable_column_prefs: bool | None = None,
+    category_labels: list[str] | None = None,
 ) -> dict[str, Any]:
     """도메인 질의에 맞춰 계획 JSON을 보정한다.
 
     활성 프로필의 enable_column_prefs=true일 때만 동작한다.
     """
     if enable_column_prefs is None:
-        from core.profile_loader import active_profile
-
         enable_column_prefs = bool(
-            active_profile(use_budget_profile=use_budget_profile).get(
-                "enable_column_prefs"
-            )
+            active_profile(
+                profile_name=profile_name, use_budget_profile=use_budget_profile,
+            ).get("enable_column_prefs")
         )
     if not enable_column_prefs:
         return data
 
-    data = apply_split_by_difference_prefs(prompt, data, columns)
+    kw = {"profile_name": profile_name, "use_budget_profile": use_budget_profile}
+    data = apply_split_by_difference_prefs(prompt, data, columns, **kw)
     if str((data or {}).get("operation") or "") in {
         "split_by_difference",
         "increase_decrease_split",
         "budget_change_split",
     }:
         return data
-    data = apply_top_n_per_group_prefs(prompt, data, columns)
+    data = apply_top_n_per_group_prefs(prompt, data, columns, **kw)
     if str((data or {}).get("operation") or "") in {
         "top_n_per_group",
         "top_per_group",
         "rank_per_group",
     }:
         return data
-    data = apply_rate_vs_mean_prefs(prompt, data, columns)
+    data = apply_rate_vs_mean_prefs(prompt, data, columns, **kw)
     if str((data or {}).get("operation") or "") in {
         "rate_vs_mean",
         "execution_rate_vs_mean",
     }:
         return data
-    data = apply_provisional_share_prefs(prompt, data, columns)
+    data = apply_provisional_share_prefs(prompt, data, columns, **kw)
     if str((data or {}).get("operation") or "") == "find_items" and (data or {}).get(
         "rate_name"
     ):
         return data
-    data = apply_find_items_column_prefs(prompt, data, columns)
+    data = apply_find_items_column_prefs(prompt, data, columns, **kw)
     if str((data or {}).get("operation") or "") == "find_items":
         return data
-    return apply_execution_rate_column_prefs(prompt, data, columns)
+    data = apply_group_efficiency_compare_prefs(
+        prompt, data, columns, category_labels=category_labels, **kw
+    )
+    if str((data or {}).get("operation") or "") in {
+        "group_comparison",
+        "compare_groups",
+        "execution_rate_compare",
+    } and (data or {}).get("groups"):
+        return data
+    return apply_execution_rate_column_prefs(prompt, data, columns, **kw)
 
 
-def is_provisional_share_prompt(prompt: str) -> bool:
-    """가집행이 있는 항목의 당해누계 대비 비중 질의."""
+def is_provisional_share_prompt(
+    prompt: str,
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
+) -> bool:
+    """가집행 비중 질의 등 — prefs에 provisional 컬럼이 있을 때만."""
     if not prompt:
         return False
+    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    if not _tok(prefs, "provisional_columns") or not _tok(prefs, "provisional_base_columns"):
+        return False
     compact = normalize_text(prompt)
-    has_prov = "가집행" in compact
-    has_base = "당해누계" in compact
+    # 토큰은 프로필 후보의 대표 문자열 앞부분을 사용
+    prov_hint = normalize_text(_tok(prefs, "provisional_columns")[0])[:3]
+    base_hint = normalize_text(_tok(prefs, "provisional_base_columns")[0])[:4]
+    has_prov = bool(prov_hint and prov_hint in compact) or "가집행" in compact
+    has_base = bool(base_hint and base_hint in compact) or "당해누계" in compact
     has_share = any(tok in prompt for tok in ("비중", "비율", "대비", "차지"))
     return bool(has_prov and has_base and has_share)
 
@@ -173,39 +204,51 @@ def apply_provisional_share_prefs(
     prompt: str,
     data: dict[str, Any],
     columns: list[str],
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
 ) -> dict[str, Any]:
-    """가집행>0 항목에 가집행÷당해누계 비중(%) 열을 붙인다."""
-    if not isinstance(data, dict) or not is_provisional_share_prompt(prompt):
+    if not isinstance(data, dict) or not is_provisional_share_prompt(
+        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+    ):
         return data
+    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
     colset = {str(c) for c in columns}
-    prov = _first_present(colset, ("가집행금액", "가집행"))
-    base = _first_present(colset, ("당해누계",))
+    prov = _first_present(colset, _tok(prefs, "provisional_columns"))
+    base = _first_present(colset, _tok(prefs, "provisional_base_columns"))
     if not prov or not base or prov == base:
         return data
 
-    labels = [c for c in ("비목분류", "비용명_2", "비용명") if c in colset]
+    labels = [c for c in _tok(prefs, "label_columns") if c in colset]
+    share_name = _str(prefs, "share_name", "비중")
     out = dict(data)
     out["operation"] = "find_items"
     out["numeric_filters"] = [{"column": prov, "op": "gt", "value": 0}]
     out["numerator"] = prov
     out["denominator"] = base
-    out["rate_name"] = "비중"
-    out["sort_by"] = ["비중"]
+    out["rate_name"] = share_name
+    out["sort_by"] = [share_name]
     out["ascending"] = [True]
-    out["output_columns"] = [*labels, prov, base, "비중"]
+    out["output_columns"] = [*labels, prov, base, share_name]
     out["interpret"] = True if "interpret" not in out else bool(out.get("interpret"))
     out["criteria_note"] = (
-        f"{prov} > 0인 항목만 골라 {prov} ÷ {base} 비중(%)을 계산했습니다."
+        f"{prov} > 0인 항목만 골라 {prov} ÷ {base} {share_name}(%)을 계산했습니다."
     )
     out.pop("steps", None)
     return out
 
 
-def is_rate_vs_mean_prompt(prompt: str) -> bool:
-    """집행률(비율)을 구한 뒤 평균보다 낮/높은 항목 질의."""
+def is_rate_vs_mean_prompt(
+    prompt: str,
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
+) -> bool:
     if not prompt:
         return False
-    has_rate = is_execution_efficiency_prompt(prompt) or ("비율" in prompt)
+    has_rate = is_execution_efficiency_prompt(
+        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+    ) or ("비율" in prompt)
     has_mean = "평균" in prompt
     has_cmp = any(
         tok in prompt
@@ -224,11 +267,17 @@ def apply_rate_vs_mean_prefs(
     prompt: str,
     data: dict[str, Any],
     columns: list[str],
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
 ) -> dict[str, Any]:
-    """집행률 평균 비교 질의를 rate_vs_mean + 합계 열로 강제한다."""
-    if not isinstance(data, dict) or not is_rate_vs_mean_prompt(prompt):
+    if not isinstance(data, dict) or not is_rate_vs_mean_prompt(
+        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+    ):
         return data
-    picked = pick_execution_rate_columns(prompt, columns)
+    picked = pick_execution_rate_columns(
+        prompt, columns, profile_name=profile_name, use_budget_profile=use_budget_profile
+    )
     if not picked:
         return data
     numerator, denominator = picked
@@ -236,53 +285,61 @@ def apply_rate_vs_mean_prefs(
         tok in prompt for tok in ("높은", "이상", "초과", "큰")
     ) and not any(tok in prompt for tok in ("낮은", "미만", "아래", "작은")) else "below"
 
+    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
     colset = {str(c) for c in columns}
-    labels = [c for c in ("비용명", "비용명_2", "비목분류") if c in colset]
+    label_order = _tok(prefs, "rate_label_columns") or _tok(prefs, "label_columns")
+    labels = [c for c in label_order if c in colset]
+    rate_name = _str(prefs, "rate_name", "비율")
     out = dict(data)
     out["operation"] = "rate_vs_mean"
     out["numerator"] = numerator
     out["denominator"] = denominator
-    out["rate_name"] = "집행률"
+    out["rate_name"] = rate_name
     out["relation"] = relation
-    out["output_columns"] = [*labels, denominator, numerator, "집행률"]
+    out["output_columns"] = [*labels, denominator, numerator, rate_name]
     out["interpret"] = False if _wants_table_only(prompt) else bool(out.get("interpret", False))
     out["criteria_note"] = (
-        f"집행률 = {numerator} ÷ {denominator} (분모 0 제외). "
+        f"{rate_name} = {numerator} ÷ {denominator} (분모 0 제외). "
         f"산술평균보다 {'낮은' if relation == 'below' else '높은'} 항목만 표시."
     )
     out.pop("steps", None)
     return out
 
 
-def is_split_by_difference_prompt(prompt: str) -> bool:
-    """계획 vs 실행(또는 전후) 증가/감소를 나눠 설명하는 질의."""
+def is_split_by_difference_prompt(
+    prompt: str,
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
+) -> bool:
     if not prompt:
+        return False
+    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    if not _tok(prefs, "plan_columns") or not _tok(prefs, "exec_columns"):
         return False
     has_up = any(tok in prompt for tok in ("늘어난", "증가", "증액", "커진"))
     has_down = any(tok in prompt for tok in ("줄어든", "감소", "감액", "작아진"))
     has_split = any(
         tok in prompt for tok in ("나눠", "나누", "구분", "각각", "대비", "비교", "설명")
     )
-    has_budget = ("계획" in prompt and "실행" in prompt) or (
-        "계획예산" in prompt or "실행예산" in prompt
-    )
-    return bool(has_up and has_down and has_split and has_budget)
+    plan_hit = any(tok in prompt for tok in ("계획", *_tok(prefs, "plan_columns")[:2]))
+    exec_hit = any(tok in prompt for tok in ("실행", *_tok(prefs, "exec_columns")[:2]))
+    return bool(has_up and has_down and has_split and plan_hit and exec_hit)
 
 
 def pick_plan_vs_exec_columns(
-    prompt: str, columns: list[str]
+    prompt: str,
+    columns: list[str],
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
 ) -> tuple[str, str] | None:
-    """(실행/이후, 계획/이전) 열. 차이 = left − right."""
-    del prompt  # 현재는 스키마 우선; 당해 실행예산 요청은 후속 확장
+    """(left=exec/이후, right=plan/이전). 차이 = left − right."""
+    del prompt
+    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
     colset = {str(c) for c in columns}
-    left = _first_present(
-        colset,
-        ("실행예산_합계", "실행예산", "실행"),
-    )
-    right = _first_present(
-        colset,
-        ("계획예산", "계획", "편성예산"),
-    )
+    left = _first_present(colset, _tok(prefs, "exec_columns"))
+    right = _first_present(colset, _tok(prefs, "plan_columns"))
     if not left or not right or left == right:
         return None
     return left, right
@@ -292,27 +349,36 @@ def apply_split_by_difference_prefs(
     prompt: str,
     data: dict[str, Any],
     columns: list[str],
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
 ) -> dict[str, Any]:
-    """증가/감소 분할 질의를 split_by_difference로 강제 (top_n_difference 우회)."""
-    if not isinstance(data, dict) or not is_split_by_difference_prompt(prompt):
+    if not isinstance(data, dict) or not is_split_by_difference_prompt(
+        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+    ):
         return data
-    picked = pick_plan_vs_exec_columns(prompt, columns)
+    picked = pick_plan_vs_exec_columns(
+        prompt, columns, profile_name=profile_name, use_budget_profile=use_budget_profile
+    )
     if not picked:
         return data
     left, right = picked
+    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
     colset = {str(c) for c in columns}
-    labels = [c for c in ("비목분류", "비용명_2", "비용명") if c in colset]
+    labels = [c for c in _tok(prefs, "label_columns") if c in colset]
+    diff_name = _str(prefs, "diff_name", "차이")
+    label_name = _str(prefs, "split_label_name", "구분")
     out = dict(data)
     out["operation"] = "split_by_difference"
     out["left"] = left
     out["right"] = right
     out["value_columns"] = [left, right]
-    out["diff_name"] = "차이"
-    out["label_name"] = "구분"
-    out["output_columns"] = [*labels, right, left, "차이", "구분"]
+    out["diff_name"] = diff_name
+    out["label_name"] = label_name
+    out["output_columns"] = [*labels, right, left, diff_name, label_name]
     out["interpret"] = True
     out["criteria_note"] = (
-        f"차이 = {left} − {right}. 세부행을 증가/감소/동일으로 구분해 설명. "
+        f"{diff_name} = {left} − {right}. 세부행을 증가/감소/동일으로 구분해 설명. "
         "상위 N으로 자르지 않음."
     )
     out.pop("steps", None)
@@ -320,79 +386,87 @@ def apply_split_by_difference_prefs(
     return out
 
 
-def is_top_n_per_group_prompt(prompt: str) -> bool:
-    """그룹(비목)별 대표 항목(가장 큰/작은·하나씩) 질의."""
+def is_top_n_per_group_prompt(
+    prompt: str,
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
+) -> bool:
     if not prompt:
         return False
-    has_group = any(
-        tok in prompt
-        for tok in ("별로", "별 ", "분류별", "비목별", "그룹별", "비목분류별")
-    ) or ("별" in prompt and any(tok in prompt for tok in ("비목", "분류", "그룹")))
-    has_pick = any(
-        tok in prompt
-        for tok in ("가장", "하나씩", "하나 씩", "상위", "하위", "최대", "최소")
+    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    group_tokens = _tok(prefs, "top_n_group_tokens")
+    group_words = _tok(prefs, "top_n_group_words")
+    pick_tokens = _tok(prefs, "top_n_pick_tokens")
+    metric_tokens = _tok(prefs, "top_n_metric_tokens")
+    if not group_tokens and not group_words:
+        return False
+    has_group = any(tok in prompt for tok in group_tokens) or (
+        "별" in prompt and any(tok in prompt for tok in group_words)
     )
-    has_metric = any(
-        tok in prompt
-        for tok in ("잔액", "집행", "예산", "금액", "비용명", "항목")
-    )
+    has_pick = any(tok in prompt for tok in pick_tokens)
+    has_metric = any(tok in prompt for tok in metric_tokens)
     return bool(has_group and has_pick and has_metric)
 
 
-def pick_balance_column(prompt: str, columns: list[str]) -> str | None:
-    """잔액 질의 시 열 선택. 당해 명시 시에만 당해잔액."""
+def pick_balance_column(
+    prompt: str,
+    columns: list[str],
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
+) -> str | None:
+    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
     colset = {str(c) for c in columns}
-    wants_current = any(tok in prompt for tok in _CURRENT_YEAR_TOKENS) and (
-        "잔액" in prompt
-    )
+    year_tokens = _tok(prefs, "current_year_tokens")
+    wants_current = any(tok in prompt for tok in year_tokens) and ("잔액" in prompt)
     if wants_current:
-        picked = _first_present(
-            colset,
-            ("예산잔액_당해잔액", "당해잔액", "예산잔액_합계", "예산잔액"),
-        )
-    else:
-        picked = _first_present(
-            colset,
-            ("예산잔액_합계", "예산잔액", "예산잔액_당해잔액", "당해잔액"),
-        )
-    return picked
+        return _first_present(colset, _tok(prefs, "remaining_current"))
+    return _first_present(colset, _tok(prefs, "remaining"))
 
 
 def apply_top_n_per_group_prefs(
     prompt: str,
     data: dict[str, Any],
     columns: list[str],
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
 ) -> dict[str, Any]:
-    """비목별 잔액 최대(또는 최소) 항목 하나씩 → top_n_per_group."""
-    if not isinstance(data, dict) or not is_top_n_per_group_prompt(prompt):
+    if not isinstance(data, dict) or not is_top_n_per_group_prompt(
+        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+    ):
         return data
+    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
     colset = {str(c) for c in columns}
-    group_col = _first_present(colset, ("비목분류", "비목", "분류"))
+    group_col = _first_present(colset, _tok(prefs, "group_columns"))
     if not group_col:
         return data
 
     value_col: str | None = None
     if "잔액" in prompt:
-        value_col = pick_balance_column(prompt, columns)
+        value_col = pick_balance_column(
+            prompt,
+            columns,
+            profile_name=profile_name, use_budget_profile=use_budget_profile,
+        )
     if not value_col:
-        # 잔액이 아니면 LLM/기존 plan의 value를 유지하되 없으면 합계 잔액 시도
-        candidate = str(
-            data.get("value_column") or data.get("metric") or ""
-        ).strip()
+        candidate = str(data.get("value_column") or data.get("metric") or "").strip()
         if candidate in colset:
             value_col = candidate
         else:
-            value_col = pick_balance_column(prompt, columns) or _first_present(
-                colset,
-                ("예산잔액_합계", "집행계_합계", "실행예산_합계"),
-            )
+            value_col = pick_balance_column(
+                prompt,
+                columns,
+                profile_name=profile_name, use_budget_profile=use_budget_profile,
+            ) or _first_present(colset, _tok(prefs, "top_n_fallback_metrics"))
     if not value_col:
         return data
 
     ascending = any(tok in prompt for tok in ("작", "낮", "최소", "하위")) and not any(
         tok in prompt for tok in ("큰", "높", "최대", "상위")
     )
-    labels = [c for c in ("비목분류", "비용명_2", "비용명") if c in colset]
+    labels = [c for c in _tok(prefs, "label_columns") if c in colset]
     out = dict(data)
     out["operation"] = "top_n_per_group"
     out["group_column"] = group_col
@@ -415,33 +489,138 @@ def apply_execution_rate_column_prefs(
     prompt: str,
     data: dict[str, Any],
     columns: list[str],
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
 ) -> dict[str, Any]:
-    """집행효율·집행률 계획의 분자/분모를 스키마에 맞게 보정한다."""
-    if not isinstance(data, dict) or not is_execution_efficiency_prompt(prompt):
+    if not isinstance(data, dict) or not is_execution_efficiency_prompt(
+        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+    ):
         return data
-    picked = pick_execution_rate_columns(prompt, columns)
+    picked = pick_execution_rate_columns(
+        prompt, columns, profile_name=profile_name, use_budget_profile=use_budget_profile
+    )
     if not picked:
         return data
     numerator, denominator = picked
+    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    rate_name = _str(prefs, "rate_name", "비율")
     out = dict(data)
 
     operation = str(out.get("operation") or "").strip()
     if operation in {"group_comparison", "compare_groups", "execution_rate_compare"}:
         out["numerator"] = numerator
         out["denominator"] = denominator
-        out.setdefault("rate_name", "집행률")
+        out.setdefault("rate_name", rate_name)
         note = str(out.get("criteria_note") or "")
         preferred_note = (
-            f"집행률 = {numerator} ÷ {denominator} "
-            f"({'당년 기준' if asks_current_year_scope(prompt) else '합계 기준'})"
+            f"{rate_name} = {numerator} ÷ {denominator} "
+            f"({'당년 기준' if asks_current_year_scope(prompt, profile_name=profile_name, use_budget_profile=use_budget_profile) else '합계 기준'})"
         )
-        if "당년도" in note or "계획예산" in note or not note:
+        plan_cols = _tok(prefs, "plan_columns")
+        if any(p in note for p in plan_cols) or "당년도" in note or not note:
             out["criteria_note"] = preferred_note
 
     steps = out.get("steps")
     if isinstance(steps, list):
-        out["steps"] = _rewrite_steps_for_rate(steps, numerator, denominator)
+        out["steps"] = _rewrite_steps_for_rate(steps, numerator, denominator, rate_name)
 
+    return out
+
+
+def is_group_efficiency_compare_prompt(
+    prompt: str,
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
+) -> bool:
+    if not prompt or not is_execution_efficiency_prompt(
+        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+    ):
+        return False
+    has_pair = any(tok in prompt for tok in ("와", "과", "대비", "사이"))
+    has_judge = any(
+        tok in prompt
+        for tok in (
+            "어느",
+            "더 효율",
+            "더 높은",
+            "비교",
+            "차이",
+            "해석",
+            "설명",
+        )
+    )
+    return bool(has_pair and has_judge)
+
+
+def mentioned_category_labels(
+    prompt: str,
+    category_labels: list[str] | None,
+) -> list[str]:
+    """프롬프트에 등장하는 분류 라벨(긴 이름 우선)."""
+    if not prompt or not category_labels:
+        return []
+    hits: list[str] = []
+    for label in sorted(
+        {str(x).strip() for x in category_labels if str(x).strip()},
+        key=len,
+        reverse=True,
+    ):
+        if label in prompt and label not in hits:
+            hits.append(label)
+    return hits
+
+
+def apply_group_efficiency_compare_prefs(
+    prompt: str,
+    data: dict[str, Any],
+    columns: list[str],
+    *,
+    category_labels: list[str] | None = None,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
+) -> dict[str, Any]:
+    if not isinstance(data, dict) or not is_group_efficiency_compare_prompt(
+        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+    ):
+        return data
+    picked = pick_execution_rate_columns(
+        prompt, columns, profile_name=profile_name, use_budget_profile=use_budget_profile
+    )
+    if not picked:
+        return data
+    numerator, denominator = picked
+    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
+    colset = {str(c) for c in columns}
+    group_col = _first_present(colset, _tok(prefs, "group_columns"))
+    if not group_col:
+        return data
+
+    groups = mentioned_category_labels(prompt, category_labels)
+    if len(groups) < 2:
+        existing = data.get("groups") or data.get("include_groups") or []
+        if isinstance(existing, str):
+            existing = [existing]
+        groups = [str(g) for g in existing if str(g).strip()]
+    if len(groups) < 2:
+        return data
+
+    rate_name = _str(prefs, "rate_name", "비율")
+    out = dict(data)
+    out["operation"] = "group_comparison"
+    out["group_column"] = group_col
+    out["groups"] = groups[:8]
+    out["numerator"] = numerator
+    out["denominator"] = denominator
+    out["rate_name"] = rate_name
+    out["prefer_subtotals"] = True
+    out["interpret"] = True
+    out["criteria_note"] = (
+        f"{rate_name} = {numerator} ÷ {denominator}. "
+        f"{group_col} 기준 {', '.join(groups[:8])} 비교."
+    )
+    out.pop("steps", None)
     return out
 
 
@@ -449,19 +628,18 @@ def apply_find_items_column_prefs(
     prompt: str,
     data: dict[str, Any],
     columns: list[str],
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
 ) -> dict[str, Any]:
-    """이월>0 & 당해집행=0 탐색을 find_items + 최소 열로 보정한다."""
-    if not isinstance(data, dict) or not is_carryover_no_current_exec_prompt(prompt):
+    if not isinstance(data, dict) or not is_carryover_no_current_exec_prompt(
+        prompt, profile_name=profile_name, use_budget_profile=use_budget_profile
+    ):
         return data
+    prefs = _prefs(profile_name=profile_name, use_budget_profile=use_budget_profile)
     colset = {str(c) for c in columns}
-    carry = _first_present(
-        colset,
-        ("실행예산_이월예산", "이월예산", "실행예산_이월"),
-    )
-    curr_exec = _first_present(
-        colset,
-        ("집행계_당해집행", "당년도집행", "당해집행"),
-    )
+    carry = _first_present(colset, _tok(prefs, "carryover_columns"))
+    curr_exec = _first_present(colset, _tok(prefs, "current_exec_columns"))
     if not carry or not curr_exec:
         return data
 
@@ -473,19 +651,18 @@ def apply_find_items_column_prefs(
     ]
     out["sort_by"] = [carry]
     out["ascending"] = [False]
-    labels = [c for c in ("비목분류", "비용명_2", "비용명") if c in colset]
+    labels = [c for c in _tok(prefs, "label_columns") if c in colset]
     extras = [
         c
-        for c in ("집행계_합계", "집행계_이월집행", "예산잔액_합계")
+        for c in _tok(prefs, "find_related_metrics")
         if c in colset and c not in {carry, curr_exec}
     ][:2]
     out["output_columns"] = [*labels, carry, curr_exec, *extras]
     out["interpret"] = True
     out["criteria_note"] = (
         f"{carry} > 0 이고 {curr_exec} = 0인 세부 항목을 "
-        "관련 열만 골라 이월예산 큰 순으로 정렬했습니다."
+        "관련 열만 골라 큰 순으로 정렬했습니다."
     )
-    # steps가 있으면 고수준으로 다시 컴파일되도록 비움
     out.pop("steps", None)
     return out
 
@@ -511,6 +688,7 @@ def _rewrite_steps_for_rate(
     steps: list[Any],
     numerator: str,
     denominator: str,
+    rate_name: str = "비율",
 ) -> list[Any]:
     rewritten: list[Any] = []
     for step in steps:
@@ -522,7 +700,7 @@ def _rewrite_steps_for_rate(
         if op == "ratio_of_aggregates":
             item["numerator"] = numerator
             item["denominator"] = denominator
-            item.setdefault("name", "집행률")
+            item.setdefault("name", rate_name)
         elif op == "aggregate":
             metrics = item.get("metrics") or []
             if isinstance(metrics, list):
@@ -530,15 +708,15 @@ def _rewrite_steps_for_rate(
         elif op == "compare_groups":
             metrics = item.get("metrics") or []
             if isinstance(metrics, list):
-                rate_name = "집행률"
+                name = rate_name
                 for prev in steps:
                     if isinstance(prev, dict) and str(prev.get("op") or "") == "ratio_of_aggregates":
-                        rate_name = str(prev.get("name") or rate_name)
+                        name = str(prev.get("name") or name)
                         break
-                wanted = [denominator, numerator, rate_name]
+                wanted = [denominator, numerator, name]
                 if metrics and all(isinstance(m, str) for m in metrics):
                     item["metrics"] = wanted
-                item["rate_columns"] = [rate_name]
+                item["rate_columns"] = [name]
         rewritten.append(item)
     return rewritten
 

@@ -77,6 +77,7 @@ def build_groupby_aggregate_table(
     df: pd.DataFrame,
     prompt: str,
     *,
+    profile_name: str | None = None,
     use_budget_profile: bool = False,
 ) -> tuple[pd.DataFrame, str] | None:
     """'비용명별 집행계 합계'처럼 그룹별 집계 표를 만든다.

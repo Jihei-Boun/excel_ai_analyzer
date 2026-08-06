@@ -68,8 +68,14 @@ _GENERIC_PLAN_SYSTEM = (
 )
 
 
-def _plan_system_prompt(*, use_budget_profile: bool) -> str:
-    profile = active_profile(use_budget_profile=use_budget_profile)
+def _plan_system_prompt(
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
+) -> str:
+    profile = active_profile(
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
+    )
     guidance = str(profile.get("plan_guidance") or "").strip()
     if not guidance:
         return _GENERIC_PLAN_SYSTEM
@@ -83,6 +89,7 @@ def build_analysis_plan(
     base_url: str,
     model: str,
     classified_df: pd.DataFrame | None = None,
+    profile_name: str | None = None,
     use_budget_profile: bool = False,
     previous_errors: list[str] | None = None,
     chat_json_fn: Callable[..., dict[str, Any]] = chat_json,
@@ -92,7 +99,9 @@ def build_analysis_plan(
     row_summary = classification_summary(classified_df if classified_df is not None else df)
     columns = [str(c) for c in df.columns]
 
-    system = _plan_system_prompt(use_budget_profile=use_budget_profile)
+    system = _plan_system_prompt(
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
+    )
 
     user_parts = [
         f"User request:\n{prompt}",
@@ -118,7 +127,9 @@ def build_analysis_plan(
             "label_name, output_columns, interpret=true (NO limit)"
         ),
     ]
-    hint = semantic_hints_text(use_budget_profile=use_budget_profile)
+    hint = semantic_hints_text(
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
+    )
     if hint:
         user_parts.append(hint)
     if previous_errors:
@@ -133,13 +144,29 @@ def build_analysis_plan(
         base_url=base_url,
         model=model,
     )
+    category_labels: list[str] = []
+    profile = active_profile(
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
+    )
+    label_cols = list(profile.get("group_columns") or ()) + list(
+        profile.get("preferred_labels") or ()
+    )
+    seen_cols: set[str] = set()
+    for col in label_cols:
+        if col in seen_cols or col not in df.columns:
+            continue
+        seen_cols.add(col)
+        for val in df[col].dropna().unique().tolist():
+            text = str(val).strip()
+            if text and text not in category_labels:
+                category_labels.append(text)
     data = apply_analysis_column_prefs(
         prompt,
         data,
         columns,
-        use_budget_profile=use_budget_profile,
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
+        category_labels=category_labels,
     )
     plan = analysis_plan_from_dict(data, available_columns=columns)
-    profile = active_profile(use_budget_profile=use_budget_profile)
     plan.footer_labels = [str(x) for x in (profile.get("footer_labels") or ())]
     return plan

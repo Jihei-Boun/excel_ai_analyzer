@@ -92,12 +92,17 @@ _MEANING_PHRASES = (
 )
 
 def _column_meaning_rules(
-    *, use_budget_profile: bool = False
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
 ) -> tuple[tuple[tuple[str, ...], str], ...]:
     """컬럼 의미 규칙. YAML(profiles/)에서 로드한다."""
     from core.profile_loader import load_meaning_rules
 
-    return load_meaning_rules(use_budget_profile=use_budget_profile)
+    return load_meaning_rules(
+        profile_name=profile_name,
+        use_budget_profile=use_budget_profile,
+    )
 
 
 def is_column_meaning_request(prompt: str) -> bool:
@@ -174,6 +179,7 @@ def build_schema_outcome(
     named_frames: list[tuple[str, pd.DataFrame]],
     *,
     unit_label: str = "파일",
+    profile_name: str | None = None,
     use_budget_profile: bool = False,
 ) -> tuple[str, pd.DataFrame | None]:
     """스키마 요청에 대한 (reply, dataframe)을 만든다."""
@@ -229,11 +235,12 @@ def estimate_column_meaning(
     column: str,
     series: pd.Series | None = None,
     *,
+    profile_name: str | None = None,
     use_budget_profile: bool = False,
 ) -> str:
     """컬럼명(·샘플)으로 의미를 추정한다."""
     compact = re.sub(r"[\s_\-]+", "", str(column)).lower()
-    for hints, meaning in _column_meaning_rules(use_budget_profile=use_budget_profile):
+    for hints, meaning in _column_meaning_rules(profile_name=profile_name, use_budget_profile=use_budget_profile):
         for hint in hints:
             hint_compact = re.sub(r"[\s_\-]+", "", hint).lower()
             if hint_compact and hint_compact in compact:

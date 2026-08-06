@@ -442,6 +442,7 @@ def test_execution_rate_prefs_override_wrong_llm_columns() -> None:
         "내부인건비와 연구활동비의 집행 효율을 비교해서 해석해줘",
         wrong,
         cols,
+        profile_name="budget",
     )
     assert fixed["numerator"] == "집행계_합계"
     assert fixed["denominator"] == "실행예산_합계"
@@ -452,6 +453,7 @@ def test_execution_rate_prefs_override_wrong_llm_columns() -> None:
         "당년 기준 집행률을 비교해줘",
         dict(wrong),
         cols,
+        profile_name="budget",
     )
     assert current["numerator"] == "당년도집행"
     assert current["denominator"] in {"당년도예산", "계획예산"}
@@ -1084,3 +1086,57 @@ def test_split_by_difference_prefs_override_top_n() -> None:
     assert (result["구분"] == "증가").sum() == 2
     assert (result["구분"] == "감소").sum() == 1
     assert (result["구분"] == "동일").sum() == 1
+
+
+def test_group_efficiency_compare_indirect_vs_allowance_on_twin() -> None:
+    from core.excel_loader import load_excel
+    from core.pandasai_config import prepare_dataframe_for_ai
+    from core.prompt_intent import is_complex_analysis, wants_structured_analysis
+    from core.analysis_plan_builder import build_analysis_plan
+
+    prompt = "간접비와 연구수당의 집행률 차이를 기준으로 어느 쪽이 더 효율적인지 설명해줘"
+    assert wants_structured_analysis(prompt)
+    assert is_complex_analysis(prompt)
+
+    path = Path(__file__).resolve().parents[1] / "data/uploads/03_트윈_예실대비표.xlsx"
+    if not path.is_file():
+        return
+    df = prepare_dataframe_for_ai(load_excel(path))
+
+    def fake_chat_json(*_a, **_k):
+        # Wrong plan that would previously lead nowhere useful
+        return {
+            "operation": "top_n_difference",
+            "value_columns": ["집행계_합계", "실행예산_합계"],
+            "limit": 5,
+            "interpret": False,
+        }
+
+    plan = build_analysis_plan(
+        prompt,
+        df,
+        base_url="http://localhost:11434",
+        model="dummy",
+        chat_json_fn=fake_chat_json,
+        use_budget_profile=True,
+    )
+    assert any(s.op == "compare_groups" or s.op == "aggregate" for s in plan.steps)
+    assert plan.interpret
+    classified = classify_rows(df, dimension_columns=["비용명", "비용명_2"])
+    result, meta = execute_analysis_plan(classified, plan)
+    assert len(result) == 2
+    assert "집행률" in result.columns
+    by_cat = {
+        str(r["비목분류"]).strip(): float(r["집행률"])
+        for _, r in result.iterrows()
+    }
+    assert abs(by_cat["간접비"] - 0.5) < 0.01
+    assert abs(by_cat["연구수당"] - 0.0) < 0.01
+
+
+def test_value_filter_skipped_for_efficiency_compare_intent() -> None:
+    from core.prompt_intent import is_complex_analysis, wants_structured_analysis
+
+    prompt = "간접비와 연구수당의 집행률 차이를 기준으로 어느 쪽이 더 효율적인지 설명해줘"
+    assert wants_structured_analysis(prompt)
+    assert is_complex_analysis(prompt)

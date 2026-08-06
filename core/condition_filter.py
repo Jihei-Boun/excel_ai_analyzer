@@ -8,7 +8,11 @@ import pandas as pd
 from core.column_match import resolve_metric_column
 from core.analysis_ops import project_readable_columns
 from core.pandasai_config import exclude_total_rows, prepare_dataframe_for_ai
-from core.profile_loader import footer_labels_for, preferred_labels_for
+from core.profile_loader import (
+    column_prefs_for,
+    footer_labels_for,
+    preferred_labels_for,
+)
 from core.prompt_intent import is_condition_filter_request
 from core.summary_utils import cell_text, compact, is_excluded_summary_label
 from core.text_normalize import normalize_text
@@ -25,6 +29,7 @@ def try_condition_row_filter(
     df: pd.DataFrame,
     prompt: str,
     *,
+    profile_name: str | None = None,
     use_budget_profile: bool = False,
 ) -> pd.DataFrame | None:
     """조건형 행 필터. 현재는 'A가 0인데 B가 있는' (==0 & >0)만 규칙 처리한다."""
@@ -36,7 +41,10 @@ def try_condition_row_filter(
         return None
 
     work = exclude_total_rows(prepare_dataframe_for_ai(df))
-    work = _drop_footer_and_empty_items(work, use_budget_profile=use_budget_profile)
+    work = _drop_footer_and_empty_items(
+        work,
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
+    )
 
     zero_vals = pd.to_numeric(work[zero_col], errors="coerce")
     exists_vals = pd.to_numeric(work[exists_col], errors="coerce")
@@ -44,22 +52,20 @@ def try_condition_row_filter(
     result = work.loc[mask].copy()
     if re.search(r"(많|큰|상위|높은)", prompt):
         result = result.sort_values(exists_col, ascending=False, kind="mergesort")
-    related: list[str] = []
-    if use_budget_profile:
-        related = [
-            c
-            for c in (
-                "집행계_합계",
-                "집행계_이월집행",
-                "실행예산_합계",
-                "예산잔액_합계",
-            )
-            if c in result.columns and c not in {zero_col, exists_col}
-        ][:2]
+
+    prefs = column_prefs_for(
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
+    )
+    related_candidates = tuple(prefs.get("condition_related_metrics") or ())
+    related = [
+        c
+        for c in related_candidates
+        if c in result.columns and c not in {zero_col, exists_col}
+    ][:2]
     return project_readable_columns(
         result.reset_index(drop=True),
         keep_columns=[exists_col, zero_col, *related],
-        use_budget_profile=use_budget_profile,
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
     )
 
 
@@ -134,14 +140,24 @@ def _resolve_condition_metric(df: pd.DataFrame, hint: str | None) -> str | None:
 def _drop_footer_and_empty_items(
     df: pd.DataFrame,
     *,
+    profile_name: str | None = None,
     use_budget_profile: bool = False,
 ) -> pd.DataFrame:
     """소계·footer·빈 라벨 요약 행을 제외한다."""
     if df is None or df.empty:
         return df
-    footer_labels = footer_labels_for(use_budget_profile=use_budget_profile)
+    footer_labels = footer_labels_for(
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
+    )
     footer = {compact(label) for label in footer_labels}
-    label_candidates = preferred_labels_for(use_budget_profile=use_budget_profile)
+    label_candidates = preferred_labels_for(
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
+    )
+    prefs = column_prefs_for(
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
+    )
+    detail_code = str(prefs.get("detail_code_column") or "")
+    detail_name = str(prefs.get("detail_name_column") or "")
     keep = []
     for _idx, row in df.iterrows():
         label_cols = [c for c in label_candidates if c in df.columns]
@@ -163,12 +179,16 @@ def _drop_footer_and_empty_items(
         if footer and any(compact(t) in footer for t in texts if t):
             keep.append(False)
             continue
-        # 예산 모드: 비용명 코드가 있으면 세부 항목으로 본다
-        if use_budget_profile and "비용명" in df.columns:
-            code = row["비용명"]
+        # 프로필에 detail_code_column이 있으면 코드 없는 요약 행 제외
+        if detail_code and detail_code in df.columns:
+            code = row[detail_code]
             has_code = pd.notna(code) and str(code).strip() not in ("", "nan")
             if not has_code:
-                name = cell_text(row["비용명_2"]) if "비용명_2" in df.columns else ""
+                name = (
+                    cell_text(row[detail_name])
+                    if detail_name and detail_name in df.columns
+                    else ""
+                )
                 if not name:
                     keep.append(False)
                     continue

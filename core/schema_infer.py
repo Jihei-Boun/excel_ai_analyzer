@@ -64,9 +64,15 @@ def build_frame_inventory(
     }
 
 
-def semantic_hints_text(*, use_budget_profile: bool) -> str:
+def semantic_hints_text(
+    *,
+    profile_name: str | None = None,
+    use_budget_profile: bool = False,
+) -> str:
     """프로필의 semantic_hints를 프롬프트 텍스트로 변환 (강제 규칙 아님)."""
-    profile = active_profile(use_budget_profile=use_budget_profile)
+    profile = active_profile(
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
+    )
     hints = profile.get("semantic_hints")
     if not hints:
         return ""
@@ -83,6 +89,7 @@ def infer_file_schema(
     *,
     base_url: str,
     model: str,
+    profile_name: str | None = None,
     use_budget_profile: bool = False,
     example_inventory: dict[str, Any] | None = None,
     chat_json_fn=chat_json,
@@ -103,7 +110,7 @@ def infer_file_schema(
         "If a column is misnamed (e.g. a code stored under a name column), put a "
         "column_renames map from current name to a clearer canonical name for THIS job only."
     )
-    hint_block = semantic_hints_text(use_budget_profile=use_budget_profile)
+    hint_block = semantic_hints_text(profile_name=profile_name, use_budget_profile=use_budget_profile)
     user_parts = [
         f"File inventory:\n{json.dumps(inventory, ensure_ascii=False, indent=2)}",
     ]
@@ -135,6 +142,7 @@ def infer_schemas(
     *,
     base_url: str,
     model: str,
+    profile_name: str | None = None,
     use_budget_profile: bool = False,
     example_frames: list[tuple[str, pd.DataFrame]] | None = None,
     chat_json_fn=chat_json,
@@ -151,7 +159,7 @@ def infer_schemas(
             frame,
             base_url=base_url,
             model=model,
-            use_budget_profile=use_budget_profile,
+            profile_name=profile_name, use_budget_profile=use_budget_profile,
             example_inventory=example_inventory,
             chat_json_fn=chat_json_fn,
         )

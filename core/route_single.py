@@ -44,6 +44,7 @@ def route_single_prompt(
     context_label: str | None,
     base_url: str,
     model: str,
+    profile_name: str | None = None,
     use_budget_profile: bool = False,
     prior_aggregate_df: pd.DataFrame | None = None,
     prior_aggregate_prompt: str | None = None,
@@ -54,7 +55,7 @@ def route_single_prompt(
     if is_summary_request(prompt):
         reply = summary_text
         if reply is None:
-            reply = build_file_summary(full_df, use_budget_profile=use_budget_profile)
+            reply = build_file_summary(full_df, profile_name=profile_name, use_budget_profile=use_budget_profile)
         return SingleRouteOutcome(reply=reply, dataframe=None)
 
     if is_missing_rows_request(prompt):
@@ -85,7 +86,7 @@ def route_single_prompt(
             prompt,
             [("현재 데이터", full_df)],
             unit_label="대상",
-            use_budget_profile=use_budget_profile,
+            profile_name=profile_name, use_budget_profile=use_budget_profile,
         )
         return SingleRouteOutcome(
             reply=reply,
@@ -100,7 +101,7 @@ def route_single_prompt(
     grouped = build_groupby_aggregate_table(
         source_df,
         prompt,
-        use_budget_profile=use_budget_profile,
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
     )
     if grouped is not None:
         table, summary = grouped
@@ -147,7 +148,7 @@ def route_single_prompt(
             source_df,
             prompt,
             context_label=context_label,
-            use_budget_profile=use_budget_profile,
+            profile_name=profile_name, use_budget_profile=use_budget_profile,
             prior_aggregate_df=prior_aggregate_df,
             prior_aggregate_prompt=prior_aggregate_prompt,
             last_assistant_df=last_assistant_df,
@@ -167,7 +168,7 @@ def route_single_prompt(
         prompt,
         base_url=base_url,
         model=model,
-        use_budget_profile=use_budget_profile,
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
         skip_aggregate_shortcuts=True,
     )
 
@@ -183,7 +184,7 @@ def route_single_prompt(
             prompt,
             base_url=base_url,
             model=model,
-            use_budget_profile=use_budget_profile,
+            profile_name=profile_name, use_budget_profile=use_budget_profile,
             skip_aggregate_shortcuts=True,
         )
         if isinstance(result, pd.DataFrame) and not result.empty:

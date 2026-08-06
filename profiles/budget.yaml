@@ -5,6 +5,7 @@
 summary: budget
 currency: krw
 domain: budget_table
+summary_builder: budget
 
 detect_min_hits: 2
 enable_column_prefs: true
@@ -15,6 +16,183 @@ preferred_labels:
   - 비용명
   - 항목명
   - 항목
+
+# 역할 기반 컬럼 후보 (범용 스키마). 레거시 *_column_candidates 는 loader가 여기서 채운다.
+roles:
+  label_columns:
+    - 비용명_2
+    - 비용명
+    - 항목
+    - 세목
+    - 내역
+  group_columns:
+    - 비목분류
+    - 대분류
+    - 중분류
+    - 분류
+    - 구분
+  metric_denominator:
+    - 실행예산_합계
+    - 계획예산
+    - 당년도예산
+    - 실행예산
+  metric_numerator:
+    - 집행계_합계
+    - 당해누계
+    - 당년도집행
+    - 집행계
+  metric_remaining:
+    - 예산잔액_합계
+    - 예산잔액
+  metric_remaining_current:
+    - 예산잔액_당해잔액
+    - 당해잔액
+  key_metrics:
+    - 계획예산
+    - 실행예산
+    - 당년도집행
+    - 가집행금액
+    - 집행계
+    - 예산잔액
+
+# 구조화 분석 prefs 엔진용 (analysis_column_prefs)
+column_prefs:
+  rate_name: 집행률
+  share_name: 비중
+  diff_name: 차이
+  split_label_name: 구분
+  detail_code_column: 비용명
+  detail_name_column: 비용명_2
+  label_columns:
+    - 비목분류
+    - 비용명_2
+    - 비용명
+  rate_label_columns:
+    - 비용명
+    - 비용명_2
+    - 비목분류
+  group_columns:
+    - 비목분류
+    - 비목
+    - 분류
+  default_numerator:
+    - 집행계_합계
+    - 집행계
+    - 누적집행
+    - 집행액
+    - 집행금액
+  default_denominator:
+    - 실행예산_합계
+    - 실행예산
+    - 편성예산
+  current_numerator:
+    - 당년도집행
+    - 집행계_당해집행
+    - 당해집행
+    - 당해누계
+  current_denominator:
+    - 당년도예산
+    - 실행예산_당해예산
+    - 당해예산
+    - 계획예산
+  remaining:
+    - 예산잔액_합계
+    - 예산잔액
+    - 예산잔액_당해잔액
+    - 당해잔액
+  remaining_current:
+    - 예산잔액_당해잔액
+    - 당해잔액
+    - 예산잔액_합계
+    - 예산잔액
+  plan_columns:
+    - 계획예산
+    - 계획
+    - 편성예산
+  exec_columns:
+    - 실행예산_합계
+    - 실행예산
+    - 실행
+  carryover_columns:
+    - 실행예산_이월예산
+    - 이월예산
+    - 실행예산_이월
+  current_exec_columns:
+    - 집행계_당해집행
+    - 당년도집행
+    - 당해집행
+  find_related_metrics:
+    - 집행계_합계
+    - 집행계_이월집행
+    - 예산잔액_합계
+  condition_related_metrics:
+    - 집행계_합계
+    - 집행계_이월집행
+    - 실행예산_합계
+    - 예산잔액_합계
+  top_n_fallback_metrics:
+    - 예산잔액_합계
+    - 집행계_합계
+    - 실행예산_합계
+  provisional_columns:
+    - 가집행금액
+    - 가집행
+  provisional_base_columns:
+    - 당해누계
+  efficiency_tokens:
+    - 집행효율
+    - 집행 효율
+    - 집행률
+    - 집행율
+    - executionefficiency
+    - executionrate
+  current_year_tokens:
+    - 당년
+    - 당해
+    - 올해
+    - 금년
+    - 당년도
+  carryover_tokens:
+    - 이월예산
+    - 이월
+    - 실행예산_이월
+  zero_exec_tokens:
+    - 당해집행
+    - 당년도집행
+    - 집행계_당해
+  find_tokens:
+    - 찾
+    - 골라
+    - 추출
+    - 필터
+    - 없는
+    - 미집행
+  top_n_group_tokens:
+    - 별로
+    - "별 "
+    - 분류별
+    - 비목별
+    - 그룹별
+    - 비목분류별
+  top_n_group_words:
+    - 비목
+    - 분류
+    - 그룹
+  top_n_pick_tokens:
+    - 가장
+    - 하나씩
+    - 하나 씩
+    - 상위
+    - 하위
+    - 최대
+    - 최소
+  top_n_metric_tokens:
+    - 잔액
+    - 집행
+    - 예산
+    - 금액
+    - 비용명
+    - 항목
 
 plan_guidance: >-
   Domain examples for budget vs actual tables (use ONLY when matching columns exist).
@@ -66,6 +244,7 @@ semantic_hints:
     - default 집행효율/집행률 uses 집행계_합계 ÷ 실행예산_합계
     - do not use 당년도집행 or 계획예산 for 집행효율 unless the user asks for 당년 기준
 
+# 표 탐지용 컬럼 힌트
 column_hints:
   - 계획예산
   - 실행예산
@@ -75,47 +254,23 @@ column_hints:
   - 가집행
   - 비목분류
 
-item_column_candidates:
-  - 비용명_2
-  - 비용명
-  - 항목
-  - 세목
-  - 내역
-
-category_column_candidates:
-  - 비목분류
-  - 대분류
-  - 중분류
-  - 분류
-  - 구분
-
-budget_column_candidates:
-  - 실행예산_합계
-  - 계획예산
-  - 당년도예산
-  - 실행예산
-
-executed_column_candidates:
-  - 집행계_합계
-  - 당해누계
-  - 당년도집행
-  - 집행계
-
-remaining_column_candidates:
-  - 예산잔액_합계
-  - 예산잔액
-
-current_remaining_column_candidates:
-  - 예산잔액_당해잔액
-  - 당해잔액
-
-key_column_hints:
-  - 계획예산
-  - 실행예산
-  - 당년도집행
-  - 가집행금액
-  - 집행계
-  - 예산잔액
+# 공유 column_hints.yaml 에 합쳐질 예산 전용 역할 힌트
+column_hint_extras:
+  group_column_hints:
+    - 비목분류
+  group_column_exact:
+    - 비목
+  code_column_hints:
+    - 세목코드
+    - 비용코드
+    - 계정코드
+    - 항목코드
+  amount_column_hints:
+    - 예산
+    - 집행
+    - 잔액
+    - 누계
+    - 가집행
 
 # 하단 요약 행 (소계·합계와 별도로 집계에서 제외)
 footer_labels:

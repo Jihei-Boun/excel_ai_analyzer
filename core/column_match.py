@@ -7,14 +7,21 @@ import re
 import pandas as pd
 
 from core.constants import (
-    AMOUNT_COLUMN_HINTS,
     CODE_METRIC_ABS_MAX,
     CODE_METRIC_INT_RATIO,
-    CODE_METRIC_NAME_HINTS,
     CODE_METRIC_SAMPLE_SIZE,
 )
 from core.excel_loader import find_merged_header_pair, merged_header_base
+from core.profile_loader import column_hints_for
 from core.text_normalize import normalize_text
+
+
+def _amount_hints() -> tuple[str, ...]:
+    return column_hints_for()["amount_column_hints"]
+
+
+def _code_metric_name_hints() -> tuple[str, ...]:
+    return column_hints_for()["code_metric_name_hints"]
 
 
 def _mentioned_columns(df: pd.DataFrame, normalized_prompt: str) -> list[str]:
@@ -55,7 +62,7 @@ def _column_prompt_match_length(column: str, normalized_prompt: str) -> int:
 
 def _is_amount_metric_column(name: str) -> bool:
     normalized = normalize_text(str(name))
-    return any(hint in normalized for hint in AMOUNT_COLUMN_HINTS)
+    return any(hint in normalized for hint in _amount_hints())
 
 
 def looks_like_code_metric_column(df: pd.DataFrame, column: object) -> bool:
@@ -66,7 +73,7 @@ def looks_like_code_metric_column(df: pd.DataFrame, column: object) -> bool:
     norm = normalize_text(name)
     base = normalize_text(merged_header_base(name))
     name_looks_code = any(
-        hint in norm or hint == base for hint in CODE_METRIC_NAME_HINTS
+        hint in norm or hint == base for hint in _code_metric_name_hints()
     )
     if not name_looks_code:
         return False

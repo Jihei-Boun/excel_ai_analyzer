@@ -526,6 +526,7 @@ def test_pivot_request_does_not_use_shortcut(monkeypatch) -> None:
 def test_schema_hints_expose_compound_metric_without_rewrite() -> None:
     """복합 지표는 rewrite하지 않고 힌트로만 노출한다."""
     from core.column_match import resolve_metric_column
+    from core.profile_loader import use_profile
     from core.schema_hints import build_schema_hints, format_schema_hints_for_prompt
 
     df = pd.DataFrame(
@@ -535,14 +536,15 @@ def test_schema_hints_expose_compound_metric_without_rewrite() -> None:
             "집행계_합계": [4, 6],
         }
     )
-    assert resolve_metric_column(df, "집행계") == "집행계_이월집행"
+    with use_profile("budget"):
+        assert resolve_metric_column(df, "집행계") == "집행계_이월집행"
 
-    hints = build_schema_hints(df)
-    group = hints["__metric_group__집행계"]
-    assert "집행계_합계" in group["total_candidates"]
-    text = format_schema_hints_for_prompt(df, hints)
-    assert "집행계_합계" in text
-    assert "강제 규칙이 아닙니다" in text
+        hints = build_schema_hints(df)
+        group = hints["__metric_group__집행계"]
+        assert "집행계_합계" in group["total_candidates"]
+        text = format_schema_hints_for_prompt(df, hints)
+        assert "집행계_합계" in text
+        assert "강제 규칙이 아닙니다" in text
 
 
 def test_hierarchical_fill_only_on_analysis_copy() -> None:

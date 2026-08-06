@@ -212,6 +212,9 @@ streamlit run app.py
 - [x] `preferred_labels` / `footer_labels` / `plan_guidance` 프로필 주입
 - [x] 프로필 화이트리스트 해제 (`profiles/<name>.yaml` 동적 로드)
 - [x] CSV 업로드 + 사이드바 프로필 선택 UI
+- [x] `column_prefs` / `roles` 를 YAML로 이전 (`analysis_column_prefs` 하드코딩 제거)
+- [x] 공유 `column_hints.yaml` 예산 토큰 → `budget.column_hint_extras` 분리
+- [x] UI·라우팅 `profile_name` 우선 (`use_budget_profile` 은 하위 호환 shim)
 
 ---
 

@@ -19,6 +19,7 @@ def build_execution_plan(
     schemas: dict[str, FileSchema],
     base_url: str,
     model: str,
+    profile_name: str | None = None,
     use_budget_profile: bool = False,
     example_frames: list[tuple[str, pd.DataFrame]] | None = None,
     previous_errors: list[str] | None = None,
@@ -55,7 +56,7 @@ def build_execution_plan(
         f"Inferred schemas:\n{json.dumps(schema_payload, ensure_ascii=False, indent=2)}",
         f"Inventories:\n{json.dumps(inventories, ensure_ascii=False, indent=2)}",
     ]
-    hint = semantic_hints_text(use_budget_profile=use_budget_profile)
+    hint = semantic_hints_text(profile_name=profile_name, use_budget_profile=use_budget_profile)
     if hint:
         user_parts.append(hint)
     if example_frames:

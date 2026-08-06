@@ -4,6 +4,7 @@
 summary: sales
 currency: krw
 domain: sales
+summary_builder: generic
 
 enable_column_prefs: false
 
@@ -15,6 +16,38 @@ preferred_labels:
   - 지역
   - 채널
   - 카테고리
+
+roles:
+  label_columns:
+    - 상품명
+    - 제품명
+    - 고객명
+    - 고객
+  group_columns:
+    - 지역
+    - 채널
+    - 카테고리
+  metric_numerator:
+    - 매출
+    - 판매액
+    - 금액
+  metric_denominator: []
+  metric_remaining: []
+  metric_remaining_current: []
+  key_metrics:
+    - 매출
+    - 수량
+    - 금액
+
+column_prefs: {}
+
+column_hint_extras:
+  item_column_hints:
+    - 상품명
+    - 제품명
+  amount_column_hints:
+    - 매출
+    - 판매액
 
 footer_labels: []
 

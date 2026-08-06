@@ -107,6 +107,7 @@ def project_readable_columns(
     *,
     keep_columns: list[str] | None = None,
     preferred_labels: tuple[str, ...] | None = None,
+    profile_name: str | None = None,
     use_budget_profile: bool = False,
 ) -> pd.DataFrame:
     """식별·조건 확인에 필요한 열만 남긴다. keep가 없으면 라벨 열만.
@@ -118,7 +119,9 @@ def project_readable_columns(
     if preferred_labels is None:
         from core.profile_loader import preferred_labels_for
 
-        preferred_labels = preferred_labels_for(use_budget_profile=use_budget_profile)
+        preferred_labels = preferred_labels_for(
+            profile_name=profile_name, use_budget_profile=use_budget_profile,
+        )
     ordered: list[str] = []
     seen: set[str] = set()
 

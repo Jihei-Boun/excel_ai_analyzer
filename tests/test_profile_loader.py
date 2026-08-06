@@ -46,10 +46,41 @@ def test_profiles_dir_exists() -> None:
 def test_column_hints_load() -> None:
     clear_profile_cache()
     hints = load_column_hints()
-    assert "예산" in hints["amount_column_hints"]
     assert "매출" in hints["amount_column_hints"]
+    assert "금액" in hints["amount_column_hints"]
+    # 예산 전용 금액 토큰은 공유 힌트에 두지 않는다
+    assert "예산" not in hints["amount_column_hints"]
+    assert "집행" not in hints["amount_column_hints"]
+    # 코드성 컬럼명은 범용으로 유지
     assert "비용명" in hints["item_column_hints"]
+    assert "비용명" in hints["code_metric_name_hints"]
     assert hints["group_column_suffixes"]
+
+
+def test_budget_column_hint_extras_merge() -> None:
+    from core.profile_loader import column_hints_for
+
+    clear_profile_cache()
+    merged = column_hints_for(profile_name="budget")
+    assert "예산" in merged["amount_column_hints"]
+    assert "집행" in merged["amount_column_hints"]
+    assert "비목분류" in merged["group_column_hints"]
+    generic = column_hints_for(profile_name="generic")
+    assert "예산" not in generic["amount_column_hints"]
+    assert "비목분류" not in generic["group_column_hints"]
+
+
+def test_budget_roles_and_column_prefs() -> None:
+    clear_profile_cache()
+    budget = load_budget_profile()
+    assert budget["roles"]["metric_numerator"]
+    assert budget["roles"]["metric_denominator"]
+    assert budget["label_columns"] == budget["item_column_candidates"]
+    assert budget["metric_numerator"] == budget["executed_column_candidates"]
+    prefs = budget["column_prefs"]
+    assert prefs.get("rate_name") == "집행률"
+    assert "집행계_합계" in prefs.get("default_numerator")
+    assert budget["summary_builder"] == "budget"
 
 
 def test_budget_profile_load() -> None:
@@ -132,6 +163,9 @@ def test_load_profile_and_active() -> None:
     clear_profile_cache()
     assert load_profile("generic")["name"] == "generic"
     assert load_profile("budget")["name"] == "budget"
+    assert active_profile(profile_name="generic")["name"] == "generic"
+    assert active_profile(profile_name="budget")["name"] == "budget"
+    # deprecated shim
     assert active_profile(use_budget_profile=False)["name"] == "generic"
     assert active_profile(use_budget_profile=True)["name"] == "budget"
 

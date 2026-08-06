@@ -6,18 +6,15 @@ from dataclasses import dataclass
 import pandas as pd
 
 from core.column_match import find_mentioned_column
-from core.constants import (
-    AMOUNT_COLUMN_HINTS,
-    CODE_COLUMN_HINTS,
-    CODE_PAIR_SAMPLE_SIZE,
-    GROUP_COLUMN_EXACT,
-    GROUP_COLUMN_HINTS,
-    GROUP_COLUMN_SUFFIXES,
-    ITEM_COLUMN_HINTS,
-)
+from core.constants import CODE_PAIR_SAMPLE_SIZE
 from core.excel_loader import find_merged_header_pair, merged_header_base
 from core.pandasai_config import is_total_label, prepare_dataframe_for_ai
+from core.profile_loader import column_hints_for
 from core.value_filter import format_context_label
+
+
+def _hints() -> dict[str, tuple[str, ...]]:
+    return column_hints_for()
 
 _SOURCE_COL = "출처파일"
 
@@ -367,7 +364,7 @@ def _list_code_column(
         series = df[column]
         is_numeric = pd.api.types.is_numeric_dtype(series)
         name_score = 0
-        if _column_name_matches(column, CODE_COLUMN_HINTS):
+        if _column_name_matches(column, _hints()["code_column_hints"]):
             name_score = 20
         elif is_numeric:
             name_score = 5
@@ -393,7 +390,7 @@ def _list_code_column(
 
 def _is_amount_like_column(name: str) -> bool:
     normalized = str(name).replace(" ", "").lower()
-    return any(hint.lower() in normalized for hint in AMOUNT_COLUMN_HINTS)
+    return any(hint.lower() in normalized for hint in _hints()["amount_column_hints"])
 
 
 def _forward_fill_group_labels(series: pd.Series) -> list[str]:
@@ -474,7 +471,8 @@ def _list_item_column(
     item_hint_columns = [
         column
         for column in df.columns
-        if column != source_col and _column_name_matches(column, ITEM_COLUMN_HINTS)
+        if column != source_col
+        and _column_name_matches(column, _hints()["item_column_hints"])
     ]
 
     # 금액 컬럼이 언급돼도 리스트 항목은 비용명/항목 쪽을 우선한다.
@@ -537,12 +535,13 @@ def _text_columns(df: pd.DataFrame, *, source_col: str) -> list[str]:
 
 
 def _is_group_like_column(name: str) -> bool:
+    hints = _hints()
     normalized = str(name).replace(" ", "").lower()
-    if normalized in {hint.lower() for hint in GROUP_COLUMN_EXACT}:
+    if normalized in {hint.lower() for hint in hints["group_column_exact"]}:
         return True
-    if any(hint.lower() in normalized for hint in GROUP_COLUMN_HINTS):
+    if any(hint.lower() in normalized for hint in hints["group_column_hints"]):
         return True
-    return any(normalized.endswith(suffix) for suffix in GROUP_COLUMN_SUFFIXES)
+    return any(normalized.endswith(suffix) for suffix in hints["group_column_suffixes"])
 
 
 def _column_name_matches(name: str, hints: tuple[str, ...]) -> bool:

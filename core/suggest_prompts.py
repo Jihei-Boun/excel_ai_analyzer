@@ -7,8 +7,8 @@ from collections.abc import Sequence
 import pandas as pd
 
 from core.column_match import looks_like_code_metric_column
-from core.constants import AMOUNT_COLUMN_HINTS, CHAT_EXAMPLE_LIMIT
-from core.profile_loader import load_profile
+from core.constants import CHAT_EXAMPLE_LIMIT
+from core.profile_loader import column_hints_for, load_profile
 from core.text_normalize import normalize_text
 
 
@@ -39,8 +39,8 @@ _MAX_CATEGORY_CARDINALITY = 40
 def suggest_example_prompts(
     df: pd.DataFrame | None,
     *,
-    use_budget_profile: bool = False,
     profile_name: str | None = None,
+    use_budget_profile: bool = False,
     multi_file: bool = False,
     multi_sheet: bool = False,
     limit: int = CHAT_EXAMPLE_LIMIT,
@@ -54,8 +54,7 @@ def suggest_example_prompts(
 
     limit = max(1, int(limit))
     name = resolve_profile_name(
-        profile_name=profile_name,
-        use_budget_profile=use_budget_profile,
+        profile_name=profile_name, use_budget_profile=use_budget_profile,
     )
     if name != "generic":
         return list(
@@ -173,7 +172,7 @@ def _numeric_metric_columns(df: pd.DataFrame) -> list[str]:
 
 def _looks_amount_name(name: str) -> bool:
     normalized = normalize_text(name)
-    return any(hint in normalized for hint in AMOUNT_COLUMN_HINTS)
+    return any(hint in normalized for hint in column_hints_for()["amount_column_hints"])
 
 
 def _merge_unique(
