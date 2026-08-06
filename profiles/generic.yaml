@@ -39,6 +39,9 @@ display_labels: {}
 # 해석 LLM에 붙는 도메인 가이던스
 interpret_guidance: ""
 
+# PandasAI 가드레일·스키마 힌트 예시 (비우면 코드 기본: 코드/명칭/분류)
+guardrail_hints: {}
+
 semantic_hints:
   likely_identifier_concepts:
     - id

@@ -86,13 +86,6 @@ def _profile_prompts(
     prompts = profile.get("suggested_prompts") or ()
     if prompts:
         return tuple(str(p) for p in prompts)
-    if profile_name == "budget":
-        return (
-            "파일을 요약해줘",
-            "실행예산 합계를 알려줘",
-            "비목분류별 집행계 합계를 표로 보여줘",
-            "비용명이 121인 데이터만 보여줘",
-        )
     return _FALLBACK_GENERIC
 
 

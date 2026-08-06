@@ -326,6 +326,13 @@ interpret_guidance: >-
   증가분과 감소분이 상쇄되면 그 점을 명시하세요.
   집행률이 낮다는 사실만으로 비효율·문제라고 단정하지 마세요.
 
+guardrail_hints:
+  code_col: 비용명
+  name_col: 비용명_2
+  group_col: 비목분류
+  fill_example: 내부인건비
+  footer_examples: 내부흡수액·외부유출액
+
 # 하단 요약 행 (소계·합계와 별도로 집계에서 제외)
 footer_labels:
   - 내부흡수액

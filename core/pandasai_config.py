@@ -137,6 +137,12 @@ def chat(
     if first_error:
         issues.append(first_error)
         lowered_error = first_error.lower()
+        from core.profile_loader import guardrail_hints_for
+
+        hints = guardrail_hints_for()
+        code_col = hints.get("code_col", "코드")
+        name_col = hints.get("name_col", "명칭")
+        group_col = hints.get("group_col", "분류")
         if "duplicate entries" in lowered_error or "reshape" in lowered_error:
             issues.append(
                 "중복 키로 pivot/unstack가 실패했습니다. "
@@ -147,7 +153,7 @@ def chat(
         ):
             issues.append(
                 "숫자 코드(예: 121.0)를 컬럼/키로 조회하지 마세요. "
-                "'비용명' 요청이면 코드 열 대신 명칭 열(비용명_2)을 "
+                f"'{code_col}' 요청이면 코드 열 대신 명칭 열({name_col})을 "
                 "pivot_table columns/index에 사용하세요."
             )
         if "can only use .str accessor" in lowered_error:
@@ -163,7 +169,7 @@ def chat(
             issues.append(
                 "result는 반드시 non-null DataFrame이어야 합니다. "
                 "예: result = {\"type\": \"dataframe\", \"value\": pivot_df}. "
-                "비목분류 빈칸은 분석용 데이터에서 이미 위 값으로 채워져 있으니 "
+                f"{group_col} 빈칸은 분석용 데이터에서 이미 위 값으로 채워져 있으니 "
                 "그대로 index로 사용하고, 소계/합계 행만 제외하세요. "
                 "value=None 또는 빈 결과는 반환하지 마세요."
             )

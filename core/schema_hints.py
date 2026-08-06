@@ -103,12 +103,17 @@ def format_schema_hints_for_prompt(
         if meta.get("role") == "hierarchical_category"
     ]
     if hierarchical:
+        from core.profile_loader import guardrail_hints_for
+
+        ghints = guardrail_hints_for()
+        fill_ex = ghints.get("fill_example", "상위 분류값")
+        primary = hierarchical[0]
         lines.append(
             "- 계층형 분류(분석용으로만 forward-fill됨): " + ", ".join(hierarchical)
         )
         lines.append(
-            "- 중요: 원본 미리보기의 빈 비목분류는 결측이 아닙니다. "
-            "엑셀 병합칸이므로 '내부인건비' 아래 빈 행도 같은 내부인건비로 "
+            f"- 중요: 원본 미리보기의 빈 {primary}는 결측이 아닙니다. "
+            f"엑셀 병합칸이므로 '{fill_ex}' 아래 빈 행도 같은 {primary}로 "
             "이미 채워진 분석용 DataFrame을 사용하세요. "
             "빈 문자열/NaN을 별도 그룹으로 피벗하지 마세요."
         )
@@ -140,6 +145,18 @@ def format_schema_hints_for_prompt(
         note = meta.get("note") or ""
         lines.append(f"- 복합 지표 '{parent}': {cols}. {note}")
 
+    from core.profile_loader import footer_labels_for, guardrail_hints_for
+
+    ghints = guardrail_hints_for()
+    group_ex = ghints.get("group_col", "분류")
+    footers = footer_labels_for()
+    footer_note = "·".join(footers) if footers else ghints.get("footer_examples", "")
+    footer_line = (
+        f"- 피벗 전 소계·합계·총계 라벨 행은 제외하세요. "
+        f"하단 요약 라벨({footer_note}) 행도 제외를 검토하세요."
+        if footer_note
+        else "- 피벗 전 소계·합계·총계 라벨 행은 제외하세요."
+    )
     lines.extend(
         [
             "- 피벗 키 조합이 유일하면 pivot 또는 pivot_table 사용 가능.",
@@ -149,11 +166,10 @@ def format_schema_hints_for_prompt(
             "- 교차 피벗 시 요청에서 먼저 언급된 축을 행(index), "
             "다음에 언급된 축을 열(columns)로 두세요. "
             "행마다 값이 1개만 있는 대각선 표가 되면 축이 뒤바뀐 것입니다.",
-            "- 피벗 전 소계·합계·총계 라벨 행은 제외하세요. "
-            "예산 표라면 내부흡수액·외부유출액 하단 행도 제외를 검토하세요.",
+            footer_line,
             "- 행 축(index)에는 빈 분류값이 없어야 합니다. "
             "분석용 복사본의 forward-fill된 분류 열을 사용하세요.",
-            "- reset_index() 뒤에는 행 축 컬럼명(예: 비목분류)을 유지하세요. "
+            f"- reset_index() 뒤에는 행 축 컬럼명(예: {group_ex})을 유지하세요. "
             "왼쪽 열이 비거나 숫자만 있으면 잘못된 피벗입니다.",
             "- 컬럼명을 임의로 다른 이름으로 rewrite하지 마세요.",
         ]

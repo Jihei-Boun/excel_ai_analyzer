@@ -7,9 +7,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from core.budget_summary import build_budget_summary, looks_like_budget_table
-from core.generic_summary import build_generic_summary
 from core.pandasai_config import prepare_dataframe_for_ai
+from core.summary_builders import run_summary_builder
 from core.summary_utils import excel_shape
 
 _SUMMARY_KEYWORDS = (
@@ -49,7 +48,7 @@ def build_file_summary(
 ) -> str:
     """DataFrame을 읽어 사람이 읽을 수 있는 파일 요약 문장을 만든다.
 
-    프로필 ``summary_builder`` 가 budget이고 예산 표로 보이면 전용 요약을 쓴다.
+    프로필 ``summary_builder`` 이름에 등록된 빌더를 사용한다.
     """
     if df is None or df.empty:
         return "데이터가 비어 있어 요약할 내용이 없습니다."
@@ -62,17 +61,12 @@ def build_file_summary(
     profile = active_profile(
         profile_name=profile_name,
     )
-    builder = str(profile.get("summary_builder") or profile.get("summary") or "")
+    builder = str(
+        profile.get("summary_builder") or profile.get("summary") or "generic"
+    ).strip() or "generic"
 
-    if builder == "budget" and looks_like_budget_table(prepared):
-        return build_budget_summary(
-            prepared,
-            file_name=file_name,
-            sheet_name=sheet_name,
-            sheets=sheets,
-            excel_shape=shape,
-        )
-    return build_generic_summary(
+    return run_summary_builder(
+        builder,
         prepared,
         file_name=file_name,
         sheet_name=sheet_name,

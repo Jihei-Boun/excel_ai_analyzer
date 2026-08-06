@@ -648,10 +648,17 @@ def test_code_columns_are_stringified_on_analysis_copy_only() -> None:
 
 def test_friendly_error_explains_code_key_error() -> None:
     from core.pandasai_config import _friendly_error
+    from core.profile_loader import use_profile
 
-    message = _friendly_error(KeyError("121.0"))
+    with use_profile("budget"):
+        message = _friendly_error(KeyError("121.0"))
     assert "비용명" in message or "코드" in message
     assert "121" in message
+
+    with use_profile("generic"):
+        generic_msg = _friendly_error(KeyError("121.0"))
+    assert "코드" in generic_msg
+    assert "비용명_2" not in generic_msg
 
 
 def test_near_diagonal_sparse_pivot_triggers_axis_swap_issue() -> None:

@@ -193,19 +193,54 @@ def test_profile_column_helpers() -> None:
 
 
 def test_structured_keywords_profile_scoped() -> None:
-    from core.prompt_intent import wants_structured_analysis
+    from core.prompt_intent import expects_dataframe, wants_structured_analysis
     from core.profile_loader import use_profile
+    from core.text_normalize import keyword_in_text
 
     clear_profile_cache()
-    # '행'이 들어간 단어(집행률)는 expects_dataframe 오탐이 있어 잔액·비중으로 검증
+    # '행'이 한글 단어 중간에 있어도 오탐하지 않음
+    assert keyword_in_text("집행률", "행") is False
+    assert expects_dataframe("집행률") is False
+    assert keyword_in_text("표로 보여줘", "표") is True
+    assert keyword_in_text("비용명별 합계", "별") is True
+
     with use_profile("generic"):
         assert wants_structured_analysis("잔액") is False
         assert wants_structured_analysis("비중") is False
+        assert wants_structured_analysis("집행률") is False
     with use_profile("budget"):
         assert wants_structured_analysis("잔액") is True
         assert wants_structured_analysis("비중") is True
+        assert wants_structured_analysis("집행률") is True
     # 범용 키워드는 프로필과 무관
     assert wants_structured_analysis("상관관계를 분석해줘", profile_name="generic") is True
+
+
+def test_guardrail_hints_and_summary_registry() -> None:
+    from core.profile_loader import guardrail_hints_for, use_profile
+    from core.summary_builders import list_summary_builders, run_summary_builder
+    import pandas as pd
+
+    clear_profile_cache()
+    with use_profile("generic"):
+        hints = guardrail_hints_for()
+        assert hints["code_col"] == "코드"
+        assert hints["name_col"] == "명칭"
+    with use_profile("budget"):
+        hints = guardrail_hints_for()
+        assert hints["code_col"] == "비용명"
+        assert hints["name_col"] == "비용명_2"
+        assert hints["group_col"] == "비목분류"
+
+    assert "generic" in list_summary_builders()
+    assert "budget" in list_summary_builders()
+    text = run_summary_builder(
+        "generic",
+        pd.DataFrame({"a": [1, 2], "b": ["x", "y"]}),
+        file_name="t.csv",
+        sheets=[],
+    )
+    assert "a" in text or "행" in text or "컬럼" in text
 
 
 def test_list_and_load_custom_profile(tmp_path, monkeypatch) -> None:

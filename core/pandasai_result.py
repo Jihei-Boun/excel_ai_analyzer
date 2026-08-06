@@ -17,11 +17,19 @@ except ImportError:  # pragma: no cover
 
 
 def _friendly_error(exc: BaseException) -> str:
+    from core.profile_loader import guardrail_hints_for
+
     text = str(exc)
+    hints = guardrail_hints_for()
+    code_col = hints.get("code_col", "코드")
+    name_col = hints.get("name_col", "명칭")
+    group_col = hints.get("group_col", "분류")
+
     # 이미 가공된 RuntimeError 메시지는 그대로 둔다.
     if isinstance(exc, RuntimeError) and (
         text.startswith("PandasAI")
         or text.startswith("AI가")
+        or text.startswith(f"{code_col} 코드")
         or text.startswith("비용명 코드")
         or text.startswith("숫자형 열")
     ):
@@ -47,8 +55,8 @@ def _friendly_error(exc: BaseException) -> str:
         )
     if _looks_like_code_key_error(exc, text):
         return (
-            "비용명 코드 값(예: 121, 121.0)을 컬럼명처럼 조회하다 실패했습니다. "
-            "피벗·교차 축에는 코드 열 대신 명칭 열(예: 비용명_2)을 사용하세요. "
+            f"{code_col} 코드 값(예: 121, 121.0)을 컬럼명처럼 조회하다 실패했습니다. "
+            f"피벗·교차 축에는 코드 열 대신 명칭 열(예: {name_col})을 사용하세요. "
             f"(상세: {text})"
         )
     if "can only use .str accessor" in lowered:
@@ -65,7 +73,7 @@ def _friendly_error(exc: BaseException) -> str:
     ):
         return (
             "AI가 표(DataFrame) 대신 빈 결과(None)를 반환했습니다. "
-            "피벗 시 분석용으로 forward-fill된 비목분류를 index로 쓰고, "
+            f"피벗 시 분석용으로 forward-fill된 {group_col}를 index로 쓰고, "
             "소계/합계 행을 제외한 뒤 non-null DataFrame을 반환하도록 "
             "다시 시도해 주세요. "
             f"(상세: {text})"

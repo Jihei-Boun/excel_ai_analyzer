@@ -99,15 +99,22 @@ def validate_pandasai_result(
 
         pivot_like = _code_looks_like_pivot(code) or _frame_looks_like_crosstab(result)
         if pivot_like and has_broken_pivot_row_axis(result):
+            from core.profile_loader import guardrail_hints_for
+
+            hints = guardrail_hints_for()
+            group_col = hints.get("group_col", "분류")
+            name_col = hints.get("name_col", "명칭")
+            footers = hints.get("footer_examples", "하단 요약 행")
             axis_hint = _pivot_axis_order_hint(user_prompt)
             hard.append(
                 "피벗 행 축(왼쪽 열)이 비어 있거나 분류명 대신 숫자/결측으로 보입니다. "
                 "계층형 분류는 이미 분석용 복사본에서 forward-fill되어 있으니 "
-                "그 열을 index로 쓰세요. 소계·합계·총계·내부흡수액·외부유출액 행은 "
+                "그 열을 index로 쓰세요. 소계·합계·총계·"
+                f"{footers} 행은 "
                 "피벗 전에 제외하세요. reset_index() 후 행 축 컬럼명을 "
-                "비목분류 등 의미 있는 이름으로 두세요. "
+                f"{group_col} 등 의미 있는 이름으로 두세요. "
                 f"{axis_hint}"
-                "명칭 열(예: 비용명_2)을 columns로 사용하세요."
+                f"명칭 열(예: {name_col})을 columns로 사용하세요."
             )
         if pivot_like and is_near_diagonal_sparse_pivot(result):
             axis_hint = _pivot_axis_order_hint(user_prompt)

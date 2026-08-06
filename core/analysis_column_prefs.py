@@ -184,11 +184,11 @@ def is_provisional_share_prompt(
     if not _tok(prefs, "provisional_columns") or not _tok(prefs, "provisional_base_columns"):
         return False
     compact = normalize_text(prompt)
-    # 토큰은 프로필 후보의 대표 문자열 앞부분을 사용
-    prov_hint = normalize_text(_tok(prefs, "provisional_columns")[0])[:3]
-    base_hint = normalize_text(_tok(prefs, "provisional_base_columns")[0])[:4]
-    has_prov = bool(prov_hint and prov_hint in compact) or "가집행" in compact
-    has_base = bool(base_hint and base_hint in compact) or "당해누계" in compact
+    # 토큰은 프로필 후보의 대표 문자열을 사용 (하드코딩 도메인어 없음)
+    prov_cols = _tok(prefs, "provisional_columns")
+    base_cols = _tok(prefs, "provisional_base_columns")
+    has_prov = any(normalize_text(c)[:3] in compact for c in prov_cols if c)
+    has_base = any(normalize_text(c)[:4] in compact for c in base_cols if c)
     has_share = any(tok in prompt for tok in ("비중", "비율", "대비", "차지"))
     return bool(has_prov and has_base and has_share)
 

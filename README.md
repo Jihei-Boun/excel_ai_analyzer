@@ -220,6 +220,9 @@ streamlit run app.py
 - [x] 구조화/복잡 의도 키워드 프로필화 (`structured_analysis_keywords` / `complex_analysis_keywords`)
 - [x] 분포·해석 표시 라벨·가이던스 외부화 (`display_labels` / `interpret_guidance`)
 - [x] 공유 힌트에서 비용명·세목을 예산 extras로만 유지
+- [x] PandasAI 가드레일·스키마 힌트 예시 `guardrail_hints` 프로필화
+- [x] 의도 키워드 토큰 매칭 개선 (`keyword_in_text`, 행⊂집행률 오탐 제거)
+- [x] `summary_builder` 레지스트리 (`core/summary_builders.py`)
 
 ---
 

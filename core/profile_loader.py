@@ -190,6 +190,14 @@ def _normalize_profile(name: str, data: dict[str, Any]) -> dict[str, Any]:
         for key, val in display_labels.items()
         if not isinstance(val, (tuple, list))
     }
+    guardrail_hints = _parse_str_map(
+        data.get("guardrail_hints"), field="guardrail_hints"
+    )
+    guardrail_hints = {
+        key: str(val)
+        for key, val in guardrail_hints.items()
+        if not isinstance(val, (tuple, list)) and str(val).strip()
+    }
 
     return {
         "name": name,
@@ -219,6 +227,7 @@ def _normalize_profile(name: str, data: dict[str, Any]) -> dict[str, Any]:
             field="complex_analysis_keywords",
         ),
         "display_labels": display_labels,
+        "guardrail_hints": guardrail_hints,
         "column_hints": _as_tuple(data.get("column_hints"), field="column_hints"),
         # 역할 스키마
         "roles": roles,
@@ -437,6 +446,39 @@ def display_labels_for(
             labels[key] = str(prefs[pref_key])
     out = dict(_DISPLAY_LABEL_DEFAULTS)
     out.update(labels)
+    return out
+
+
+_GUARDRAIL_HINT_DEFAULTS: dict[str, str] = {
+    "code_col": "코드",
+    "name_col": "명칭",
+    "group_col": "분류",
+    "fill_example": "상위 분류값",
+    "footer_examples": "하단 요약 행",
+}
+
+
+def guardrail_hints_for(
+    *,
+    profile_name: str | None = None,
+) -> dict[str, str]:
+    """PandasAI 가드레일·스키마 힌트용 도메인 예시 문자열."""
+    profile = active_profile(profile_name=profile_name)
+    hints = {
+        str(k): str(v)
+        for k, v in dict(profile.get("guardrail_hints") or {}).items()
+        if v is not None and str(v).strip()
+    }
+    roles = roles_for(profile_name=profile_name)
+    if "group_col" not in hints and roles.get("group_columns"):
+        hints["group_col"] = str(roles["group_columns"][0])
+    if "name_col" not in hints and roles.get("label_columns"):
+        hints["name_col"] = str(roles["label_columns"][0])
+    footers = footer_labels_for(profile_name=profile_name)
+    if "footer_examples" not in hints and footers:
+        hints["footer_examples"] = "·".join(footers)
+    out = dict(_GUARDRAIL_HINT_DEFAULTS)
+    out.update(hints)
     return out
 
 

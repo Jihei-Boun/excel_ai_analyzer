@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from core.text_normalize import normalize_text
+from core.text_normalize import any_keyword_in_text, normalize_text
 
 _COMPLEX_KEYWORDS = (
     "상위",
@@ -96,18 +96,15 @@ _AGGREGATE_OPS = (
 
 def expects_plot(prompt: str) -> bool:
     """차트·그래프 시각화 요청인지 판별한다."""
-    lowered = prompt.lower()
-    return any(keyword in lowered for keyword in _CHART_KEYWORDS)
+    return any_keyword_in_text(prompt, _CHART_KEYWORDS)
 
 
 def is_pivot_request(prompt: str) -> bool:
     """피벗·교차 집계 요청인지 판별한다."""
     if not prompt:
         return False
-    lowered = prompt.lower()
-    normalized = normalize_text(prompt)
     keywords = ("피벗", "pivot", "교차", "크로스탭", "crosstab")
-    return any(k in lowered or k in normalized for k in keywords)
+    return any_keyword_in_text(prompt, keywords)
 
 
 # 도메인 전용 키워드(집행률·미집행 등)는 profiles/*.yaml 의
@@ -197,13 +194,12 @@ def wants_structured_analysis(
         return False
     if expects_dataframe(prompt):
         return True
-    lowered = prompt.lower()
     keywords = _merged_structured_keywords(profile_name=profile_name)
-    if any(keyword in lowered for keyword in keywords):
+    if any_keyword_in_text(prompt, keywords):
         return True
     # 그룹별 가장 큰/작은 항목 — '뽑아'만 있어도 구조화 후보
-    if any(tok in prompt for tok in ("별", "그룹")) and any(
-        tok in prompt for tok in ("가장", "하나씩", "상위", "하위", "최대", "최소")
+    if any_keyword_in_text(prompt, ("별", "그룹")) and any_keyword_in_text(
+        prompt, ("가장", "하나씩", "상위", "하위", "최대", "최소")
     ):
         return True
     return False
@@ -213,7 +209,6 @@ def expects_dataframe(prompt: str) -> bool:
     """표 형태 결과를 요구하는 표현인지 판별한다."""
     if is_pivot_request(prompt):
         return True
-    lowered = prompt.lower()
     table_keywords = (
         "리스트",
         "목록",
@@ -236,7 +231,7 @@ def expects_dataframe(prompt: str) -> bool:
         "rows",
         "columns",
     )
-    return any(keyword in lowered for keyword in table_keywords)
+    return any_keyword_in_text(prompt, table_keywords)
 
 
 def is_list_request(prompt: str) -> bool:
@@ -246,24 +241,22 @@ def is_list_request(prompt: str) -> bool:
     if is_schema_request(prompt):
         return False
     # 그룹별 대표 행 추출은 구조화 분석으로 보낸다
-    if any(tok in prompt for tok in ("별", "그룹")) and any(
-        tok in prompt for tok in ("가장", "하나씩", "상위", "하위", "최대", "최소")
+    if any_keyword_in_text(prompt, ("별", "그룹")) and any_keyword_in_text(
+        prompt, ("가장", "하나씩", "상위", "하위", "최대", "최소")
     ):
         return False
-    lowered = prompt.lower()
     compact = normalize_text(prompt)
     # '컬럼목록'/'열목록'만 있고 다른 리스트 동사가 없으면 스키마로 본다
     if ("컬럼목록" in compact or "열목록" in compact) and not any(
         k in compact for k in ("리스트", "뽑아", "나열", "list")
     ):
         return False
-    return any(keyword in lowered for keyword in _LIST_REQUEST_KEYWORDS)
+    return any_keyword_in_text(prompt, _LIST_REQUEST_KEYWORDS)
 
 
 def wants_table_and_chart(prompt: str) -> bool:
     """표(리스트)와 차트 둘 다 요청했는지."""
-    lowered = prompt.lower()
-    return any(kw in lowered for kw in TABLE_AND_CHART_KEYWORDS)
+    return any_keyword_in_text(prompt, TABLE_AND_CHART_KEYWORDS)
 
 
 def is_condition_filter_request(prompt: str) -> bool:
@@ -309,9 +302,8 @@ def is_complex_analysis(
         return True
     if is_condition_filter_request(prompt):
         return True
-    lowered = prompt.lower()
     keywords = _merged_complex_keywords(profile_name=profile_name)
-    return any(keyword in lowered for keyword in keywords)
+    return any_keyword_in_text(prompt, keywords)
 
 
 def _match_aggregate_op(prompt: str) -> str | None:

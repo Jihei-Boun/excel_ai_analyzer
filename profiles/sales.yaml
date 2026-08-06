@@ -71,6 +71,12 @@ display_labels:
 
 interpret_guidance: ""
 
+guardrail_hints:
+  code_col: 상품코드
+  name_col: 상품명
+  group_col: 지역
+  fill_example: 카테고리값
+
 plan_guidance: >-
   Prefer product/customer/region columns as labels when present.
   For ranking top products by revenue use top_n_per_group or sort+limit.
