@@ -6,6 +6,7 @@ summary: budget
 currency: krw
 domain: budget_table
 summary_builder: budget
+locale: ko
 
 detect_min_hits: 2
 enable_column_prefs: true

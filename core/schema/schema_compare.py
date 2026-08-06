@@ -321,18 +321,14 @@ def explain_column_meanings(
     inventory = build_column_meaning_inventory(df)
     profile = active_profile(profile_name=profile_name)
     domain = str(profile.get("domain") or profile.get("name") or "generic")
-    system = (
-        "You explain spreadsheet column meanings in Korean. "
-        "Return plain text only (no JSON, no code, no tables). "
-        "For each column write one short bullet: `컬럼명`: 의미. "
-        "Use dtype and samples as hints; mark uncertain items as 추정. "
-        "Do not filter, aggregate, or invent columns."
-    )
+    from core.profile_loader import meaning_prompts_for
+
+    system, user_suffix = meaning_prompts_for(profile_name=profile_name)
     user = (
         f"User request: {prompt}\n"
         f"Active domain profile: {domain}\n"
         f"Column inventory (JSON):\n{inventory}\n"
-        "Explain each column briefly in Korean."
+        f"{user_suffix}"
     )
     try:
         text = chat_text(

@@ -73,14 +73,19 @@ def _plan_system_prompt(
     *,
     profile_name: str | None = None,
 ) -> str:
+    from core.profile_loader import plan_language_note_for
+
     profile = active_profile(
         profile_name=profile_name,
     )
     guidance = str(profile.get("plan_guidance") or "").strip()
-    if not guidance:
-        return _GENERIC_PLAN_SYSTEM
-    return f"{_GENERIC_PLAN_SYSTEM} Domain guidance: {guidance}"
-
+    lang_note = plan_language_note_for(profile_name=profile_name)
+    parts = [_GENERIC_PLAN_SYSTEM]
+    if lang_note:
+        parts.append(lang_note)
+    if guidance:
+        parts.append(f"Domain guidance: {guidance}")
+    return " ".join(parts)
 
 def build_analysis_plan(
     prompt: str,

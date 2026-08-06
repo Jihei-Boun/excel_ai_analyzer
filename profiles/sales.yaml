@@ -5,6 +5,7 @@ summary: sales
 currency: krw
 domain: sales
 summary_builder: generic
+locale: ko
 
 detect_min_hits: 2
 enable_column_prefs: false

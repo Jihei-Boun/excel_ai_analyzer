@@ -171,6 +171,11 @@ def _run_analysis_impl(
         if planned is not None:
             return planned.dataframe, planned.reply, dict(planned.meta)
 
+    from core.profile_loader import dataframe_request_hint_for
+
+    df_hint = dataframe_request_hint_for(profile_name=profile_name) or (
+        "'list', 'table', 'show' requests must return a DataFrame."
+    )
     query = (
         "사용자의 요청을 현재 DataFrame의 실제 컬럼명과 데이터 타입에 맞춰 "
         "pandas 연산으로 수행하세요.\n"
@@ -181,7 +186,7 @@ def _run_analysis_impl(
         "같은 분류의 모든 행을 필터링할 때 사용하세요.\n"
         "항목을 찾는 요청은 식별·조건 확인에 필요한 최소 컬럼만 남기세요. "
         "원본의 모든 열을 그대로 반환하지 마세요.\n"
-        "'리스트', '목록', '표', '보여줘' 요청은 반드시 DataFrame으로 반환하세요.\n"
+        f"{df_hint}\n"
         "차트·그래프·시각화 요청은 plot type으로 차트를 저장하고 경로를 반환하세요.\n"
         "합계·총합·평균 등 집계 요청도 가능하면 "
         "행 라벨(분류명)과 컬럼명·집계값으로 된 작은 DataFrame으로 반환하세요.\n"
@@ -377,7 +382,12 @@ def _run_multi_analysis_impl(
             file_count = merged["출처파일"].nunique() if "출처파일" in merged.columns else 0
             return merged, f"리스트 결과: {len(merged):,}행 ({file_count}개 파일)", {}
 
+    from core.profile_loader import dataframe_request_hint_for
+
     file_names = ", ".join(name for name, _ in named_dfs)
+    df_hint = dataframe_request_hint_for(profile_name=profile_name) or (
+        "'list', 'table', 'show' requests must return a DataFrame."
+    )
     query = (
         "여러 엑셀 파일의 DataFrame이 동시에 제공됩니다. "
         "각 dfs[i]는 서로 다른 파일이며, 파일명과 테이블명을 참고하세요.\n"
@@ -385,7 +395,7 @@ def _run_multi_analysis_impl(
         "특정 컬럼이나 데이터 형식을 가정하지 마세요.\n"
         "반복된 상위 분류 값은 원본의 빈 상세 행을 분석용으로 채운 값이므로 "
         "같은 분류의 모든 행을 필터링할 때 사용하세요.\n"
-        "'리스트', '목록', '표', '보여줘' 요청은 반드시 DataFrame으로 반환하세요.\n"
+        f"{df_hint}\n"
         "차트·그래프·시각화 요청은 plot type으로 차트를 저장하고 경로를 반환하세요.\n"
         "단일 계산만 숫자나 문자열로 반환하세요.\n"
         f"분석 대상 파일: {file_names}\n"

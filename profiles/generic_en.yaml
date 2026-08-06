@@ -1,0 +1,79 @@
+# English-locale general profile sample
+# Select in the sidebar to get English LLM replies and EN display labels.
+
+summary: generic
+currency: none
+domain: generic
+summary_builder: generic
+locale: en
+
+enable_column_prefs: false
+
+roles: {}
+column_prefs: {}
+column_hint_extras: {}
+
+preferred_labels:
+  - name
+  - label
+  - category
+  - item
+  - product
+  - customer
+  - region
+  - 항목명
+  - 항목
+  - 이름
+
+footer_labels: []
+plan_guidance: ""
+structured_analysis_keywords: []
+complex_analysis_keywords: []
+display_labels: {}
+interpret_guidance: ""
+guardrail_hints:
+  code_col: code
+  name_col: name
+  group_col: category
+  fill_example: parent category
+  footer_examples: footer total rows
+
+semantic_hints:
+  likely_identifier_concepts:
+    - id
+    - code
+    - key
+    - sku
+  likely_summary_labels:
+    - subtotal
+    - total
+    - 소계
+    - 합계
+  likely_additive_concepts:
+    - amount
+    - qty
+    - quantity
+    - revenue
+    - sales
+  cautions:
+    - summary rows should not be mixed with detail rows during aggregation
+    - percentage and date columns should not normally be summed
+    - totals should be validated after aggregation
+
+suggested_prompts:
+  - Summarize this file
+  - Show data types and missing counts for each column
+  - Sum the first numeric column
+  - Show row counts by categorical column as a table
+
+suggested_prompts_multi_file:
+  - Integrate the selected files
+  - Compare row counts and columns across files
+  - List columns common to both files
+  - Compare numeric column sums across files as a table
+
+suggested_prompts_multi_sheet:
+  - Compare row counts and columns across sheets
+  - Compare numeric column sums by sheet as a table
+  - List columns common across sheets
+  - Summarize this file

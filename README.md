@@ -109,7 +109,9 @@ excel_ai_analyzer/
 ├── ui/
 ├── profiles/
 │   ├── generic.yaml
+│   ├── generic_en.yaml
 │   ├── budget.yaml
+│   ├── sales.yaml
 │   ├── column_hints.yaml
 │   └── column_meanings.yaml
 ├── docs/images/
@@ -236,6 +238,7 @@ streamlit run app.py
 - [x] PandasAI 가드레일·스키마 힌트 예시 `guardrail_hints` 프로필화
 - [x] 의도 키워드 토큰 매칭 개선 (`keyword_in_text`, 행⊂집행률 오탐 제거)
 - [x] `summary_builder` 레지스트리 (`core/summary_builders.py`)
+- [x] 언어 프로필화 (`locale` / `language_instruction`, `generic_en` 샘플)
 
 ---
 

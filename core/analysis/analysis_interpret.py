@@ -23,7 +23,11 @@ def interpret_analysis_result(
     profile_name: str | None = None,
 ) -> str:
     """계산 결과 JSON만 근거로 해석 문장을 생성한다."""
-    from core.profile_loader import interpret_guidance_for
+    from core.profile_loader import (
+        interpret_guidance_for,
+        interpret_system_prompt_for,
+        interpret_user_prefix_for,
+    )
 
     meta = exec_meta or {}
     payload = {
@@ -38,22 +42,14 @@ def interpret_analysis_result(
         "aggregate_sources": meta.get("aggregate_sources") or {},
     }
 
-    system = (
-        "당신은 표 계산 결과를 해석하는 분석가입니다. "
-        "반드시 한국어만 사용하세요. 중국어·영어·기타 언어로 쓰지 마세요. "
-        "제공된 JSON에 없는 수치·항목·비율을 만들지 마세요. "
-        "상관관계와 원인을 구분하세요. "
-        "한국어로 간결히 작성하세요. "
-        "correlation이면 1) 전체 상관 2) 분포·양수 표본 3) 결론 순으로, "
-        "그 외에는 가능하면 1) 전체 비교 2) 그룹별 특징 3) 결론 순으로 쓰세요."
-    )
+    system = interpret_system_prompt_for(profile_name=profile_name)
     domain_guidance = interpret_guidance_for(profile_name=profile_name)
     if domain_guidance:
         system = f"{system} {domain_guidance}"
-    user = (
-        "다음 계산 결과만 근거로 사용자 요청에 답하세요.\n\n"
-        f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    prefix = interpret_user_prefix_for(profile_name=profile_name) or (
+        "Answer using only the calculation results below."
     )
+    user = f"{prefix}\n\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
 
     fn = chat_text_fn or chat_text
     text = fn(

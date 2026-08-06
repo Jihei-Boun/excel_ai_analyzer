@@ -199,12 +199,20 @@ def _normalize_profile(name: str, data: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(val, (tuple, list)) and str(val).strip()
     }
 
+    from core.common.locale_support import normalize_locale
+
+    locale = normalize_locale(_as_str(data.get("locale"), field="locale") or "ko")
+
     return {
         "name": name,
         "summary": _as_str(data.get("summary"), field="summary") or name,
         "summary_builder": summary_builder,
         "currency": _as_str(data.get("currency"), field="currency") or "none",
         "domain": domain,
+        "locale": locale,
+        "language_instruction": _as_str(
+            data.get("language_instruction"), field="language_instruction"
+        ),
         "detect_min_hits": _as_int(
             data.get("detect_min_hits"), field="detect_min_hits", default=2
         ),
@@ -302,10 +310,19 @@ def profile_display_label(name: str) -> str:
     """사이드바용 짧은 표시명."""
     labels = {
         "generic": "일반 (generic)",
+        "generic_en": "General EN (generic_en)",
         "budget": "예산 표 (budget)",
         "sales": "매출 (sales)",
     }
-    return labels.get(name, name)
+    try:
+        profile = load_profile(name)
+        locale = str(profile.get("locale") or "ko")
+        base = labels.get(name, name)
+        if name not in labels and locale == "en":
+            return f"{name} (en)"
+        return base
+    except ValueError:
+        return labels.get(name, name)
 
 
 @lru_cache(maxsize=16)
@@ -424,11 +441,92 @@ _DISPLAY_LABEL_DEFAULTS: dict[str, str] = {
 }
 
 
+def locale_for(*, profile_name: str | None = None) -> str:
+    from core.common.locale_support import normalize_locale
+
+    return normalize_locale(
+        active_profile(profile_name=profile_name).get("locale") or "ko"
+    )
+
+
+def locale_preset_for(*, profile_name: str | None = None) -> dict[str, Any]:
+    from core.common.locale_support import locale_preset
+
+    return locale_preset(locale_for(profile_name=profile_name))
+
+
+def language_instruction_for(*, profile_name: str | None = None) -> str:
+    """LLM 응답 언어 지시. 프로필 오버라이드 → locale 프리셋."""
+    profile = active_profile(profile_name=profile_name)
+    override = str(profile.get("language_instruction") or "").strip()
+    if override:
+        return override
+    return str(locale_preset_for(profile_name=profile_name).get("language_instruction") or "")
+
+
+def interpret_system_prompt_for(*, profile_name: str | None = None) -> str:
+    """해석 LLM system 프롬프트 (역할·언어·스타일)."""
+    preset = locale_preset_for(profile_name=profile_name)
+    lang = language_instruction_for(profile_name=profile_name)
+    parts = [
+        str(preset.get("interpret_role") or ""),
+        lang,
+        "제공된 JSON에 없는 수치·항목·비율을 만들지 마세요. "
+        "Do not invent numbers, items, or rates absent from the JSON. "
+        "상관관계와 원인을 구분하세요. Distinguish correlation from causation. ",
+        str(preset.get("interpret_style") or ""),
+        "correlation이면 1) 전체 상관 2) 분포·양수 표본 3) 결론 순으로, "
+        "그 외에는 가능하면 1) 전체 비교 2) 그룹별 특징 3) 결론 순으로 쓰세요. "
+        "For correlation: (1) overall correlation (2) distribution / positive-pair "
+        "sample (3) conclusion. Otherwise prefer (1) overall comparison "
+        "(2) group traits (3) conclusion.",
+    ]
+    return " ".join(p for p in parts if p).strip()
+
+
+def interpret_user_prefix_for(*, profile_name: str | None = None) -> str:
+    return str(
+        locale_preset_for(profile_name=profile_name).get("interpret_user_prefix") or ""
+    )
+
+
+def meaning_prompts_for(
+    *,
+    profile_name: str | None = None,
+) -> tuple[str, str]:
+    """컬럼 의미 설명 LLM (system, user_suffix)."""
+    preset = locale_preset_for(profile_name=profile_name)
+    system = str(preset.get("meaning_system") or "")
+    # language_instruction을 system 앞에 보강
+    lang = language_instruction_for(profile_name=profile_name)
+    if lang and lang not in system:
+        system = f"{lang} {system}"
+    suffix = str(preset.get("meaning_user_suffix") or "")
+    return system, suffix
+
+
+def dataframe_request_hint_for(*, profile_name: str | None = None) -> str:
+    return str(
+        locale_preset_for(profile_name=profile_name).get("dataframe_request_hint") or ""
+    )
+
+
+def plan_language_note_for(*, profile_name: str | None = None) -> str:
+    return str(
+        locale_preset_for(profile_name=profile_name).get("plan_language_note") or ""
+    )
+
+
+def locale_intent_keywords_for(*, profile_name: str | None = None) -> tuple[str, ...]:
+    extras = locale_preset_for(profile_name=profile_name).get("intent_keywords_extra") or ()
+    return tuple(str(x) for x in extras)
+
+
 def display_labels_for(
     *,
     profile_name: str | None = None,
 ) -> dict[str, str]:
-    """결과 표·분포 요약용 표시 라벨. column_prefs 스칼라로 보정."""
+    """결과 표·분포 요약용 표시 라벨. locale 기본값 + column_prefs + 프로필."""
     profile = active_profile(profile_name=profile_name)
     labels = {
         str(k): str(v)
@@ -444,7 +542,11 @@ def display_labels_for(
     ):
         if key not in labels and prefs.get(pref_key):
             labels[key] = str(prefs[pref_key])
-    out = dict(_DISPLAY_LABEL_DEFAULTS)
+    preset_labels = locale_preset_for(profile_name=profile_name).get("display_labels")
+    if isinstance(preset_labels, dict) and preset_labels:
+        out = {str(k): str(v) for k, v in preset_labels.items()}
+    else:
+        out = dict(_DISPLAY_LABEL_DEFAULTS)
     out.update(labels)
     return out
 

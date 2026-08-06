@@ -150,14 +150,16 @@ def _merged_structured_keywords(
     *,
     profile_name: str | None = None,
 ) -> tuple[str, ...]:
-    from core.profile_loader import structured_analysis_keywords_for
+    from core.profile_loader import (
+        locale_intent_keywords_for,
+        structured_analysis_keywords_for,
+    )
 
     extras = structured_analysis_keywords_for(profile_name=profile_name)
-    if not extras:
-        return _STRUCTURED_ANALYSIS_KEYWORDS
+    locale_extras = locale_intent_keywords_for(profile_name=profile_name)
     seen: set[str] = set()
     out: list[str] = []
-    for tok in (*_STRUCTURED_ANALYSIS_KEYWORDS, *extras):
+    for tok in (*_STRUCTURED_ANALYSIS_KEYWORDS, *locale_extras, *extras):
         key = str(tok)
         if key and key not in seen:
             out.append(key)
@@ -169,20 +171,21 @@ def _merged_complex_keywords(
     *,
     profile_name: str | None = None,
 ) -> tuple[str, ...]:
-    from core.profile_loader import complex_analysis_keywords_for
+    from core.profile_loader import (
+        complex_analysis_keywords_for,
+        locale_intent_keywords_for,
+    )
 
     extras = complex_analysis_keywords_for(profile_name=profile_name)
-    if not extras:
-        return _COMPLEX_KEYWORDS
+    locale_extras = locale_intent_keywords_for(profile_name=profile_name)
     seen: set[str] = set()
     out: list[str] = []
-    for tok in (*_COMPLEX_KEYWORDS, *extras):
+    for tok in (*_COMPLEX_KEYWORDS, *locale_extras, *extras):
         key = str(tok)
         if key and key not in seen:
             out.append(key)
             seen.add(key)
     return tuple(out)
-
 
 def wants_structured_analysis(
     prompt: str,

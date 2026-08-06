@@ -181,9 +181,9 @@ def test_route_column_meanings_uses_llm(monkeypatch) -> None:
     assert "LLM 추정" in outcome.reply
     assert outcome.dataframe is None
     assert "담당자" in str(called.get("prompt"))
-    assert "plain text" in str(called.get("system")).lower() or "Korean" in str(
-        called.get("system")
-    )
+    system = str(called.get("system"))
+    assert "plain text" in system.lower()
+    assert "Korean" in system or "한국어" in system
 
 
 def test_route_column_meanings_falls_back_to_rules(monkeypatch) -> None:

@@ -141,8 +141,46 @@ def test_generic_profile_load() -> None:
     assert generic["name"] == "generic"
     assert generic["currency"] == "none"
     assert generic["summary"] == "generic"
+    assert generic["locale"] == "ko"
     assert generic["suggested_prompts"]
     assert "파일을 요약해줘" in generic["suggested_prompts"]
+
+
+def test_locale_language_profile() -> None:
+    from core.profile_loader import (
+        dataframe_request_hint_for,
+        display_labels_for,
+        language_instruction_for,
+        locale_for,
+        meaning_prompts_for,
+        interpret_system_prompt_for,
+        use_profile,
+    )
+
+    clear_profile_cache()
+    assert "generic_en" in list_profile_names()
+    with use_profile("generic"):
+        assert locale_for() == "ko"
+        assert "한국어" in language_instruction_for()
+        assert "한국어" in interpret_system_prompt_for()
+        assert display_labels_for()["rate"] == "비율"
+        system, suffix = meaning_prompts_for()
+        assert "Korean" in system
+        assert "Korean" in suffix
+    with use_profile("generic_en"):
+        assert locale_for() == "en"
+        instr = language_instruction_for()
+        assert "English" in instr
+        assert "반드시 한국어만" not in instr
+        assert "English" in interpret_system_prompt_for()
+        assert "반드시 한국어만" not in interpret_system_prompt_for()
+        assert display_labels_for()["rate"] == "rate"
+        system, suffix = meaning_prompts_for()
+        assert "English" in system
+        assert "English" in suffix
+        hint = dataframe_request_hint_for()
+        assert "list" in hint.lower()
+        assert "리스트" not in hint
 
 
 def test_generic_profile_has_no_column_prefs() -> None:
@@ -218,7 +256,11 @@ def test_structured_keywords_profile_scoped() -> None:
 
 def test_guardrail_hints_and_summary_registry() -> None:
     from core.profile_loader import guardrail_hints_for, use_profile
-    from core.summary.summary_builders import list_summary_builders, run_summary_builder
+    from core.summary.summary_builders import (
+        ensure_builtin_summary_builders,
+        list_summary_builders,
+        run_summary_builder,
+    )
     import pandas as pd
 
     clear_profile_cache()
@@ -232,6 +274,7 @@ def test_guardrail_hints_and_summary_registry() -> None:
         assert hints["name_col"] == "비용명_2"
         assert hints["group_col"] == "비목분류"
 
+    ensure_builtin_summary_builders()
     assert "generic" in list_summary_builders()
     assert "budget" in list_summary_builders()
     text = run_summary_builder(

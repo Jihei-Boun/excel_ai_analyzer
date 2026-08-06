@@ -4,6 +4,7 @@ summary: generic
 currency: none
 domain: generic
 summary_builder: generic
+locale: ko
 
 # 도메인 컬럼 강제 보정(집행률 등) — 일반 모드에서는 끔
 enable_column_prefs: false
