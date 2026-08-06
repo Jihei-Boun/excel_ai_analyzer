@@ -169,11 +169,23 @@ def analysis_plan_from_dict(
     data: dict[str, Any],
     *,
     available_columns: list[str],
+    profile_name: str | None = None,
 ) -> AnalysisPlan:
     """LLM JSON을 sanitize·컴파일하여 AnalysisPlan으로 만든다."""
+    from core.profile_loader import use_profile
+
     if not isinstance(data, dict):
         raise ValueError("분석 계획이 객체가 아닙니다.")
 
+    with use_profile(profile_name):
+        return _analysis_plan_from_dict_inner(data, available_columns=available_columns)
+
+
+def _analysis_plan_from_dict_inner(
+    data: dict[str, Any],
+    *,
+    available_columns: list[str],
+) -> AnalysisPlan:
     columns = {str(c) for c in available_columns}
     compiled = _compile_high_level(data, columns)
     raw_steps = compiled.get("steps") or data.get("steps") or []
@@ -279,6 +291,8 @@ def _compile_high_level(data: dict[str, Any], columns: set[str]) -> dict[str, An
 
 def _compile_top_n_per_group(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
     """그룹마다 값 기준 상위/하위 n행 → 정렬 → 최소 열."""
+    from core.profile_loader import preferred_columns_present
+
     group_col = str(
         data.get("group_column") or data.get("group_by") or data.get("by") or ""
     ).strip()
@@ -314,11 +328,7 @@ def _compile_top_n_per_group(data: dict[str, Any], columns: set[str]) -> dict[st
     if any(tok in order for tok in ("desc", "large", "max", "높", "큰")):
         ascending = False
 
-    label_prefs = [
-        c
-        for c in ("비목분류", "비용명_2", "비용명", "항목명", "항목")
-        if c in columns
-    ]
+    label_prefs = preferred_columns_present(columns)
     explicit = [
         str(c)
         for c in (data.get("output_columns") or data.get("select_columns") or [])
@@ -384,6 +394,13 @@ def _compile_split_by_difference(
 
     ``top_n_difference``와 달리 limit으로 자르지 않는다.
     """
+    from core.profile_loader import (
+        default_diff_name,
+        default_split_label_name,
+        detail_label_columns_present,
+        preferred_columns_present,
+    )
+
     values = [str(c) for c in (data.get("value_columns") or []) if str(c) in columns]
     left = str(
         data.get("left") or data.get("after") or data.get("executed_column") or ""
@@ -399,14 +416,12 @@ def _compile_split_by_difference(
     if left not in columns or right not in columns or left == right:
         return {}
 
-    diff_name = str(data.get("diff_name") or "차이").strip() or "차이"
-    label_name = str(data.get("label_name") or "구분").strip() or "구분"
+    diff_name = str(data.get("diff_name") or default_diff_name()).strip() or "차이"
+    label_name = (
+        str(data.get("label_name") or default_split_label_name()).strip() or "구분"
+    )
 
-    label_prefs = [
-        c
-        for c in ("비목분류", "비용명_2", "비용명", "항목명", "항목")
-        if c in columns
-    ]
+    label_prefs = preferred_columns_present(columns)
     explicit = [
         str(c)
         for c in (data.get("output_columns") or data.get("select_columns") or [])
@@ -461,7 +476,7 @@ def _compile_split_by_difference(
     return {
         "steps": steps,
         "criteria_note": note,
-        "dimension_columns": [c for c in ("비용명_2", "비용명") if c in columns][:1],
+        "dimension_columns": detail_label_columns_present(columns)[:1],
         "output_columns": out_cols,
         "interpret": interpret,
     }
@@ -469,23 +484,31 @@ def _compile_split_by_difference(
 
 def _compile_rate_vs_mean(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
     """행단위 비율 → 분모 0 제외 → 평균 대비 필터 → 최소 열."""
+    from core.profile_loader import (
+        default_rate_name,
+        detail_label_columns_present,
+        preferred_columns_present,
+    )
+
     numerator = str(data.get("numerator") or data.get("executed_column") or "")
     denominator = str(data.get("denominator") or data.get("budget_column") or "")
     if numerator not in columns or denominator not in columns:
         return {}
 
-    rate_name = str(data.get("rate_name") or "집행률").strip() or "집행률"
+    rate_name = str(data.get("rate_name") or default_rate_name()).strip() or "비율"
     relation = str(data.get("relation") or data.get("compare") or "below").lower()
     if any(tok in relation for tok in ("above", "높", "이상", "초과", "gt")):
         relation = "above"
     else:
         relation = "below"
 
-    label_prefs = [
-        c
-        for c in ("비용명", "비용명_2", "비목분류", "항목명", "항목")
-        if c in columns
-    ]
+    label_prefs = preferred_columns_present(columns)
+    # 비율 표는 세부 라벨을 앞에 두는 편이 읽기 쉽다
+    detail_labels = detail_label_columns_present(columns)
+    if detail_labels:
+        label_prefs = list(
+            dict.fromkeys([*detail_labels, *[c for c in label_prefs if c not in detail_labels]])
+        )
     explicit = [
         str(c)
         for c in (data.get("output_columns") or data.get("select_columns") or [])
@@ -549,13 +572,18 @@ def _compile_rate_vs_mean(data: dict[str, Any], columns: set[str]) -> dict[str, 
     return {
         "steps": steps,
         "criteria_note": note,
-        "dimension_columns": [c for c in ("비용명_2", "비용명") if c in columns][:1],
+        "dimension_columns": detail_label_columns_present(columns)[:1],
         "output_columns": out_cols,
         "interpret": interpret,
     }
 
 def _compile_find_items(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
     """세부 항목 조건 탐색: 수치 필터 → (선택) 비중 파생 → 필요 열만 선택 → 정렬."""
+    from core.profile_loader import (
+        preferred_columns_present,
+        related_metric_columns_present,
+    )
+
     numeric_filters = _sanitize_numeric_filters(
         {"numeric_filters": data.get("numeric_filters") or data.get("conditions") or []},
         columns,
@@ -563,17 +591,7 @@ def _compile_find_items(data: dict[str, Any], columns: set[str]) -> dict[str, An
     if not numeric_filters:
         return {}
 
-    label_prefs = [
-        c
-        for c in (
-            "비목분류",
-            "비용명_2",
-            "비용명",
-            "항목명",
-            "항목",
-        )
-        if c in columns
-    ]
+    label_prefs = preferred_columns_present(columns)
     metric_cols = [str(f["column"]) for f in numeric_filters]
 
     numerator = str(data.get("numerator") or "")
@@ -597,18 +615,20 @@ def _compile_find_items(data: dict[str, Any], columns: set[str]) -> dict[str, An
                 out_cols.append(col)
                 seen.add(col)
     else:
-        related_hints = (
-            "집행계_합계",
-            "집행계_이월집행",
-            "집행계_당해집행",
-            "실행예산_이월예산",
-            "실행예산_당해예산",
-            "예산잔액_합계",
-            "당년도집행",
-            "당해누계",
-            "가집행금액",
-        )
-        related = [c for c in related_hints if c in columns and c not in metric_cols]
+        related = [
+            c
+            for c in related_metric_columns_present(columns)
+            if c not in metric_cols
+        ]
+        # condition_related_metrics 보조 (없으면 find_related만)
+        if not related:
+            related = [
+                c
+                for c in related_metric_columns_present(
+                    columns, key="condition_related_metrics"
+                )
+                if c not in metric_cols
+            ]
         out_cols = []
         seen = set()
         related_kept = 0
@@ -868,7 +888,9 @@ def _compile_group_comparison(data: dict[str, Any], columns: set[str]) -> dict[s
 
     numerator = str(data.get("numerator") or "")
     denominator = str(data.get("denominator") or "")
-    rate_name = str(data.get("rate_name") or "집행률")
+    from core.profile_loader import default_rate_name
+
+    rate_name = str(data.get("rate_name") or default_rate_name())
     if numerator in columns and denominator in columns:
         for col in (denominator, numerator):
             if col not in metric_cols:

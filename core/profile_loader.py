@@ -181,6 +181,16 @@ def _normalize_profile(name: str, data: dict[str, Any]) -> dict[str, Any]:
     if not preferred and roles["label_columns"]:
         preferred = roles["label_columns"]
 
+    display_labels = _parse_str_map(
+        data.get("display_labels"), field="display_labels"
+    )
+    # 스칼라만 유지 (리스트 값은 display에 쓰지 않음)
+    display_labels = {
+        key: str(val)
+        for key, val in display_labels.items()
+        if not isinstance(val, (tuple, list))
+    }
+
     return {
         "name": name,
         "summary": _as_str(data.get("summary"), field="summary") or name,
@@ -197,6 +207,18 @@ def _normalize_profile(name: str, data: dict[str, Any]) -> dict[str, Any]:
         ),
         "preferred_labels": preferred,
         "plan_guidance": _as_str(data.get("plan_guidance"), field="plan_guidance"),
+        "interpret_guidance": _as_str(
+            data.get("interpret_guidance"), field="interpret_guidance"
+        ),
+        "structured_analysis_keywords": _as_tuple(
+            data.get("structured_analysis_keywords"),
+            field="structured_analysis_keywords",
+        ),
+        "complex_analysis_keywords": _as_tuple(
+            data.get("complex_analysis_keywords"),
+            field="complex_analysis_keywords",
+        ),
+        "display_labels": display_labels,
         "column_hints": _as_tuple(data.get("column_hints"), field="column_hints"),
         # 역할 스키마
         "roles": roles,
@@ -377,6 +399,142 @@ def column_prefs_for(
         ).get("column_prefs")
         or {}
     )
+
+
+_DISPLAY_LABEL_DEFAULTS: dict[str, str] = {
+    "rate": "비율",
+    "item": "항목",
+    "denominator": "분모",
+    "item_count": "항목수",
+    "zero_rate_count": "0%비율수",
+    "zero_denominator_sum": "0%분모합",
+    "max_rate": "최대비율",
+    "min_rate": "최소비율",
+    "diff": "차이",
+    "split_label": "구분",
+}
+
+
+def display_labels_for(
+    *,
+    profile_name: str | None = None,
+) -> dict[str, str]:
+    """결과 표·분포 요약용 표시 라벨. column_prefs 스칼라로 보정."""
+    profile = active_profile(profile_name=profile_name)
+    labels = {
+        str(k): str(v)
+        for k, v in dict(profile.get("display_labels") or {}).items()
+        if v is not None and str(v).strip()
+    }
+    prefs = column_prefs_for(profile_name=profile_name)
+    for key, pref_key in (
+        ("rate", "rate_name"),
+        ("diff", "diff_name"),
+        ("split_label", "split_label_name"),
+        ("share", "share_name"),
+    ):
+        if key not in labels and prefs.get(pref_key):
+            labels[key] = str(prefs[pref_key])
+    out = dict(_DISPLAY_LABEL_DEFAULTS)
+    out.update(labels)
+    return out
+
+
+def interpret_guidance_for(
+    *,
+    profile_name: str | None = None,
+) -> str:
+    return str(
+        active_profile(profile_name=profile_name).get("interpret_guidance") or ""
+    ).strip()
+
+
+def structured_analysis_keywords_for(
+    *,
+    profile_name: str | None = None,
+) -> tuple[str, ...]:
+    return tuple(
+        active_profile(profile_name=profile_name).get("structured_analysis_keywords")
+        or ()
+    )
+
+
+def complex_analysis_keywords_for(
+    *,
+    profile_name: str | None = None,
+) -> tuple[str, ...]:
+    return tuple(
+        active_profile(profile_name=profile_name).get("complex_analysis_keywords")
+        or ()
+    )
+
+
+def preferred_columns_present(
+    columns: set[str] | list[str] | tuple[str, ...],
+    *,
+    profile_name: str | None = None,
+) -> list[str]:
+    """스키마에 존재하는 preferred/label/group 열 (출력 후보)."""
+    colset = {str(c) for c in columns}
+    roles = roles_for(profile_name=profile_name)
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for candidate in (
+        *preferred_labels_for(profile_name=profile_name),
+        *roles.get("label_columns", ()),
+        *roles.get("group_columns", ()),
+    ):
+        name = str(candidate)
+        if name in colset and name not in seen:
+            ordered.append(name)
+            seen.add(name)
+    return ordered
+
+
+def detail_label_columns_present(
+    columns: set[str] | list[str] | tuple[str, ...],
+    *,
+    profile_name: str | None = None,
+) -> list[str]:
+    """세부 항목 라벨 열 (그룹/분류보다 label_columns 우선)."""
+    colset = {str(c) for c in columns}
+    roles = roles_for(profile_name=profile_name)
+    labels = list(roles.get("label_columns") or ())
+    if not labels:
+        groups = set(roles.get("group_columns") or ())
+        labels = [
+            c
+            for c in preferred_labels_for(profile_name=profile_name)
+            if c not in groups
+        ]
+    return [c for c in labels if c in colset]
+
+
+def related_metric_columns_present(
+    columns: set[str] | list[str] | tuple[str, ...],
+    *,
+    profile_name: str | None = None,
+    key: str = "find_related_metrics",
+) -> list[str]:
+    """column_prefs의 관련 메트릭 힌트 중 스키마에 있는 열."""
+    colset = {str(c) for c in columns}
+    prefs = column_prefs_for(profile_name=profile_name)
+    raw = prefs.get(key) or ()
+    if isinstance(raw, str):
+        raw = (raw,) if raw else ()
+    return [str(c) for c in raw if str(c) in colset]
+
+
+def default_rate_name(*, profile_name: str | None = None) -> str:
+    return display_labels_for(profile_name=profile_name).get("rate", "비율")
+
+
+def default_diff_name(*, profile_name: str | None = None) -> str:
+    return display_labels_for(profile_name=profile_name).get("diff", "차이")
+
+
+def default_split_label_name(*, profile_name: str | None = None) -> str:
+    return display_labels_for(profile_name=profile_name).get("split_label", "구분")
 
 
 def roles_for(

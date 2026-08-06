@@ -174,6 +174,7 @@ def _run_step(
             ),
             group_value=step.payload.get("group_value"),
             zero_threshold=float(step.payload.get("zero_threshold") or 0.0),
+            profile_name=step.payload.get("profile_name"),
         )
         return result, {"distribution": dist_meta}
 

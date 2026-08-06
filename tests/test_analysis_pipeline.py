@@ -786,6 +786,7 @@ def test_rate_vs_mean_below_average_on_twin() -> None:
             "interpret": False,
         },
         available_columns=list(df.columns),
+        profile_name="budget",
     )
     assert any(s.op == "filter_vs_mean" for s in plan.steps)
     assert not plan.interpret
@@ -923,6 +924,7 @@ def test_top_n_per_group_balance_on_twin() -> None:
             "interpret": False,
         },
         available_columns=list(df.columns),
+        profile_name="budget",
     )
     plan.footer_labels = ["내부흡수액", "외부유출액"]
     assert any(s.op == "top_per_group" for s in plan.steps)
@@ -1014,6 +1016,7 @@ def test_split_by_difference_plan_vs_exec_on_twin() -> None:
             "interpret": True,
         },
         available_columns=list(df.columns),
+        profile_name="budget",
     )
     assert plan.interpret
     assert not any(s.op == "limit" for s in plan.steps)

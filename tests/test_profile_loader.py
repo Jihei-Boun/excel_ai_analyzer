@@ -51,9 +51,11 @@ def test_column_hints_load() -> None:
     # 예산 전용 금액 토큰은 공유 힌트에 두지 않는다
     assert "예산" not in hints["amount_column_hints"]
     assert "집행" not in hints["amount_column_hints"]
-    # 코드성 컬럼명은 범용으로 유지
-    assert "비용명" in hints["item_column_hints"]
-    assert "비용명" in hints["code_metric_name_hints"]
+    # 비용명·세목은 공유가 아니라 budget extras
+    assert "비용명" not in hints["item_column_hints"]
+    assert "세목" not in hints["item_column_hints"]
+    assert "비용명" not in hints["code_metric_name_hints"]
+    assert "세목" not in hints["code_column_hints"]
     assert hints["group_column_suffixes"]
 
 
@@ -65,10 +67,13 @@ def test_budget_column_hint_extras_merge() -> None:
     assert "예산" in merged["amount_column_hints"]
     assert "집행" in merged["amount_column_hints"]
     assert "비목분류" in merged["group_column_hints"]
+    assert "비용명" in merged["item_column_hints"]
+    assert "세목" in merged["code_column_hints"]
+    assert "비용명" in merged["code_metric_name_hints"]
     generic = column_hints_for(profile_name="generic")
     assert "예산" not in generic["amount_column_hints"]
     assert "비목분류" not in generic["group_column_hints"]
-
+    assert "비용명" not in generic["item_column_hints"]
 
 def test_suggest_profile_name_budget_and_sales() -> None:
     import pandas as pd
@@ -147,6 +152,8 @@ def test_generic_profile_has_no_column_prefs() -> None:
     assert generic["footer_labels"] == ()
     assert "비목분류" not in generic["preferred_labels"]
     assert generic["plan_guidance"] == ""
+    assert generic["structured_analysis_keywords"] == ()
+    assert generic["interpret_guidance"] == ""
 
 
 def test_budget_profile_enables_prefs_and_guidance() -> None:
@@ -156,6 +163,49 @@ def test_budget_profile_enables_prefs_and_guidance() -> None:
     assert "내부흡수액" in budget["footer_labels"]
     assert "비목분류" in budget["preferred_labels"]
     assert "집행계_합계" in budget["plan_guidance"]
+    assert "집행률" in budget["structured_analysis_keywords"]
+    assert "집행률" in budget["complex_analysis_keywords"]
+    assert budget["display_labels"].get("rate") == "집행률"
+    assert "가집행" in budget["interpret_guidance"]
+
+
+def test_profile_column_helpers() -> None:
+    from core.profile_loader import (
+        default_rate_name,
+        detail_label_columns_present,
+        display_labels_for,
+        preferred_columns_present,
+        related_metric_columns_present,
+        use_profile,
+    )
+
+    clear_profile_cache()
+    cols = {"비목분류", "비용명_2", "비용명", "집행계_합계", "실행예산_합계"}
+    with use_profile("budget"):
+        assert preferred_columns_present(cols)[0] == "비목분류"
+        assert "비용명_2" in detail_label_columns_present(cols)
+        assert "집행계_합계" in related_metric_columns_present(cols)
+        assert default_rate_name() == "집행률"
+        assert display_labels_for()["zero_rate_count"] == "0%미집행수"
+    with use_profile("generic"):
+        assert default_rate_name() == "비율"
+        assert preferred_columns_present({"항목명", "매출"}) == ["항목명"]
+
+
+def test_structured_keywords_profile_scoped() -> None:
+    from core.prompt_intent import wants_structured_analysis
+    from core.profile_loader import use_profile
+
+    clear_profile_cache()
+    # '행'이 들어간 단어(집행률)는 expects_dataframe 오탐이 있어 잔액·비중으로 검증
+    with use_profile("generic"):
+        assert wants_structured_analysis("잔액") is False
+        assert wants_structured_analysis("비중") is False
+    with use_profile("budget"):
+        assert wants_structured_analysis("잔액") is True
+        assert wants_structured_analysis("비중") is True
+    # 범용 키워드는 프로필과 무관
+    assert wants_structured_analysis("상관관계를 분석해줘", profile_name="generic") is True
 
 
 def test_list_and_load_custom_profile(tmp_path, monkeypatch) -> None:

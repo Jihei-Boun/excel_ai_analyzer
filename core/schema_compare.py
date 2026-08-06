@@ -254,6 +254,100 @@ def estimate_column_meaning(
     return "용도를 컬럼명만으로 특정하기 어려워 추가 확인이 필요합니다"
 
 
+def build_column_meaning_inventory(
+    df: pd.DataFrame,
+    *,
+    max_cols: int = 40,
+    sample_n: int = 5,
+) -> list[dict[str, object]]:
+    """LLM/규칙 설명용 컬럼 인벤토리."""
+    rows: list[dict[str, object]] = []
+    for col in list(df.columns)[:max_cols]:
+        series = df[col]
+        sample = (
+            series.dropna()
+            .astype(str)
+            .head(sample_n)
+            .tolist()
+        )
+        rows.append(
+            {
+                "column": str(col),
+                "dtype": str(series.dtype),
+                "non_null": int(series.notna().sum()),
+                "unique": int(series.nunique(dropna=True)),
+                "samples": sample,
+            }
+        )
+    return rows
+
+
+def build_rule_based_column_meanings(
+    df: pd.DataFrame,
+    *,
+    profile_name: str | None = None,
+) -> str:
+    """프로필 규칙으로 컬럼 의미 목록을 만든다 (LLM 폴백)."""
+    lines = ["컬럼 의미 추정(규칙 기반):", ""]
+    for col in df.columns:
+        meaning = estimate_column_meaning(
+            str(col),
+            df[col],
+            profile_name=profile_name,
+        )
+        lines.append(f"- `{col}`: {meaning}")
+    if len(df.columns) == 0:
+        return "설명할 컬럼이 없습니다."
+    lines.append("")
+    lines.append("확신이 낮은 항목은 도메인 문맥에 따라 달라질 수 있습니다.")
+    return "\n".join(lines)
+
+
+def explain_column_meanings(
+    df: pd.DataFrame,
+    prompt: str,
+    *,
+    base_url: str,
+    model: str,
+    profile_name: str | None = None,
+) -> str:
+    """컬럼 의미를 텍스트로 설명한다. PandasAI를 쓰지 않고 Ollama 텍스트 API를 사용한다."""
+    from core.llm_client import chat_text
+    from core.profile_loader import active_profile
+
+    if df is None or df.empty or len(df.columns) == 0:
+        return "설명할 컬럼이 없습니다."
+
+    inventory = build_column_meaning_inventory(df)
+    profile = active_profile(profile_name=profile_name)
+    domain = str(profile.get("domain") or profile.get("name") or "generic")
+    system = (
+        "You explain spreadsheet column meanings in Korean. "
+        "Return plain text only (no JSON, no code, no tables). "
+        "For each column write one short bullet: `컬럼명`: 의미. "
+        "Use dtype and samples as hints; mark uncertain items as 추정. "
+        "Do not filter, aggregate, or invent columns."
+    )
+    user = (
+        f"User request: {prompt}\n"
+        f"Active domain profile: {domain}\n"
+        f"Column inventory (JSON):\n{inventory}\n"
+        "Explain each column briefly in Korean."
+    )
+    try:
+        text = chat_text(
+            user,
+            system=system,
+            base_url=base_url,
+            model=model,
+        )
+        if text and len(text.strip()) >= 20:
+            return text.strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return build_rule_based_column_meanings(df, profile_name=profile_name)
+
+
 def _is_meaning_request(compact: str) -> bool:
     if "컬럼" not in compact:
         return False

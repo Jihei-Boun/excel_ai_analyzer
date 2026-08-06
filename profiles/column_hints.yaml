@@ -25,9 +25,8 @@ group_column_exact:
   - 지역
   - 점포
 
+# 예산 전용(비용명·세목)은 profiles/budget.yaml column_hint_extras 로만 둔다.
 item_column_hints:
-  - 비용명
-  - 세목
   - 코드
   - 항목
   - 내역
@@ -42,15 +41,12 @@ code_column_hints:
   - code
   - 상품코드
   - sku
-  - 세목
 
 code_metric_name_hints:
   - 코드
   - 번호
   - code
   - sku
-  - 비용명
-  - 세목
 
 amount_column_hints:
   - 금액

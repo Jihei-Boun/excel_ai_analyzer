@@ -124,12 +124,22 @@ column_prefs:
   find_related_metrics:
     - 집행계_합계
     - 집행계_이월집행
+    - 집행계_당해집행
+    - 실행예산_이월예산
+    - 실행예산_당해예산
     - 예산잔액_합계
+    - 당년도집행
+    - 당해누계
+    - 가집행금액
   condition_related_metrics:
     - 집행계_합계
     - 집행계_이월집행
     - 실행예산_합계
     - 예산잔액_합계
+    - 집행계_당해집행
+    - 실행예산_이월예산
+    - 당년도집행
+    - 가집행금액
   top_n_fallback_metrics:
     - 예산잔액_합계
     - 집행계_합계
@@ -260,17 +270,61 @@ column_hint_extras:
     - 비목분류
   group_column_exact:
     - 비목
+  item_column_hints:
+    - 비용명
+    - 세목
   code_column_hints:
+    - 세목
     - 세목코드
     - 비용코드
     - 계정코드
     - 항목코드
+  code_metric_name_hints:
+    - 비용명
+    - 세목
   amount_column_hints:
     - 예산
     - 집행
     - 잔액
     - 누계
     - 가집행
+
+# 구조화/복잡 의도 트리거 (코드 베이스 키워드에 합쳐짐)
+structured_analysis_keywords:
+  - 집행률
+  - 미집행
+  - 없는 항목
+  - 잔액
+  - 비중
+complex_analysis_keywords:
+  - 집행률
+  - 집행율
+
+display_labels:
+  rate: 집행률
+  item: 항목
+  denominator: 예산
+  item_count: 항목수
+  zero_rate_count: 0%미집행수
+  zero_denominator_sum: 미집행예산합
+  max_rate: 최대집행률
+  min_rate: 최소집행률
+  diff: 차이
+  split_label: 구분
+
+interpret_guidance: >-
+  correlation 메타가 있으면: 상관계수(r≈0이면 무상관)와
+  양수 표본 희소성(둘다_양수 행이 적음)을 중심으로 쓰고,
+  가집행 대비 집행률·0% 비율 해석으로 바꾸지 마세요.
+  둘다 양수인 소수 행의 강한 상관을 전체 결론으로 단정하지 마세요.
+  항목 탐색(이월예산·당해집행 0 등)이면: 조건 정의,
+  완전 미집행 vs 이월집행만 있는 유형, 규모상 우선 점검 항목,
+  잔액/불용 리스크를 짧게 설명하세요.
+  구분 열(증가/감소/동일)이나 계획·실행 차이가 있으면:
+  1) 증가 건수·합계와 대표 항목 2) 감소 건수·합계와 대표 항목
+  3) 동일 여부 4) 총액 유지·항목 간 재배분 여부를 나눠 설명하세요.
+  증가분과 감소분이 상쇄되면 그 점을 명시하세요.
+  집행률이 낮다는 사실만으로 비효율·문제라고 단정하지 마세요.
 
 # 하단 요약 행 (소계·합계와 별도로 집계에서 제외)
 footer_labels:

@@ -302,6 +302,7 @@ def test_chart_from_aggregate_table_uses_same_totals() -> None:
 def test_chart_follow_up_uses_aggregate_table_not_raw_codes() -> None:
     """'차트로 보여줘' 후속 요청은 집계 표(계획예산)를 쓰고 비용명 코드를 쓰지 않는다."""
     from core.chart_utils import _pick_chart_columns
+    from core.profile_loader import use_profile
 
     raw = pd.DataFrame(
         {
@@ -312,18 +313,19 @@ def test_chart_follow_up_uses_aggregate_table_not_raw_codes() -> None:
         }
     )
     prior = "비목분류별 계획예산의 합을 보여줘"
-    grouped = build_groupby_aggregate_table(raw, prior)
-    assert grouped is not None
-    table, _ = grouped
+    with use_profile("budget"):
+        grouped = build_groupby_aggregate_table(raw, prior)
+        assert grouped is not None
+        table, _ = grouped
 
-    cat, num = _pick_chart_columns(table, prior)
-    assert cat == "비목분류"
-    assert num == "계획예산"
-    assert table["계획예산"].max() > 1_000_000
+        cat, num = _pick_chart_columns(table, prior)
+        assert cat == "비목분류"
+        assert num == "계획예산"
+        assert table["계획예산"].max() > 1_000_000
 
-    # 원본+차트-only 프롬프트면 코드 컬럼을 고르지 않도록 집계 표를 써야 함
-    wrong_cat, wrong_num = _pick_chart_columns(raw, "차트로 보여줘")
-    assert wrong_num == "계획예산" or wrong_num != "비용명"
+        # 원본+차트-only 프롬프트면 코드 컬럼을 고르지 않도록 집계 표를 써야 함
+        wrong_cat, wrong_num = _pick_chart_columns(raw, "차트로 보여줘")
+        assert wrong_num == "계획예산" or wrong_num != "비용명"
 
 
 def test_total_row_filter_still_works_when_explicitly_requested() -> None:
@@ -628,6 +630,7 @@ def test_code_guardrails_flag_pivot_without_forcing_rewrite() -> None:
 
 def test_code_columns_are_stringified_on_analysis_copy_only() -> None:
     """비용명 코드는 분석 복사본에서만 '121' 문자열로 바뀐다."""
+    from core.profile_loader import use_profile
     from core.schema_hints import prepare_analysis_frame
 
     raw = pd.DataFrame(
@@ -637,7 +640,8 @@ def test_code_columns_are_stringified_on_analysis_copy_only() -> None:
             "집행계_합계": [10.0, 20.0],
         }
     )
-    analysis = prepare_analysis_frame(raw)
+    with use_profile("budget"):
+        analysis = prepare_analysis_frame(raw)
     assert raw["비용명"].tolist() == [121.0, 201.0]
     assert analysis["비용명"].tolist() == ["121", "201"]
 

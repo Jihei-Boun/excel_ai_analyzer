@@ -166,6 +166,8 @@ def build_analysis_plan(
         profile_name=profile_name,
         category_labels=category_labels,
     )
-    plan = analysis_plan_from_dict(data, available_columns=columns)
+    plan = analysis_plan_from_dict(
+        data, available_columns=columns, profile_name=profile_name
+    )
     plan.footer_labels = [str(x) for x in (profile.get("footer_labels") or ())]
     return plan

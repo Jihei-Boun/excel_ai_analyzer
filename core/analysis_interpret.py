@@ -20,8 +20,11 @@ def interpret_analysis_result(
     base_url: str,
     model: str,
     chat_text_fn: Callable[..., str] | None = None,
+    profile_name: str | None = None,
 ) -> str:
     """계산 결과 JSON만 근거로 해석 문장을 생성한다."""
+    from core.profile_loader import interpret_guidance_for
+
     meta = exec_meta or {}
     payload = {
         "user_request": prompt,
@@ -40,22 +43,13 @@ def interpret_analysis_result(
         "반드시 한국어만 사용하세요. 중국어·영어·기타 언어로 쓰지 마세요. "
         "제공된 JSON에 없는 수치·항목·비율을 만들지 마세요. "
         "상관관계와 원인을 구분하세요. "
-        "correlation 메타가 있으면: 상관계수(r≈0이면 무상관)와 "
-        "양수 표본 희소성(둘다_양수 행이 적음)을 중심으로 쓰고, "
-        "가집행 대비 집행률·0% 비율 해석으로 바꾸지 마세요. "
-        "둘다 양수인 소수 행의 강한 상관을 전체 결론으로 단정하지 마세요. "
-        "항목 탐색(이월예산·당해집행 0 등)이면: 조건 정의, "
-        "완전 미집행 vs 이월집행만 있는 유형, 규모상 우선 점검 항목, "
-        "잔액/불용 리스크를 짧게 설명하세요. "
-        "구분 열(증가/감소/동일)이나 계획·실행 차이가 있으면: "
-        "1) 증가 건수·합계와 대표 항목 2) 감소 건수·합계와 대표 항목 "
-        "3) 동일 여부 4) 총액 유지·항목 간 재배분 여부를 나눠 설명하세요. "
-        "증가분과 감소분이 상쇄되면 그 점을 명시하세요. "
-        "집행률이 낮다는 사실만으로 비효율·문제라고 단정하지 마세요. "
         "한국어로 간결히 작성하세요. "
         "correlation이면 1) 전체 상관 2) 분포·양수 표본 3) 결론 순으로, "
         "그 외에는 가능하면 1) 전체 비교 2) 그룹별 특징 3) 결론 순으로 쓰세요."
     )
+    domain_guidance = interpret_guidance_for(profile_name=profile_name)
+    if domain_guidance:
+        system = f"{system} {domain_guidance}"
     user = (
         "다음 계산 결과만 근거로 사용자 요청에 답하세요.\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"

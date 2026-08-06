@@ -59,6 +59,18 @@ column_hint_extras:
 
 footer_labels: []
 
+structured_analysis_keywords:
+  - 매출
+  - 판매
+complex_analysis_keywords: []
+
+display_labels:
+  rate: 비율
+  item: 상품
+  denominator: 기준금액
+
+interpret_guidance: ""
+
 plan_guidance: >-
   Prefer product/customer/region columns as labels when present.
   For ranking top products by revenue use top_n_per_group or sort+limit.

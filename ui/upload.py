@@ -167,7 +167,11 @@ def _handle_uploads(uploaded_list) -> None:
 
 
 def _maybe_apply_suggested_profile(file_id: str) -> None:
-    """사용자가 프로필을 수동 고정하지 않았다면 업로드 표로 자동 추천한다."""
+    """사용자가 프로필을 수동 고정하지 않았다면 업로드 표로 자동 추천한다.
+
+    selectbox(key=analysis_profile) 이후에는 같은 키를 직접 수정할 수 없으므로
+    pending으로 넘기고 다음 런의 apply_pending_widget_sync에서 적용한다.
+    """
     if st.session_state.get("profile_manually_set"):
         return
     from core.profile_loader import suggest_profile_name
@@ -179,7 +183,7 @@ def _maybe_apply_suggested_profile(file_id: str) -> None:
     suggested, score = suggest_profile_name(df)
     st.session_state.suggested_profile = suggested
     st.session_state.suggested_profile_score = score
-    st.session_state.analysis_profile = suggested
+    st.session_state._pending_analysis_profile = suggested
     st.session_state.budget_table_mode = suggested == "budget"
 
 

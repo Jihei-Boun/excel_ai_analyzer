@@ -23,8 +23,6 @@ _COMPLEX_KEYWORDS = (
     "추이",
     "차트",
     "그래프",
-    "집행률",
-    "집행율",
     "효율",
     "차이",
     "해석",
@@ -112,11 +110,12 @@ def is_pivot_request(prompt: str) -> bool:
     return any(k in lowered or k in normalized for k in keywords)
 
 
+# 도메인 전용 키워드(집행률·미집행 등)는 profiles/*.yaml 의
+# structured_analysis_keywords 로 주입한다.
 _STRUCTURED_ANALYSIS_KEYWORDS = (
     "비교",
     "해석",
     "효율",
-    "집행률",
     "대비",
     "분석해",
     "상관",
@@ -130,13 +129,9 @@ _STRUCTURED_ANALYSIS_KEYWORDS = (
     "찾고",
     "의미",
     "설명해",
-    "미집행",
-    "없는 항목",
     "평균",
-    "비중",
     "골라",
     "계산해",
-    "잔액",
     "하나씩",
     "별로",
     "늘어난",
@@ -154,16 +149,59 @@ def resolve_output_type(prompt: str) -> str | None:
     return None
 
 
-def wants_structured_analysis(prompt: str) -> bool:
+def _merged_structured_keywords(
+    *,
+    profile_name: str | None = None,
+) -> tuple[str, ...]:
+    from core.profile_loader import structured_analysis_keywords_for
+
+    extras = structured_analysis_keywords_for(profile_name=profile_name)
+    if not extras:
+        return _STRUCTURED_ANALYSIS_KEYWORDS
+    seen: set[str] = set()
+    out: list[str] = []
+    for tok in (*_STRUCTURED_ANALYSIS_KEYWORDS, *extras):
+        key = str(tok)
+        if key and key not in seen:
+            out.append(key)
+            seen.add(key)
+    return tuple(out)
+
+
+def _merged_complex_keywords(
+    *,
+    profile_name: str | None = None,
+) -> tuple[str, ...]:
+    from core.profile_loader import complex_analysis_keywords_for
+
+    extras = complex_analysis_keywords_for(profile_name=profile_name)
+    if not extras:
+        return _COMPLEX_KEYWORDS
+    seen: set[str] = set()
+    out: list[str] = []
+    for tok in (*_COMPLEX_KEYWORDS, *extras):
+        key = str(tok)
+        if key and key not in seen:
+            out.append(key)
+            seen.add(key)
+    return tuple(out)
+
+
+def wants_structured_analysis(
+    prompt: str,
+    *,
+    profile_name: str | None = None,
+) -> bool:
     """분석 계획 파이프라인(집계·비율·비교·해석) 후보인지."""
     if not prompt or not str(prompt).strip():
         return False
     if expects_dataframe(prompt):
         return True
     lowered = prompt.lower()
-    if any(keyword in lowered for keyword in _STRUCTURED_ANALYSIS_KEYWORDS):
+    keywords = _merged_structured_keywords(profile_name=profile_name)
+    if any(keyword in lowered for keyword in keywords):
         return True
-    # 비목별 가장 큰/작은 항목 — '뽑아'만 있어도 구조화 후보
+    # 그룹별 가장 큰/작은 항목 — '뽑아'만 있어도 구조화 후보
     if any(tok in prompt for tok in ("별", "그룹")) and any(
         tok in prompt for tok in ("가장", "하나씩", "상위", "하위", "최대", "최소")
     ):
@@ -259,7 +297,11 @@ def is_condition_filter_request(prompt: str) -> bool:
     return False
 
 
-def is_complex_analysis(prompt: str) -> bool:
+def is_complex_analysis(
+    prompt: str,
+    *,
+    profile_name: str | None = None,
+) -> bool:
     """집계·순위·시각화처럼 단순 값 필터로 해결할 수 없는 요청인지 판별한다."""
     if detect_aggregate_op(prompt) is not None:
         return True
@@ -268,7 +310,8 @@ def is_complex_analysis(prompt: str) -> bool:
     if is_condition_filter_request(prompt):
         return True
     lowered = prompt.lower()
-    return any(keyword in lowered for keyword in _COMPLEX_KEYWORDS)
+    keywords = _merged_complex_keywords(profile_name=profile_name)
+    return any(keyword in lowered for keyword in keywords)
 
 
 def _match_aggregate_op(prompt: str) -> str | None:

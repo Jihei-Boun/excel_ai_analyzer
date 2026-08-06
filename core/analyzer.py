@@ -18,7 +18,7 @@ from core.prompt_intent import (
     resolve_output_type,
     wants_structured_analysis,
 )
-from core.schema_compare import is_column_meaning_request
+from core.schema_compare import explain_column_meanings, is_column_meaning_request
 from core.value_filter import (
     _filter_by_mentioned_value,
     _filter_multi_by_mentioned_value,
@@ -33,7 +33,7 @@ __all__ = [
 
 
 def _column_meaning_query(prompt: str, *, multi: bool = False) -> str:
-    """컬럼 의미 추정용 LLM 프롬프트. 집계·필터 단축 없이 설명만 요청한다."""
+    """하위 호환용 — 실제 의미 설명은 explain_column_meanings를 쓴다."""
     scope = (
         "제공된 모든 DataFrame의 컬럼을 대상으로 합니다.\n"
         if multi
@@ -89,15 +89,16 @@ def _run_analysis_impl(
     if not prompt.strip():
         raise ValueError("분석 요청을 입력해 주세요.")
 
-    # 컬럼 의미 설명은 규칙 단축 없이 LLM으로 보낸다.
+    # 컬럼 의미 설명: PandasAI(표 반환 위험) 대신 Ollama 텍스트(+규칙 폴백)
     if is_column_meaning_request(prompt):
-        return chat(
+        text = explain_column_meanings(
             df,
-            _column_meaning_query(prompt),
+            prompt,
             base_url=base_url,
             model=model,
-            output_type=None,
+            profile_name=profile_name,
         )
+        return None, text, {}
 
     output_type = resolve_output_type(prompt)
 
@@ -138,7 +139,9 @@ def _run_analysis_impl(
             )
 
     # 값 필터를 리스트 시드보다 먼저 적용한다 (예: 비용명 121만).
-    if output_type == "dataframe" and not is_complex_analysis(prompt):
+    if output_type == "dataframe" and not is_complex_analysis(
+        prompt, profile_name=profile_name
+    ):
         direct = _filter_by_mentioned_value(df, prompt)
         if direct is not None and not direct.empty:
             return (
@@ -155,7 +158,9 @@ def _run_analysis_impl(
 
     # LLM 분석 계획 → 범용 실행기 → 검증 → (선택) 해석
     # 비교/집행률/해석 등은 표 키워드가 없어도 구조화 분석 후보로 본다.
-    if output_type == "dataframe" or wants_structured_analysis(prompt):
+    if output_type == "dataframe" or wants_structured_analysis(
+        prompt, profile_name=profile_name
+    ):
         planned = try_analysis_pipeline(
             prompt,
             df,
@@ -274,13 +279,17 @@ def _run_multi_analysis_impl(
         raise ValueError("분석 요청을 입력해 주세요.")
 
     if is_column_meaning_request(prompt):
-        return chat_multi(
-            named_dfs,
-            _column_meaning_query(prompt, multi=True),
-            base_url=base_url,
-            model=model,
-            output_type=None,
-        )
+        parts: list[str] = []
+        for name, frame in named_dfs:
+            block = explain_column_meanings(
+                frame,
+                prompt,
+                base_url=base_url,
+                model=model,
+                profile_name=profile_name,
+            )
+            parts.append(f"### {name}\n{block}")
+        return None, "\n\n".join(parts), {}
 
     output_type = resolve_output_type(prompt)
 
@@ -338,7 +347,9 @@ def _run_multi_analysis_impl(
             return empty, "조건 필터 결과: 0행", {}
 
     # 값 필터를 리스트 시드보다 먼저 적용한다.
-    if output_type == "dataframe" and not is_complex_analysis(prompt):
+    if output_type == "dataframe" and not is_complex_analysis(
+        prompt, profile_name=profile_name
+    ):
         direct = _filter_multi_by_mentioned_value(named_dfs, prompt)
         if direct is not None and not direct.empty:
             file_count = (

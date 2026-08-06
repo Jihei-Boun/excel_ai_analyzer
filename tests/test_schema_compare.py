@@ -158,21 +158,20 @@ def test_route_type_groups_bypasses_pandasai() -> None:
 
 
 def test_route_column_meanings_uses_llm(monkeypatch) -> None:
-    """컬럼 의미 추정은 규칙 경로를 건너뛰고 LLM(chat)으로 간다."""
+    """컬럼 의미 추정은 PandasAI가 아니라 Ollama 텍스트(또는 규칙 폴백)로 간다."""
     df = pd.DataFrame({"담당자": ["김"], "집행_금액": [1]})
     called: dict[str, object] = {}
 
-    def _fake_chat(frame, query, *, base_url, model, output_type=None):
-        called["query"] = query
-        called["output_type"] = output_type
+    def _fake_chat_text(prompt, *, system, base_url, model, timeout=300):
+        called["prompt"] = prompt
+        called["system"] = system
         called["base_url"] = base_url
         called["model"] = model
-        assert frame is df or frame.equals(df)
-        return None, "LLM 추정: 담당자=사람, 집행_금액=금액", {}
+        return "LLM 추정: 담당자=사람, 집행_금액=금액"
 
-    monkeypatch.setattr("core.analyzer.chat", _fake_chat)
+    monkeypatch.setattr("core.llm_client.chat_text", _fake_chat_text)
     outcome = route_single_prompt(
-        "각 컬럼이 어떤 의미인지 추측해서 설명해줘",
+        "컬럼 의미를 설명해줘",
         full_df=df,
         source_df=df,
         context_label=None,
@@ -181,10 +180,32 @@ def test_route_column_meanings_uses_llm(monkeypatch) -> None:
     )
     assert "LLM 추정" in outcome.reply
     assert outcome.dataframe is None
-    assert called.get("output_type") is None
-    assert "의미를 추정" in str(called.get("query")) or "의미인지" in str(
-        called.get("query")
+    assert "담당자" in str(called.get("prompt"))
+    assert "plain text" in str(called.get("system")).lower() or "Korean" in str(
+        called.get("system")
     )
+
+
+def test_route_column_meanings_falls_back_to_rules(monkeypatch) -> None:
+    """LLM 실패 시 규칙 기반 의미 설명을 반환한다."""
+    df = pd.DataFrame({"비용명": [121], "실행예산": [100]})
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("ollama down")
+
+    monkeypatch.setattr("core.llm_client.chat_text", _boom)
+    outcome = route_single_prompt(
+        "컬럼 의미를 설명해줘",
+        full_df=df,
+        source_df=df,
+        context_label=None,
+        base_url="http://localhost:11434",
+        model="dummy",
+        profile_name="budget",
+    )
+    assert outcome.dataframe is None
+    assert "비용명" in outcome.reply
+    assert "실행예산" in outcome.reply
 
 def test_build_schema_compare_table() -> None:
     frames = _sales_frames()

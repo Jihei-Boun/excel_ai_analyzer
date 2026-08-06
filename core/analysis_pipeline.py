@@ -106,6 +106,7 @@ def try_analysis_pipeline(
                     base_url=base_url,
                     model=model,
                     chat_text_fn=text_fn,
+                    profile_name=profile_name,
                 )
                 if interpretation:
                     reply = f"{reply}\n\n{interpretation}"

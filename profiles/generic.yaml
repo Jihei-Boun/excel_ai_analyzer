@@ -29,6 +29,16 @@ footer_labels: []
 # LLM 계획 모듈에 붙는 도메인 가이던스 (없으면 범용 프롬프트만)
 plan_guidance: ""
 
+# 도메인 전용 의도 키워드 (범용 베이스는 코드에 유지)
+structured_analysis_keywords: []
+complex_analysis_keywords: []
+
+# 결과 표·분포 요약 표시명 (비우면 코드 기본값: 비율/분모 등)
+display_labels: {}
+
+# 해석 LLM에 붙는 도메인 가이던스
+interpret_guidance: ""
+
 semantic_hints:
   likely_identifier_concepts:
     - id

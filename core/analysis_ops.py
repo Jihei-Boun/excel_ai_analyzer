@@ -381,11 +381,17 @@ def compare_groups(
     out = work[keep].reset_index(drop=True)
 
     meta: dict[str, Any] = {"comparison": []}
+    from core.profile_loader import display_labels_for
+
     rate_set = {normalize_text(c) for c in (rate_columns or [])}
+    rate_tokens = ["률", "비율", "rate", "ratio"]
+    rate_label = display_labels_for().get("rate") or ""
+    if rate_label:
+        rate_tokens.append(normalize_text(rate_label))
     rate_set |= {
         normalize_text(c)
         for c in metric_cols
-        if any(tok in normalize_text(c) for tok in ("률", "비율", "rate", "ratio", "집행률"))
+        if any(tok in normalize_text(c) for tok in rate_tokens)
     }
 
     for col in metric_cols:
@@ -441,12 +447,20 @@ def distribution_summary(
     executed_column: str | None = None,
     group_value: str | None = None,
     zero_threshold: float = 0.0,
+    profile_name: str | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """그룹 내 비율(분자/분모) 분포 요약.
 
     ``denominator_column`` / ``numerator_column`` 이 정식 이름이다,
     하위 호환으로 ``budget_column`` / ``executed_column`` 별칭을 받는다.
     """
+    from core.profile_loader import display_labels_for
+
+    labels = display_labels_for(profile_name=profile_name)
+    item_key = labels.get("item", "항목")
+    den_key = labels.get("denominator", "분모")
+    rate_key = labels.get("rate", "비율")
+
     den_col = str(denominator_column or budget_column or "").strip()
     num_col = str(numerator_column or executed_column or "").strip()
     work = ensure_row_types(df)
@@ -485,7 +499,7 @@ def distribution_summary(
         ]
         item_col = candidates[0] if candidates else None
 
-    labels = (
+    row_labels = (
         work[item_col].map(cell_text)
         if item_col
         else pd.Series([str(i) for i in range(len(work))], index=work.index)
@@ -493,9 +507,9 @@ def distribution_summary(
 
     zero_mask = work["_rate"].fillna(-1) <= zero_threshold
     zero_items = [
-        {"항목": labels.loc[i], "예산": float(work.loc[i, "_budget"] or 0)}
+        {item_key: row_labels.loc[i], den_key: float(work.loc[i, "_budget"] or 0)}
         for i in work.index[zero_mask]
-        if cell_text(labels.loc[i])
+        if cell_text(row_labels.loc[i])
     ]
     nonzero = work.loc[~zero_mask & work["_rate"].notna()].copy()
     high = []
@@ -505,18 +519,18 @@ def distribution_summary(
         for i, row in top.iterrows():
             high.append(
                 {
-                    "항목": cell_text(labels.loc[i]),
-                    "집행률": float(row["_rate"]),
-                    "예산": float(row["_budget"] or 0),
+                    item_key: cell_text(row_labels.loc[i]),
+                    rate_key: float(row["_rate"]),
+                    den_key: float(row["_budget"] or 0),
                 }
             )
-        # 예산 상위 중 저집행
+        # 분모 상위 중 저비율
         big = nonzero.sort_values("_budget", ascending=False).head(5)
         low_big = [
             {
-                "항목": cell_text(labels.loc[i]),
-                "집행률": float(row["_rate"]),
-                "예산": float(row["_budget"] or 0),
+                item_key: cell_text(row_labels.loc[i]),
+                rate_key: float(row["_rate"]),
+                den_key: float(row["_budget"] or 0),
             }
             for i, row in big.iterrows()
             if float(row["_rate"]) < 0.3
@@ -537,23 +551,23 @@ def distribution_summary(
 
     summary_rows = [
         {
-            "지표": "항목수",
+            "지표": labels.get("item_count", "항목수"),
             "값": meta["item_count"],
         },
         {
-            "지표": "0%미집행수",
+            "지표": labels.get("zero_rate_count", "0%비율수"),
             "값": meta["zero_rate_count"],
         },
         {
-            "지표": "미집행예산합",
+            "지표": labels.get("zero_denominator_sum", "0%분모합"),
             "값": meta["zero_budget_sum"],
         },
         {
-            "지표": "최대집행률",
+            "지표": labels.get("max_rate", "최대비율"),
             "값": meta["max_rate"],
         },
         {
-            "지표": "최소집행률",
+            "지표": labels.get("min_rate", "최소비율"),
             "값": meta["min_rate"],
         },
     ]

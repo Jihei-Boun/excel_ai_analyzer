@@ -451,6 +451,13 @@ def apply_pending_widget_sync() -> None:
         if file_id and isinstance(sheets, list):
             st.session_state[f"sidebar_sheets_{file_id}"] = list(sheets)
 
+    pending_profile = st.session_state.pop("_pending_analysis_profile", None)
+    if pending_profile and not st.session_state.get("profile_manually_set"):
+        name = str(pending_profile).strip().lower()
+        if name:
+            st.session_state.analysis_profile = name
+            st.session_state.budget_table_mode = name == "budget"
+
 
 def current_analysis_mode() -> str:
     """파일 범위 라디오용. 시트 동시 분석은 단일 파일로 본다."""

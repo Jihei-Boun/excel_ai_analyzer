@@ -216,6 +216,10 @@ streamlit run app.py
 - [x] UI·라우팅 `profile_name` 우선 (`use_budget_profile` shim 제거)
 - [x] 업로드 기반 프로필 자동 추천 + 수동 변경 고정
 - [x] `distribution_summary` 필드명 일반화 (`denominator_column` / `numerator_column`)
+- [x] 계획 폴백 라벨·메트릭을 프로필 `preferred_labels`/`roles`/`column_prefs`로 이관
+- [x] 구조화/복잡 의도 키워드 프로필화 (`structured_analysis_keywords` / `complex_analysis_keywords`)
+- [x] 분포·해석 표시 라벨·가이던스 외부화 (`display_labels` / `interpret_guidance`)
+- [x] 공유 힌트에서 비용명·세목을 예산 extras로만 유지
 
 ---
 
