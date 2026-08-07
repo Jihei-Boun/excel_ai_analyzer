@@ -62,28 +62,55 @@ def _format_code_cell(value: object) -> object:
     return str(value).strip()
 
 
-def exclude_total_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """합계·소계·총계 행을 제거한다 (모든 문자열 컬럼 검사)."""
+def exclude_total_rows(
+    df: pd.DataFrame,
+    *,
+    footer_labels: tuple[str, ...] | list[str] | None = None,
+) -> pd.DataFrame:
+    """합계·소계·총계 행을 제거한다 (모든 문자열 컬럼 검사).
+
+    footer_labels가 주어지면 해당 하단 요약 라벨 행도 함께 제외한다.
+    """
     if df is None or df.empty:
         return df
 
     exclude_mask = pd.Series(False, index=df.index)
+    footer_set = {
+        _normalize_label(label)
+        for label in (footer_labels or ())
+        if str(label).strip()
+    }
     for column in df.columns:
         if pd.api.types.is_numeric_dtype(df[column]):
             continue
         exclude_mask |= df[column].map(is_total_label)
+        if footer_set:
+            exclude_mask |= df[column].map(
+                lambda v, _fs=footer_set: _normalize_label(v) in _fs
+            )
 
     if not exclude_mask.any():
         return df
     return df.loc[~exclude_mask].reset_index(drop=True)
 
 
-def sum_metric_excluding_totals(df: pd.DataFrame, metric_col: str) -> float | None:
-    """소계/합계 행을 제외하고 수치 컬럼 합계를 구한다."""
+def sum_metric_excluding_totals(
+    df: pd.DataFrame,
+    metric_col: str,
+    *,
+    footer_labels: tuple[str, ...] | list[str] | None = None,
+) -> float | None:
+    """소계/합계 행을 제외하고 수치 컬럼 합계를 구한다.
+
+    footer_labels를 넘기면 내부흡수액 등 하단 요약 행도 제외한다.
+    """
     if df is None or df.empty or metric_col not in df.columns:
         return None
 
-    work = exclude_total_rows(prepare_dataframe_for_ai(df))
+    work = exclude_total_rows(
+        prepare_dataframe_for_ai(df),
+        footer_labels=footer_labels,
+    )
     if work.empty:
         return None
 
@@ -91,6 +118,44 @@ def sum_metric_excluding_totals(df: pd.DataFrame, metric_col: str) -> float | No
     if pd.isna(total):
         return None
     return float(total)
+
+
+def footer_labels_present_in_frame(
+    df: pd.DataFrame,
+    *,
+    profile_name: str | None = None,
+) -> tuple[str, ...]:
+    """데이터에 실제로 등장하는 하단 요약 라벨만 반환한다."""
+    if df is None or df.empty:
+        return ()
+
+    from core.constants import BUDGET_FOOTER_LABELS
+    from core.profile_loader import footer_labels_for
+
+    candidates = tuple(footer_labels_for(profile_name=profile_name) or ())
+    if not candidates:
+        candidates = tuple(BUDGET_FOOTER_LABELS)
+
+    present_values: set[str] = set()
+    for column in df.columns:
+        if pd.api.types.is_numeric_dtype(df[column]):
+            continue
+        for value in df[column].tolist():
+            key = _normalize_label(value)
+            if key:
+                present_values.add(key)
+
+    return tuple(
+        label
+        for label in candidates
+        if _normalize_label(label) in present_values
+    )
+
+
+def _normalize_label(value: object) -> str:
+    if _is_blank(value):
+        return ""
+    return re.sub(r"\s+", "", str(value).strip()).lower()
 
 
 def _is_hierarchical_column(series: pd.Series) -> bool:

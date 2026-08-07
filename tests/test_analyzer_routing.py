@@ -4,8 +4,17 @@ from __future__ import annotations
 
 import pandas as pd
 
-from core.aggregates import build_groupby_aggregate_table, build_multi_context_aggregate_table
-from core.schema.column_match import find_mentioned_numeric_columns
+from core.aggregates import (
+    build_context_aggregate_table,
+    build_groupby_aggregate_table,
+    build_multi_context_aggregate_table,
+)
+from core.schema.column_match import (
+    find_mentioned_numeric_columns,
+    looks_like_code_metric_column,
+    wants_all_numeric_metrics,
+    wants_first_numeric_metric,
+)
 from core.routing.prompt_intent import (
     detect_aggregate_op,
     expects_dataframe,
@@ -13,6 +22,7 @@ from core.routing.prompt_intent import (
     is_complex_analysis,
     is_list_request,
     resolve_output_type,
+    wants_full_dataset,
 )
 from core.filter.value_filter import (
     _filter_by_mentioned_value,
@@ -52,6 +62,79 @@ def test_detect_aggregate_op() -> None:
     assert detect_aggregate_op("비용명별 실행예산의 합을 보여줘") == "sum"
     assert detect_aggregate_op("평균을 알려줘") == "mean"
     assert detect_aggregate_op("목록만 보여줘") is None
+    assert detect_aggregate_op("Sum the first numeric column") == "sum"
+
+
+def test_first_numeric_column_sum_not_all_metrics() -> None:
+    """'Sum the first numeric column'은 전 수치열이 아니라 첫 수치열만 합산한다."""
+    from core.profile_loader import use_profile
+
+    df = pd.DataFrame(
+        {
+            "비목분류": ["A", "B"],
+            "계획예산": [100, 200],
+            "실행예산_합계": [10, 20],
+            "당년도집행": [1, 2],
+        }
+    )
+    prompt = "Sum the first numeric column"
+    assert wants_first_numeric_metric(prompt) is True
+    assert wants_all_numeric_metrics(prompt) is False
+    assert find_mentioned_numeric_columns(df, prompt) == ["계획예산"]
+
+    with use_profile("generic_en"):
+        result = build_context_aggregate_table(
+            df, prompt, profile_name="generic_en"
+        )
+    assert result is not None
+    table, summary = result
+    assert list(table.columns) == ["", "계획예산"]
+    assert int(table.iloc[0]["계획예산"]) == 300
+    assert "실행예산" not in summary
+    assert "Total" in summary or "sum" in summary.lower()
+    assert "총합" not in summary
+
+
+def test_sum_excludes_budget_footer_rows_even_on_generic() -> None:
+    """내부흡수액·외부유출액은 세부 합과 중복이므로 합산에서 제외한다."""
+    from core.profile_loader import use_profile
+
+    df = pd.DataFrame(
+        {
+            "비목분류": [
+                "내부인건비",
+                "연구활동비",
+                "소 계",
+                "내부흡수액",
+                "외부유출액",
+                "합 계",
+            ],
+            "비용명": [121, 201, None, None, None, None],
+            "계획예산": [100, 200, 300, 100, 200, 300],
+        }
+    )
+    with use_profile("generic_en"):
+        assert looks_like_code_metric_column(df, "비용명") is True
+        assert find_mentioned_numeric_columns(
+            df, "Sum the first numeric column"
+        ) == ["계획예산"]
+        from core.pai.pandasai_config import (
+            footer_labels_present_in_frame,
+            sum_metric_excluding_totals,
+        )
+
+        footers = footer_labels_present_in_frame(df, profile_name="generic_en")
+        total = sum_metric_excluding_totals(
+            df, "계획예산", footer_labels=footers
+        )
+        result = build_context_aggregate_table(
+            df,
+            "Sum the first numeric column",
+            profile_name="generic_en",
+        )
+    assert total == 300  # 100+200, footer/소계/합계 제외
+    assert result is not None
+    assert int(result[0].iloc[0]["계획예산"]) == 300
 
 
 def test_chart_prompt_skips_aggregate_and_routes_to_plot() -> None:
@@ -378,6 +461,53 @@ def test_resolve_filter_source_falls_back_to_full_data() -> None:
     )
     assert reset2 is False
     assert len(source2) == 1
+
+
+def test_wants_full_dataset_phrases() -> None:
+    assert wants_full_dataset("전체데이터에서 당년도집행과 가집행금액의 상관관계를 분석해줘")
+    assert wants_full_dataset("전체 데이터에서 상관관계를 분석해줘")
+    assert wants_full_dataset("필터 초기화 후 상관관계 분석해줘")
+    assert wants_full_dataset("원본에서 합계 구해줘")
+    assert wants_full_dataset("당년도집행과 가집행금액의 상관관계를 분석해줘") is False
+    assert wants_full_dataset("잔액이 가장 큰 비용명 뽑아줘") is False
+
+
+def test_resolve_filter_source_resets_on_full_dataset_request() -> None:
+    """'전체 데이터에서' 요청은 이전 필터를 무시하고 원본으로 분석한다."""
+    full = pd.DataFrame(
+        {
+            "비용명_2": ["국내여비", "내부인건비", "계약직내부인건비", "회의비"],
+            "당년도집행": [100, 200, 50, 0],
+            "가집행금액": [10, 0, 5, 0],
+        }
+    )
+    filtered = full.head(1).reset_index(drop=True)
+
+    source, reset = resolve_filter_source(
+        full,
+        filtered,
+        "전체데이터에서 당년도집행과 가집행금액의 상관관계를 분석해줘",
+    )
+    assert reset is True
+    assert len(source) == len(full)
+
+    # 필터가 없으면 reset 신호는 False (불필요한 안내 문구 방지)
+    source2, reset2 = resolve_filter_source(
+        full,
+        None,
+        "전체 데이터에서 상관관계를 분석해줘",
+    )
+    assert reset2 is False
+    assert len(source2) == len(full)
+
+    # 집계 요청이어도 '전체 데이터'가 있으면 필터를 해제한다
+    source3, reset3 = resolve_filter_source(
+        full,
+        filtered,
+        "전체 데이터에서 당년도집행 합계 구해줘",
+    )
+    assert reset3 is True
+    assert len(source3) == len(full)
 
 
 def test_resolve_filter_source_resets_when_groupby_collapsed() -> None:

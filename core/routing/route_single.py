@@ -58,7 +58,14 @@ def route_single_prompt(
         return SingleRouteOutcome(reply=reply, dataframe=None)
 
     if is_missing_rows_request(prompt):
-        reply, table = build_missing_rows_outcome(source_df, label="현재 데이터")
+        from core.profile_loader import schema_ui_for
+
+        ui = schema_ui_for(profile_name=profile_name)
+        reply, table = build_missing_rows_outcome(
+            source_df,
+            label=ui["current_data"],
+            profile_name=profile_name,
+        )
         return SingleRouteOutcome(
             reply=reply,
             dataframe=table,
@@ -68,9 +75,12 @@ def route_single_prompt(
         )
 
     if is_quality_request(prompt):
+        from core.profile_loader import schema_ui_for
+
+        ui = schema_ui_for(profile_name=profile_name)
         reply, table = build_quality_outcome(
-            [("현재 데이터", full_df)],
-            unit_label="대상",
+            [(ui["current_data"], full_df)],
+            unit_label=ui["unit_target"],
             prompt=prompt,
         )
         return SingleRouteOutcome(
@@ -81,10 +91,13 @@ def route_single_prompt(
         )
 
     if is_schema_request(prompt):
+        from core.profile_loader import schema_ui_for
+
+        ui = schema_ui_for(profile_name=profile_name)
         reply, table = build_schema_outcome(
             prompt,
-            [("현재 데이터", full_df)],
-            unit_label="대상",
+            [(ui["current_data"], full_df)],
+            unit_label=ui["unit_target"],
             profile_name=profile_name,
         )
         return SingleRouteOutcome(
@@ -124,6 +137,7 @@ def route_single_prompt(
             source_df,
             prompt,
             context_label=context_label,
+            profile_name=profile_name,
         )
         if contextual is not None:
             table, summary = contextual
@@ -209,12 +223,13 @@ def route_single_prompt(
         is_filter = detect_aggregate_op(prompt) is None
         # 구조화 분석 계획 결과는 필터 잠금/비목 일치 배지 대상이 아니다.
         aggregation = analysis_meta.get("aggregation") or {}
+        is_analysis_plan = aggregation.get("operation") == "analysis_plan"
         if (
             analysis_meta.get("comparison")
             or analysis_meta.get("aggregate_sources")
             or analysis_meta.get("correlation")
             or analysis_meta.get("vs_mean")
-            or aggregation.get("operation") == "analysis_plan"
+            or is_analysis_plan
         ):
             is_filter = False
             ctx_label = None
@@ -233,7 +248,8 @@ def route_single_prompt(
             dataframe=result,
             meta=meta,
             keep_as_filter=is_filter,
-            replace_selection=True,
+            # 투영/집계 결과표를 다음 질문 분석 범위로 남기지 않는다.
+            replace_selection=bool(is_filter),
             update_context_label=ctx_label if is_filter else None,
             update_filter_summary=filter_summary if is_filter else None,
             reset_filter=reset_filter,

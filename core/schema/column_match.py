@@ -75,6 +75,14 @@ def looks_like_code_metric_column(df: pd.DataFrame, column: object) -> bool:
     name_looks_code = any(
         hint in norm or hint == base for hint in _code_metric_name_hints()
     )
+    # 범용 힌트에 없어도 예산표 '비용명' 코드열은 합산 대상이 아님
+    if not name_looks_code:
+        name_looks_code = bool(
+            norm in {"비용명", "비용코드", "세목코드", "계정코드", "항목코드"}
+            or base in {"비용명", "비용코드"}
+            or norm.endswith("코드")
+            or base.endswith("코드")
+        )
     if not name_looks_code:
         return False
     sample = (
@@ -153,10 +161,34 @@ _ALL_NUMERIC_PHRASES = (
     "allnumeric",
 )
 
+# '첫 번째 숫자형 컬럼' — 전 수치 합산이 아니라 첫 수치 열만
+_FIRST_NUMERIC_PHRASES = (
+    "첫번째숫자형컬럼",
+    "첫번째수치형컬럼",
+    "첫번째숫자컬럼",
+    "첫번째수치컬럼",
+    "첫숫자형컬럼",
+    "첫수치형컬럼",
+    "firstnumericcolumn",
+    "firstnumericalcolumn",
+    "1stnumericcolumn",
+)
+
+
+def wants_first_numeric_metric(prompt: str) -> bool:
+    """'첫 번째 숫자형 컬럼'처럼 첫 수치 열만 요청했는지."""
+    if not prompt:
+        return False
+    compact = normalize_text(prompt)
+    return any(phrase in compact for phrase in _FIRST_NUMERIC_PHRASES)
+
 
 def wants_all_numeric_metrics(prompt: str) -> bool:
     """구체 컬럼명 없이 '숫자형 컬럼 합계'처럼 전 수치 컬럼을 요청했는지."""
     if not prompt:
+        return False
+    # 'first numeric column' 안에 numericcolumn이 포함되므로 먼저 제외
+    if wants_first_numeric_metric(prompt):
         return False
     compact = normalize_text(prompt)
     return any(phrase in compact for phrase in _ALL_NUMERIC_PHRASES)
@@ -221,13 +253,16 @@ def find_mentioned_numeric_columns(df: pd.DataFrame, prompt: str) -> list[str]:
         scored.append((amount_bonus + total_bonus + code_penalty, match_len, column))
 
     if not scored:
+        group_filtered = [
+            col
+            for col in list_numeric_metric_columns(df)
+            if normalize_text(str(col)) not in group_norms
+            and normalize_text(merged_header_base(str(col))) not in group_norms
+        ]
+        if wants_first_numeric_metric(prompt):
+            return group_filtered[:1]
         if wants_all_numeric_metrics(prompt):
-            return [
-                col
-                for col in list_numeric_metric_columns(df)
-                if normalize_text(str(col)) not in group_norms
-                and normalize_text(merged_header_base(str(col))) not in group_norms
-            ]
+            return group_filtered
         return []
 
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)

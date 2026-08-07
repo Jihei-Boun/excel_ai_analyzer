@@ -50,10 +50,12 @@ def build_file_summary(
 
     프로필 ``summary_builder`` 이름에 등록된 빌더를 사용한다.
     """
-    if df is None or df.empty:
-        return "데이터가 비어 있어 요약할 내용이 없습니다."
+    from core.profile_loader import active_profile, locale_for
+    from core.summary.generic_summary import summary_copy
 
-    from core.profile_loader import active_profile
+    copy = summary_copy(locale=locale_for(profile_name=profile_name))
+    if df is None or df.empty:
+        return copy["empty"]
 
     prepared = prepare_dataframe_for_ai(df)
     sheets = sheet_names or ([sheet_name] if sheet_name else [])
@@ -72,6 +74,7 @@ def build_file_summary(
         sheet_name=sheet_name,
         sheets=sheets,
         excel_shape=shape,
+        profile_name=profile_name,
     )
 
 
@@ -83,10 +86,22 @@ def build_multi_file_summary(
     unit_label: str = "파일",
 ) -> str:
     """여러 파일(또는 시트)을 짧게 이어서 요약한다."""
-    if not named_dfs:
-        return f"요약할 {unit_label}이(가) 없습니다."
+    from core.profile_loader import locale_for
+    from core.summary.generic_summary import summary_copy
 
-    parts: list[str] = [f"선택된 {unit_label} {len(named_dfs)}개를 요약합니다.\n"]
+    copy = summary_copy(locale=locale_for(profile_name=profile_name))
+    # EN unit labels for common Korean defaults
+    unit = unit_label
+    if locale_for(profile_name=profile_name) == "en":
+        if unit_label in {"파일", "file"}:
+            unit = "file"
+        elif unit_label in {"시트", "sheet"}:
+            unit = "sheet"
+
+    if not named_dfs:
+        return copy["multi_empty"].format(unit=unit)
+
+    parts: list[str] = [copy["multi_intro"].format(unit=unit, count=len(named_dfs))]
     for name, frame in named_dfs:
         info = (sheet_info or {}).get(name) or {}
         block = build_file_summary(

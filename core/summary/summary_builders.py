@@ -56,6 +56,7 @@ def run_summary_builder(
     sheet_name: str | None = None,
     sheets: list[str] | None = None,
     excel_shape: tuple[int, int] | None = None,
+    profile_name: str | None = None,
 ) -> str:
     """등록된 builder로 요약. 없거나 detect 실패 시 generic으로 폴백."""
     ensure_builtin_summary_builders()
@@ -73,4 +74,5 @@ def run_summary_builder(
         sheet_name=sheet_name,
         sheets=sheets or [],
         excel_shape=excel_shape,
+        profile_name=profile_name,
     )

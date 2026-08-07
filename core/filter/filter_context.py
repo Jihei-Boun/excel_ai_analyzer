@@ -5,7 +5,11 @@ import re
 
 import pandas as pd
 
-from core.routing.prompt_intent import detect_aggregate_op, expects_plot as _expects_plot
+from core.routing.prompt_intent import (
+    detect_aggregate_op,
+    expects_plot as _expects_plot,
+    wants_full_dataset,
+)
 from core.io.text_normalize import normalize_text
 from core.filter.value_match import (
     _PROMPT_NOISE,
@@ -27,6 +31,11 @@ def resolve_filter_source(
     """
     if full_df is None or full_df.empty:
         return full_df, False
+
+    # '전체 데이터에서 …' / '필터 초기화' 등 명시적 전체 분석 요청
+    if wants_full_dataset(prompt):
+        had_filter = filtered_df is not None and len(filtered_df) > 0
+        return full_df, had_filter
 
     if keep_filter_for_aggregate and (
         detect_aggregate_op(prompt) is not None
@@ -132,10 +141,16 @@ def build_filter_summary(
     return " · ".join(parts) if parts else None
 
 
-def format_context_label(label: str | None) -> str:
+def format_context_label(
+    label: str | None,
+    *,
+    profile_name: str | None = None,
+) -> str:
     """표시용 행 라벨. '연구활동비항목' → '연구활동비'처럼 꼬리표 정리."""
     if not label:
-        return "합계"
+        from core.profile_loader import locale_for
+
+        return "Total" if locale_for(profile_name=profile_name) == "en" else "합계"
     text = str(label).strip()
     text = re.sub(r"(항목|목록|리스트|내역)$", "", text).strip()
     return text or str(label).strip()

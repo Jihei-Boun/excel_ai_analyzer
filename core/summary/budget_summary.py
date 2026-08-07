@@ -41,7 +41,10 @@ def build_budget_summary(
     sheet_name: str | None,
     sheets: list[str],
     excel_shape: tuple[int, int] | None,
+    profile_name: str | None = None,
+    **_kwargs: object,
 ) -> str:
+    del profile_name  # budget 요약은 현재 한국어 고정
     _ = file_name
     rows, cols = excel_shape or (len(df), len(df.columns))
     sheet_label = sheet_name or (sheets[0] if sheets else "Sheet1")

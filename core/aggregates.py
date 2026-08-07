@@ -68,14 +68,21 @@ def _is_budget_footer_label(value: object) -> bool:
     return _is_footer_label(value, labels)
 
 
-def _aggregate_reducer(op: str) -> tuple[str, object]:
+def _aggregate_reducer(
+    op: str,
+    *,
+    profile_name: str | None = None,
+) -> tuple[str, object]:
+    from core.profile_loader import locale_for
+
+    en = locale_for(profile_name=profile_name) == "en"
     if op == "mean":
-        return "평균", lambda s: float(s.mean())
+        return ("mean" if en else "평균"), lambda s: float(s.mean())
     if op == "max":
-        return "최댓값", lambda s: float(s.max())
+        return ("max" if en else "최댓값"), lambda s: float(s.max())
     if op == "min":
-        return "최솟값", lambda s: float(s.min())
-    return "총합", lambda s: float(s.sum())
+        return ("min" if en else "최솟값"), lambda s: float(s.min())
+    return ("sum" if en else "총합"), lambda s: float(s.sum())
 
 
 def build_groupby_aggregate_table(
@@ -121,7 +128,7 @@ def build_groupby_aggregate_table(
     if work.empty or group_col not in work.columns:
         return None
 
-    op_name, reduce = _aggregate_reducer(op)
+    op_name, reduce = _aggregate_reducer(op, profile_name=profile_name)
     rows: list[dict[str, object]] = []
     summary_bits: list[str] = []
 
@@ -195,6 +202,7 @@ def build_context_aggregate_table(
     prompt: str,
     *,
     context_label: str | None = None,
+    profile_name: str | None = None,
 ) -> tuple[pd.DataFrame, str] | None:
     """필터 맥락 + 집계 요청을 요약 표로 만든다.
 
@@ -221,25 +229,34 @@ def build_context_aggregate_table(
     if find_groupby_column(df, prompt) is not None:
         return None
 
-    op_name, reduce = _aggregate_reducer(op)
-    row_label = format_context_label(context_label)
+    op_name, reduce = _aggregate_reducer(op, profile_name=profile_name)
+    row_label = format_context_label(context_label, profile_name=profile_name)
     row: dict[str, object] = {"": row_label}
     summary_parts: list[str] = []
+
+    from core.pai.pandasai_config import (
+        exclude_total_rows,
+        footer_labels_present_in_frame,
+        prepare_dataframe_for_ai,
+        sum_metric_excluding_totals,
+    )
+
+    footers = footer_labels_present_in_frame(df, profile_name=profile_name)
 
     for metric_col in metric_cols:
         col = resolve_metric_column(df, metric_col)
         if col is None:
             continue
-        from core.pai.pandasai_config import (
-            exclude_total_rows,
-            prepare_dataframe_for_ai,
-            sum_metric_excluding_totals,
-        )
 
         if op == "sum":
-            value = sum_metric_excluding_totals(df, col)
+            value = sum_metric_excluding_totals(
+                df, col, footer_labels=footers or None
+            )
         else:
-            work = exclude_total_rows(prepare_dataframe_for_ai(df))
+            work = exclude_total_rows(
+                prepare_dataframe_for_ai(df),
+                footer_labels=footers or None,
+            )
             value = reduce(pd.to_numeric(work[col], errors="coerce"))
         if value is None or pd.isna(value):
             continue
@@ -260,6 +277,7 @@ def build_multi_context_aggregate_table(
     *,
     context_label: str | None = None,
     unit_label: str = "파일",
+    profile_name: str | None = None,
 ) -> tuple[pd.DataFrame, str] | None:
     """다중 파일/시트 집계를 단위별 행 · 수치 컬럼 열 요약 표로 만든다.
 
@@ -295,8 +313,8 @@ def build_multi_context_aggregate_table(
     if not metric_cols:
         return None
 
-    op_name, reduce = _aggregate_reducer(op)
-    ctx = format_context_label(context_label)
+    op_name, reduce = _aggregate_reducer(op, profile_name=profile_name)
+    ctx = format_context_label(context_label, profile_name=profile_name)
     rows: list[dict[str, object]] = []
     summary_parts: list[str] = []
 
@@ -304,23 +322,35 @@ def build_multi_context_aggregate_table(
         if df is None or df.empty:
             continue
         # 단일파일 요약 표와 동일하게 첫 열은 라벨, 나머지는 수치 컬럼
-        row_label = f"{ctx} · {file_name}" if ctx and ctx != "합계" else file_name
+        row_label = (
+            f"{ctx} · {file_name}"
+            if ctx and ctx not in {"합계", "Total"}
+            else file_name
+        )
         row: dict[str, object] = {"출처파일": row_label}
         file_bits: list[str] = []
+        from core.pai.pandasai_config import (
+            exclude_total_rows,
+            footer_labels_present_in_frame,
+            prepare_dataframe_for_ai,
+            sum_metric_excluding_totals,
+        )
+
+        footers = footer_labels_present_in_frame(df, profile_name=profile_name)
         for metric_col in metric_cols:
             col = resolve_metric_column(df, metric_col)
             if col is None:
                 continue
-            from core.pai.pandasai_config import (
-                exclude_total_rows,
-                prepare_dataframe_for_ai,
-                sum_metric_excluding_totals,
-            )
 
             if op == "sum":
-                value = sum_metric_excluding_totals(df, col)
+                value = sum_metric_excluding_totals(
+                    df, col, footer_labels=footers or None
+                )
             else:
-                work = exclude_total_rows(prepare_dataframe_for_ai(df))
+                work = exclude_total_rows(
+                    prepare_dataframe_for_ai(df),
+                    footer_labels=footers or None,
+                )
                 if col not in work.columns:
                     continue
                 value = reduce(pd.to_numeric(work[col], errors="coerce"))
@@ -342,7 +372,11 @@ def build_multi_context_aggregate_table(
     extra = [c for c in table.columns if c not in ordered]
     table = table[ordered + extra]
 
-    prefix = f"{ctx} · {unit_label}별" if ctx and ctx != "합계" else f"{unit_label}별"
+    prefix = (
+        f"{ctx} · {unit_label}별"
+        if ctx and ctx not in {"합계", "Total"}
+        else f"{unit_label}별"
+    )
     summary = f"{prefix} {op_name} — " + " | ".join(summary_parts)
     return table, summary
 

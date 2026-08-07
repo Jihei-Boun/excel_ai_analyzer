@@ -1091,6 +1091,102 @@ def test_split_by_difference_prefs_override_top_n() -> None:
     assert (result["구분"] == "동일").sum() == 1
 
 
+def test_split_by_difference_increase_only_prompt() -> None:
+    """'늘어난 항목만' 요청도 계획/실행 열로 보정하고 증가 행만 남긴다."""
+    from core.analysis.analysis_column_prefs import (
+        is_split_by_difference_prompt,
+        split_by_difference_direction,
+    )
+    from core.analysis.analysis_plan_builder import build_analysis_plan
+
+    df = pd.DataFrame(
+        {
+            "비목분류": ["A", "A", "B", "B"],
+            "비용명": [1, 2, 3, 4],
+            "비용명_2": ["up1", "down1", "up2", "same"],
+            "계획예산": [100, 200, 0, 50],
+            "실행예산_합계": [150, 50, 40, 50],
+            "예산잔액_합계": [10, 20, 30, 40],
+        }
+    )
+    prompt = "계획예산 대비 실행예산이 늘어난 항목을 보여줘"
+    assert is_split_by_difference_prompt(prompt, profile_name="budget")
+    assert split_by_difference_direction(prompt) == "up"
+
+    def fake_chat_json(*_a, **_k):
+        # LLM이 Q1 축소 스키마처럼 잘못된 열을 골라도 prefs가 덮어쓴다.
+        return {
+            "operation": "split_by_difference",
+            "left": "비용명",
+            "right": "예산잔액_합계",
+            "label_name": "비용명_2",
+            "interpret": True,
+        }
+
+    plan = build_analysis_plan(
+        prompt,
+        df,
+        base_url="http://localhost:11434",
+        model="dummy",
+        profile_name="budget",
+        chat_json_fn=fake_chat_json,
+    )
+    assert any(
+        s.op == "derive_column"
+        and s.payload.get("name") == "차이"
+        and s.payload.get("expr") == {"diff": ["실행예산_합계", "계획예산"]}
+        for s in plan.steps
+    )
+    assert any(
+        s.op == "filter_rows"
+        and {"column": "구분", "values": ["증가"]}
+        in (s.payload.get("column_filters") or [])
+        for s in plan.steps
+    )
+    classified = classify_rows(df, dimension_columns=["비용명", "비용명_2"])
+    result, _ = execute_analysis_plan(classified, plan)
+    assert len(result) == 2
+    assert set(result["구분"].astype(str)) == {"증가"}
+    assert set(result["비용명_2"].astype(str)) == {"up1", "up2"}
+    assert "계획예산" in result.columns
+    assert "실행예산_합계" in result.columns
+
+
+def test_top_n_result_does_not_poison_next_split_source_columns() -> None:
+    """Q1 top_n 투영 열만 있어도, 원본 df로 계획하면 계획/실행 열이 잡힌다."""
+    from core.analysis.analysis_column_prefs import apply_split_by_difference_prefs
+
+    full_cols = [
+        "비목분류",
+        "비용명",
+        "비용명_2",
+        "계획예산",
+        "실행예산_합계",
+        "예산잔액_합계",
+    ]
+    projected_cols = ["비목분류", "비용명_2", "비용명", "예산잔액_합계"]
+    prompt = "계획예산 대비 실행예산이 늘어난 항목을 보여줘"
+
+    bad = apply_split_by_difference_prefs(
+        prompt,
+        {"operation": "split_by_difference", "left": "비용명", "right": "예산잔액_합계"},
+        projected_cols,
+        profile_name="budget",
+    )
+    # 축소 스키마에는 계획/실행이 없어 prefs가 left/right를 못 고친다
+    assert bad.get("left") == "비용명"
+
+    good = apply_split_by_difference_prefs(
+        prompt,
+        {"operation": "split_by_difference", "left": "비용명", "right": "예산잔액_합계"},
+        full_cols,
+        profile_name="budget",
+    )
+    assert good.get("left") == "실행예산_합계"
+    assert good.get("right") == "계획예산"
+    assert good.get("direction") == "up"
+
+
 def test_group_efficiency_compare_indirect_vs_allowance_on_twin() -> None:
     from core.io.excel_loader import load_excel
     from core.pai.pandasai_config import prepare_dataframe_for_ai

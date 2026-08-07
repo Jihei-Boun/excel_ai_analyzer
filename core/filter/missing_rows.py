@@ -28,13 +28,22 @@ def is_missing_rows_request(prompt: str) -> bool:
         for token in (
             "개수",
             "갯수",
+            "count",
+            "counts",
             "타입",
+            "type",
+            "types",
             "dtype",
+            "dtypes",
             "컬럼별",
             "열별",
             "데이터타입",
+            "datatype",
+            "datatypes",
             "행수",
             "열수",
+            "foreachcolumn",
+            "eachcolumn",
         )
     ):
         return False
@@ -64,15 +73,24 @@ def filter_missing_rows(df: pd.DataFrame) -> pd.DataFrame:
 def build_missing_rows_outcome(
     df: pd.DataFrame,
     *,
-    label: str = "현재 데이터",
+    label: str | None = None,
+    profile_name: str | None = None,
 ) -> tuple[str, pd.DataFrame | None]:
     """결측 행 필터 결과 (reply, dataframe)."""
+    from core.profile_loader import locale_for, schema_ui_for
+
+    ui = schema_ui_for(profile_name=profile_name)
+    resolved_label = label or ui["current_data"]
+    locale = locale_for(profile_name=profile_name)
+
     if df is None or df.empty:
-        return f"`{label}`에 표시할 데이터가 없습니다.", None
+        if locale == "en":
+            return f"No data to display for `{resolved_label}`.", None
+        return f"`{resolved_label}`에 표시할 데이터가 없습니다.", None
 
     filtered = filter_missing_rows(df)
     if filtered.empty:
-        return f"`{label}`에서 결측값이 있는 행을 찾지 못했습니다.", None
+        return ui["missing_rows_none"].format(name=resolved_label), None
 
     missing_cols = [
         str(col)
@@ -80,11 +98,23 @@ def build_missing_rows_outcome(
         if bool(filtered[col].isna().any())
     ]
     col_note = ", ".join(f"`{c}`" for c in missing_cols[:8])
-    more = f" 외 {len(missing_cols) - 8}개" if len(missing_cols) > 8 else ""
-    reply = (
-        f"결측값이 있는 행 {len(filtered):,}개 "
-        f"(전체 {len(df):,}행 중)"
-        + (f" · 관련 열: {col_note}{more}" if missing_cols else "")
-    )
+    if locale == "en":
+        more = (
+            f" +{len(missing_cols) - 8} more"
+            if len(missing_cols) > 8
+            else ""
+        )
+        reply = (
+            f"{ui['missing_rows_found'].format(n=len(filtered))} "
+            f"(of {len(df):,} total)"
+            + (f" · columns: {col_note}{more}" if missing_cols else "")
+        )
+    else:
+        more = f" 외 {len(missing_cols) - 8}개" if len(missing_cols) > 8 else ""
+        reply = (
+            f"{ui['missing_rows_found'].format(n=len(filtered))} "
+            f"(전체 {len(df):,}행 중)"
+            + (f" · 관련 열: {col_note}{more}" if missing_cols else "")
+        )
     return reply, filtered
 

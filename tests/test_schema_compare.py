@@ -103,6 +103,9 @@ def test_is_schema_request_for_meanings_and_type_groups() -> None:
     # 컬럼 의미 추정은 규칙 스키마가 아니라 LLM 경로
     assert is_column_meaning_request("각 컬럼이 어떤 의미인지 추측해서 설명해줘") is True
     assert is_schema_request("각 컬럼이 어떤 의미인지 추측해서 설명해줘") is False
+    assert is_column_meaning_request("Explain what each column means") is True
+    assert is_schema_request("Explain what each column means") is False
+    assert is_column_meaning_request("Show data types and missing counts for each column") is False
     assert is_schema_request("숫자 컬럼과 문자 컬럼을 구분해서 보여줘") is True
     assert is_schema_request("숫자형 컬럼과 문자형 컬럼을 나눠줘") is True
 
@@ -186,6 +189,32 @@ def test_route_column_meanings_uses_llm(monkeypatch) -> None:
     assert "Korean" in system or "한국어" in system
 
 
+def test_route_column_meanings_english(monkeypatch) -> None:
+    """영어 컬럼 의미 요청은 분석 계획이 아니라 의미 설명 경로로 간다."""
+    df = pd.DataFrame({"Region": ["Seoul"], "Revenue": [100]})
+
+    def _fake_chat_text(prompt, *, system, base_url, model, timeout=300):
+        return (
+            "- `Region`: geographic area\n"
+            "- `Revenue`: sales amount"
+        )
+
+    monkeypatch.setattr("core.llm_client.chat_text", _fake_chat_text)
+    outcome = route_single_prompt(
+        "Explain what each column means",
+        full_df=df,
+        source_df=df,
+        context_label=None,
+        base_url="http://localhost:11434",
+        model="dummy",
+        profile_name="generic_en",
+    )
+    assert outcome.dataframe is None
+    assert "Region" in outcome.reply
+    assert "분석 계획" not in outcome.reply
+    assert "Find items" not in outcome.reply
+
+
 def test_route_column_meanings_falls_back_to_rules(monkeypatch) -> None:
     """LLM 실패 시 규칙 기반 의미 설명을 반환한다."""
     df = pd.DataFrame({"비용명": [121], "실행예산": [100]})
@@ -265,3 +294,27 @@ def test_route_single_dtypes() -> None:
     assert outcome.dataframe is not None
     assert set(outcome.dataframe["컬럼"]) == {"지역", "매출"}
     assert int(outcome.dataframe.loc[outcome.dataframe["컬럼"] == "지역", "결측치"].iloc[0]) == 1
+
+
+def test_route_single_dtypes_english_locale() -> None:
+    df = pd.DataFrame({"Region": ["Seoul", None], "Revenue": [100, 200]})
+    outcome = route_single_prompt(
+        "Show data types and missing counts for each column",
+        full_df=df,
+        source_df=df,
+        context_label=None,
+        base_url="http://localhost:11434",
+        model="dummy",
+        profile_name="generic_en",
+    )
+    assert outcome.dataframe is not None
+    assert list(outcome.dataframe.columns) == ["Column", "Data type", "Missing"]
+    assert set(outcome.dataframe["Column"]) == {"Region", "Revenue"}
+    assert int(
+        outcome.dataframe.loc[
+            outcome.dataframe["Column"] == "Region", "Missing"
+        ].iloc[0]
+    ) == 1
+    assert "data types and missing counts" in outcome.reply.lower()
+    assert "결측" not in outcome.reply
+    assert "데이터 타입" not in outcome.reply

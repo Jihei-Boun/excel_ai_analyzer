@@ -262,6 +262,38 @@ def wants_table_and_chart(prompt: str) -> bool:
     return any_keyword_in_text(prompt, TABLE_AND_CHART_KEYWORDS)
 
 
+# 공백 제거 후 부분일치. '전체'/'데이터' 단독은 오탐이 많아 쓰지 않는다.
+_FULL_DATASET_PHRASES = (
+    "전체데이터",
+    "전체에서",
+    "원본에서",
+    "원본데이터",
+    "원본으로",
+    "필터초기화",
+    "필터해제",
+    "필터없이",
+    "필터를무시",
+    "필터무시",
+    "전체기준",
+    "전체로분석",
+    "모든데이터",
+    "fulldata",
+    "fulldataset",
+    "entiredata",
+    "alldata",
+    "clearfilter",
+    "resetfilter",
+)
+
+
+def wants_full_dataset(prompt: str) -> bool:
+    """이전 필터를 무시하고 전체(원본) 데이터로 분석하라는 요청인지."""
+    if not prompt or not str(prompt).strip():
+        return False
+    compact = normalize_text(prompt)
+    return any(phrase in compact for phrase in _FULL_DATASET_PHRASES)
+
+
 def is_condition_filter_request(prompt: str) -> bool:
     """컬럼 조건 비교(==0, 있는/없는, 이상/이하 등) 요청인지.
 
@@ -348,6 +380,7 @@ _expects_plot = expects_plot
 _resolve_output_type = resolve_output_type
 _expects_dataframe = expects_dataframe
 _wants_structured_analysis = wants_structured_analysis
+_wants_full_dataset = wants_full_dataset
 _is_list_request = is_list_request
 _is_complex_analysis = is_complex_analysis
 _is_condition_filter_request = is_condition_filter_request

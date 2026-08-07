@@ -69,6 +69,7 @@ def resolve_chart_table(
             source,
             prompt,
             context_label=context_label,
+            profile_name=profile_name,
         )
         if contextual is not None:
             return contextual[0], prompt
@@ -93,6 +94,7 @@ def resolve_chart_table(
             source,
             prior_user_prompt,
             context_label=context_label,
+            profile_name=profile_name,
         )
         if contextual is not None:
             return contextual[0], prior_user_prompt

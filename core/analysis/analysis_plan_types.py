@@ -197,12 +197,21 @@ def _analysis_plan_from_dict_inner(
         raise ValueError("steps는 배열이어야 합니다.")
 
     steps: list[AnalysisStep] = []
+    known_columns = set(columns)
     for item in raw_steps:
         if not isinstance(item, dict):
             continue
-        step = _sanitize_step(item, columns)
+        step = _sanitize_step(item, known_columns)
         if step is not None:
             steps.append(step)
+            if step.op == "derive_column":
+                derived = str(step.payload.get("name") or "").strip()
+                if derived:
+                    known_columns.add(derived)
+            elif step.op == "ratio_of_aggregates":
+                derived = str(step.payload.get("name") or "").strip()
+                if derived:
+                    known_columns.add(derived)
 
     if not steps:
         raise ValueError("실행 가능한 분석 step이 없습니다.")

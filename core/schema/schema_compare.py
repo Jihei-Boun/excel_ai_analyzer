@@ -87,8 +87,18 @@ _MEANING_PHRASES = (
     "무엇을의미",
     "어떤의미",
     "컬럼의도",
-    "columnmeaning",
     "의미알려",
+    "columnmeaning",
+    "columnmeans",
+    "whatcolumnmeans",
+    "whateachcolumnmeans",
+    "explaincolumn",
+    "explaincolumns",
+    "explainwhateachcolumn",
+    "columndefinition",
+    "columndefinitions",
+    "describecolumn",
+    "describecolumns",
 )
 
 def _column_meaning_rules(
@@ -180,34 +190,47 @@ def build_schema_outcome(
     profile_name: str | None = None,
 ) -> tuple[str, pd.DataFrame | None]:
     """스키마 요청에 대한 (reply, dataframe)을 만든다."""
+    from core.profile_loader import schema_ui_for
+
+    ui = schema_ui_for(profile_name=profile_name)
     if not named_frames:
-        return f"비교할 {unit_label}이(가) 없습니다.", None
+        return ui["empty_compare"].format(unit=unit_label), None
 
     kind = schema_kind(prompt)
     if kind == "common":
-        return _common_columns_result(named_frames, unit_label=unit_label)
+        return _common_columns_result(
+            named_frames, unit_label=unit_label, ui=ui
+        )
     if kind == "dtypes":
-        return _dtypes_result(named_frames, unit_label=unit_label)
+        return _dtypes_result(named_frames, unit_label=unit_label, ui=ui)
     if kind == "type_groups":
-        return _type_groups_result(named_frames, unit_label=unit_label)
-    return _compare_result(named_frames, unit_label=unit_label)
+        return _type_groups_result(
+            named_frames, unit_label=unit_label, ui=ui
+        )
+    return _compare_result(named_frames, unit_label=unit_label, ui=ui)
 
 
 def build_schema_compare_table(
     named_frames: list[tuple[str, pd.DataFrame]],
     *,
     unit_label: str = "파일",
+    profile_name: str | None = None,
+    ui: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     """이름 | 행 수 | 열 수 | 컬럼 목록 비교 표."""
+    if ui is None:
+        from core.profile_loader import schema_ui_for
+
+        ui = schema_ui_for(profile_name=profile_name)
     rows: list[dict] = []
     for name, frame in named_frames:
         cols = [str(c) for c in frame.columns]
         rows.append(
             {
                 unit_label: name,
-                "행 수": int(len(frame)),
-                "열 수": int(len(frame.columns)),
-                "컬럼 목록": ", ".join(cols),
+                ui["rows"]: int(len(frame)),
+                ui["cols"]: int(len(frame.columns)),
+                ui["col_list"]: ", ".join(cols),
             }
         )
     return pd.DataFrame(rows)
@@ -345,20 +368,39 @@ def explain_column_meanings(
 
 
 def _is_meaning_request(compact: str) -> bool:
-    if "컬럼" not in compact:
+    """컬럼 의미 설명 요청인지 (한국어·영어)."""
+    has_column = "컬럼" in compact or "column" in compact
+    if not has_column:
         return False
+
     if any(p in compact for p in _MEANING_PHRASES):
         return True
+
     # 의미·추측이 분명한 경우
-    if any(k in compact for k in ("의미", "추측", "해석", "용도")):
+    if any(
+        k in compact
+        for k in ("의미", "추측", "해석", "용도", "means", "meaning", "meanings")
+    ):
         if any(
             k in compact
-            for k in ("타입", "결측", "dtype", "숫자", "문자", "구분", "비교")
+            for k in (
+                "타입",
+                "결측",
+                "dtype",
+                "숫자",
+                "문자",
+                "구분",
+                "비교",
+                "missing",
+                "datatype",
+                "datatypes",
+            )
         ):
             return False
         return True
-    # '설명'만 있을 때는 구조/목록 질문과 구분
-    if "설명" in compact:
+
+    # '설명' / explain / describe — 구조·목록 질문과 구분
+    if any(k in compact for k in ("설명", "explain", "describe")):
         if any(
             k in compact
             for k in (
@@ -372,6 +414,11 @@ def _is_meaning_request(compact: str) -> bool:
                 "숫자",
                 "문자",
                 "구분",
+                "missing",
+                "datatype",
+                "datatypes",
+                "list",
+                "table",
             )
         ):
             return False
@@ -399,17 +446,21 @@ def _compare_result(
     named_frames: list[tuple[str, pd.DataFrame]],
     *,
     unit_label: str,
+    ui: dict[str, str],
 ) -> tuple[str, pd.DataFrame]:
-    table = build_schema_compare_table(named_frames, unit_label=unit_label)
+    table = build_schema_compare_table(
+        named_frames, unit_label=unit_label, ui=ui
+    )
     if len(named_frames) == 1:
         name = named_frames[0][0]
-        reply = (
-            f"`{name}` 구조: "
-            f"{int(table.iloc[0]['행 수'])}행 × {int(table.iloc[0]['열 수'])}열"
+        reply = ui["compare_one"].format(
+            name=name,
+            rows=int(table.iloc[0][ui["rows"]]),
+            cols=int(table.iloc[0][ui["cols"]]),
         )
         table = table.drop(columns=[unit_label], errors="ignore")
     else:
-        reply = f"{unit_label}별 행 수·컬럼 목록 비교 ({len(named_frames)}개)"
+        reply = ui["compare_multi"].format(unit=unit_label, n=len(named_frames))
     return reply, table
 
 
@@ -417,11 +468,12 @@ def _common_columns_result(
     named_frames: list[tuple[str, pd.DataFrame]],
     *,
     unit_label: str,
+    ui: dict[str, str],
 ) -> tuple[str, pd.DataFrame]:
     if len(named_frames) == 1:
         cols = [str(c) for c in named_frames[0][1].columns]
-        table = pd.DataFrame({"컬럼": cols})
-        return f"`{named_frames[0][0]}` 컬럼 {len(cols)}개", table
+        table = pd.DataFrame({ui["column"]: cols})
+        return ui["common_one"].format(name=named_frames[0][0], n=len(cols)), table
 
     col_sets = [set(str(c) for c in frame.columns) for _, frame in named_frames]
     common = set.intersection(*col_sets) if col_sets else set()
@@ -432,26 +484,31 @@ def _common_columns_result(
         only_by_unit.append(
             {
                 unit_label: name,
-                "고유 컬럼 수": len(unique),
-                "고유 컬럼": ", ".join(unique) if unique else "(없음)",
+                ui["unique_col_count"]: len(unique),
+                ui["unique_cols"]: ", ".join(unique) if unique else ui["none"],
             }
         )
 
-    common_table = pd.DataFrame({"공통 컬럼": ordered})
-    reply = (
-        f"{len(named_frames)}개 {unit_label} 공통 컬럼 {len(ordered)}개"
-        + (f": {', '.join(ordered)}" if ordered else "")
+    common_table = pd.DataFrame({ui["common_col"]: ordered})
+    reply = ui["common_multi"].format(
+        n=len(named_frames), unit=unit_label, count=len(ordered)
     )
+    if ordered:
+        reply = reply + f": {', '.join(ordered)}"
     extras = []
     for row in only_by_unit:
-        if row["고유 컬럼 수"]:
-            extras.append(f"{row[unit_label]}만: {row['고유 컬럼']}")
+        if row[ui["unique_col_count"]]:
+            extras.append(
+                ui["only_unit"].format(
+                    name=row[unit_label], cols=row[ui["unique_cols"]]
+                )
+            )
     if extras:
         reply = reply + " · " + " / ".join(extras)
     return reply, common_table if ordered else pd.DataFrame(
         {
             unit_label: [r[unit_label] for r in only_by_unit],
-            "고유 컬럼": [r["고유 컬럼"] for r in only_by_unit],
+            ui["unique_cols"]: [r[ui["unique_cols"]] for r in only_by_unit],
         }
     )
 
@@ -460,6 +517,7 @@ def _dtypes_result(
     named_frames: list[tuple[str, pd.DataFrame]],
     *,
     unit_label: str,
+    ui: dict[str, str],
 ) -> tuple[str, pd.DataFrame]:
     parts: list[pd.DataFrame] = []
     for name, frame in named_frames:
@@ -470,18 +528,18 @@ def _dtypes_result(
             rows.append(
                 {
                     unit_label: name,
-                    "컬럼": str(col),
-                    "데이터 타입": str(series.dtype),
-                    "결측치": null_count,
+                    ui["column"]: str(col),
+                    ui["dtype"]: str(series.dtype),
+                    ui["missing"]: null_count,
                 }
             )
         parts.append(pd.DataFrame(rows))
     table = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
     if len(named_frames) == 1:
         table = table.drop(columns=[unit_label], errors="ignore")
-        reply = f"`{named_frames[0][0]}` 컬럼별 데이터 타입·결측치"
+        reply = ui["dtypes_one"].format(name=named_frames[0][0])
     else:
-        reply = f"{unit_label}별 컬럼 데이터 타입·결측치 ({len(named_frames)}개)"
+        reply = ui["dtypes_multi"].format(unit=unit_label, n=len(named_frames))
     return reply, table
 
 
@@ -489,58 +547,77 @@ def _type_groups_result(
     named_frames: list[tuple[str, pd.DataFrame]],
     *,
     unit_label: str,
+    ui: dict[str, str],
 ) -> tuple[str, pd.DataFrame | None]:
     """숫자/문자/날짜 컬럼을 구분해 마크다운으로 반환한다."""
     if len(named_frames) == 1:
         _name, frame = named_frames[0]
         groups = classify_columns(frame)
-        reply = _format_type_groups_markdown(groups)
-        # 마크다운 목록이 주 응답 — 표 중복 표시는 생략
+        reply = _format_type_groups_markdown(groups, ui=ui)
         return reply, None
 
     parts: list[str] = [
-        f"선택된 {unit_label} {len(named_frames)}개의 컬럼 타입을 구분했습니다.",
+        ui["type_groups_multi"].format(unit=unit_label, n=len(named_frames)),
         "",
     ]
     rows: list[dict] = []
+    kind_labels = (
+        ("numeric", ui["numeric"]),
+        ("string", ui["string"]),
+        ("datetime", ui["datetime"]),
+        ("other", ui["other"]),
+    )
     for name, frame in named_frames:
         groups = classify_columns(frame)
         parts.append(f"### `{name}`")
         parts.append("")
-        parts.append(_format_type_groups_markdown(groups))
+        parts.append(_format_type_groups_markdown(groups, ui=ui))
         parts.append("")
-        for kind, label in (
-            ("numeric", "숫자형"),
-            ("string", "문자형"),
-            ("datetime", "날짜형"),
-            ("other", "기타"),
-        ):
+        for kind, label in kind_labels:
             for col in groups[kind]:
-                rows.append({unit_label: name, "컬럼": col, "유형": label})
+                rows.append(
+                    {unit_label: name, ui["column"]: col, ui["type_kind"]: label}
+                )
     table = pd.DataFrame(rows) if rows else None
     return "\n".join(parts).rstrip(), table
 
 
-def _type_groups_table(groups: dict[str, list[str]]) -> pd.DataFrame:
+def _type_groups_table(
+    groups: dict[str, list[str]],
+    *,
+    ui: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    if ui is None:
+        from core.profile_loader import schema_ui_for
+
+        ui = schema_ui_for()
     label_map = {
-        "numeric": "숫자형",
-        "string": "문자형",
-        "datetime": "날짜형",
-        "other": "기타",
+        "numeric": ui["numeric"],
+        "string": ui["string"],
+        "datetime": ui["datetime"],
+        "other": ui["other"],
     }
     rows: list[dict] = []
     for kind, label in label_map.items():
         for col in groups.get(kind, []):
-            rows.append({"컬럼": col, "유형": label})
+            rows.append({ui["column"]: col, ui["type_kind"]: label})
     return pd.DataFrame(rows)
 
 
-def _format_type_groups_markdown(groups: dict[str, list[str]]) -> str:
+def _format_type_groups_markdown(
+    groups: dict[str, list[str]],
+    *,
+    ui: dict[str, str] | None = None,
+) -> str:
+    if ui is None:
+        from core.profile_loader import schema_ui_for
+
+        ui = schema_ui_for()
     sections = [
-        ("numeric", "숫자형 컬럼"),
-        ("string", "문자형 컬럼"),
-        ("datetime", "날짜형 컬럼"),
-        ("other", "기타 컬럼"),
+        ("numeric", ui["numeric_cols"]),
+        ("string", ui["string_cols"]),
+        ("datetime", ui["datetime_cols"]),
+        ("other", ui["other_cols"]),
     ]
     lines: list[str] = []
     for key, title in sections:
@@ -550,7 +627,7 @@ def _format_type_groups_markdown(groups: dict[str, list[str]]) -> str:
         lines.append(f"**{title}**")
         lines.extend(f"- {col}" for col in cols)
         lines.append("")
-    return "\n".join(lines).rstrip() if lines else "분류할 컬럼이 없습니다."
+    return "\n".join(lines).rstrip() if lines else ui["type_groups_empty"]
 
 
 def _column_type_kind(series: pd.Series) -> str:

@@ -309,11 +309,24 @@ def is_split_by_difference_prompt(
     has_up = any(tok in prompt for tok in ("늘어난", "증가", "증액", "커진"))
     has_down = any(tok in prompt for tok in ("줄어든", "감소", "감액", "작아진"))
     has_split = any(
-        tok in prompt for tok in ("나눠", "나누", "구분", "각각", "대비", "비교", "설명")
+        tok in prompt
+        for tok in ("나눠", "나누", "구분", "각각", "대비", "비교", "설명", "항목")
     )
     plan_hit = any(tok in prompt for tok in ("계획", *_tok(prefs, "plan_columns")[:2]))
     exec_hit = any(tok in prompt for tok in ("실행", *_tok(prefs, "exec_columns")[:2]))
-    return bool(has_up and has_down and has_split and plan_hit and exec_hit)
+    # 늘어난만 / 줄어든만 / 둘 다 모두 허용
+    return bool((has_up or has_down) and has_split and plan_hit and exec_hit)
+
+
+def split_by_difference_direction(prompt: str) -> str:
+    """증가만/감소만/둘 다. ``up`` | ``down`` | ``both``."""
+    has_up = any(tok in prompt for tok in ("늘어난", "증가", "증액", "커진"))
+    has_down = any(tok in prompt for tok in ("줄어든", "감소", "감액", "작아진"))
+    if has_up and not has_down:
+        return "up"
+    if has_down and not has_up:
+        return "down"
+    return "both"
 
 
 def pick_plan_vs_exec_columns(
@@ -355,6 +368,7 @@ def apply_split_by_difference_prefs(
     labels = [c for c in _tok(prefs, "label_columns") if c in colset]
     diff_name = _str(prefs, "diff_name", "차이")
     label_name = _str(prefs, "split_label_name", "구분")
+    direction = split_by_difference_direction(prompt)
     out = dict(data)
     out["operation"] = "split_by_difference"
     out["left"] = left
@@ -362,11 +376,17 @@ def apply_split_by_difference_prefs(
     out["value_columns"] = [left, right]
     out["diff_name"] = diff_name
     out["label_name"] = label_name
+    out["direction"] = direction
     out["output_columns"] = [*labels, right, left, diff_name, label_name]
     out["interpret"] = True
+    if direction == "up":
+        scope = "증가 항목만 표시"
+    elif direction == "down":
+        scope = "감소 항목만 표시"
+    else:
+        scope = "세부행을 증가/감소/동일으로 구분해 설명"
     out["criteria_note"] = (
-        f"{diff_name} = {left} − {right}. 세부행을 증가/감소/동일으로 구분해 설명. "
-        "상위 N으로 자르지 않음."
+        f"{diff_name} = {left} − {right}. {scope}. 상위 N으로 자르지 않음."
     )
     out.pop("steps", None)
     out.pop("limit", None)

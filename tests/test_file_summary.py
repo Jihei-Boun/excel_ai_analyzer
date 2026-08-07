@@ -72,8 +72,34 @@ _FIXTURES: dict[str, Callable[[], pd.DataFrame]] = {
 def test_is_summary_request() -> None:
     assert is_summary_request("파일을 요약해줘") is True
     assert is_summary_request("이 파일 개요 알려줘") is True
+    assert is_summary_request("Summarize this file") is True
     assert is_summary_request("연구활동비 리스트로 뽑아줘") is False
     assert is_summary_request("요약 차트로 보여줘") is False
+
+
+def test_generic_en_summary_is_english() -> None:
+    text = build_file_summary(
+        english_numeric(),
+        file_name="sales_en.xlsx",
+        profile_name="generic_en",
+    )
+    assert "This file" in text
+    assert "table with 2 rows × 2 columns" in text
+    assert "Numeric columns: 1" in text
+    assert "Text columns: 1" in text
+    assert "Key numeric columns (sum / min / max):" in text
+    assert "sum 3,000" in text
+    assert "min 1,000" in text
+    assert "max 2,000" in text
+    assert "Top values in text column (`Region`)" in text
+    assert "표 형태 데이터" not in text
+    assert "수치형 컬럼" not in text
+
+
+def test_empty_df_shows_guidance_en() -> None:
+    text = build_file_summary(empty_df(), profile_name="generic_en")
+    assert "empty" in text.lower()
+    assert "비어" not in text
 
 
 def test_budget_summary_matches_twin_totals() -> None:

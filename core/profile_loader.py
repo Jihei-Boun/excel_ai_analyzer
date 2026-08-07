@@ -455,6 +455,12 @@ def locale_preset_for(*, profile_name: str | None = None) -> dict[str, Any]:
     return locale_preset(locale_for(profile_name=profile_name))
 
 
+def schema_ui_for(*, profile_name: str | None = None) -> dict[str, str]:
+    """스키마·결측 UI 라벨/문구 (locale 프리셋)."""
+    raw = locale_preset_for(profile_name=profile_name).get("schema_ui") or {}
+    return {str(k): str(v) for k, v in dict(raw).items()}
+
+
 def language_instruction_for(*, profile_name: str | None = None) -> str:
     """LLM 응답 언어 지시. 프로필 오버라이드 → locale 프리셋."""
     profile = active_profile(profile_name=profile_name)

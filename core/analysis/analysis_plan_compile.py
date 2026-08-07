@@ -132,9 +132,10 @@ def _compile_top_n_per_group(data: dict[str, Any], columns: set[str]) -> dict[st
 def _compile_split_by_difference(
     data: dict[str, Any], columns: set[str]
 ) -> dict[str, Any]:
-    """계획 vs 실행(또는 left−right) 차이로 증가/감소 전체를 유지한다.
+    """계획 vs 실행(또는 left−right) 차이로 증가/감소를 유지한다.
 
     ``top_n_difference``와 달리 limit으로 자르지 않는다.
+    ``direction``이 up/down이면 해당 부호 행만 남긴다.
     """
     from core.profile_loader import (
         default_diff_name,
@@ -162,6 +163,9 @@ def _compile_split_by_difference(
     label_name = (
         str(data.get("label_name") or default_split_label_name()).strip() or "구분"
     )
+    direction = str(data.get("direction") or "both").strip().lower()
+    if direction not in {"up", "down", "both"}:
+        direction = "both"
 
     label_prefs = preferred_columns_present(columns)
     explicit = [
@@ -181,12 +185,15 @@ def _compile_split_by_difference(
         keep = set(label_prefs) | {left, right, diff_name, label_name}
         out_cols = [c for c in out_cols if c in keep]
 
+    if direction == "up":
+        scope = f"{label_name}=증가 항목만"
+    elif direction == "down":
+        scope = f"{label_name}=감소 항목만"
+    else:
+        scope = f"{label_name}=증가/감소/동일. 세부행 전체(상위 N 절단 없음)"
     note = str(
         data.get("criteria_note")
-        or (
-            f"{diff_name} = {left} − {right}. "
-            f"{label_name}=증가/감소/동일. 세부행 전체(상위 N 절단 없음)."
-        )
+        or (f"{diff_name} = {left} − {right}. {scope}.")
     )
     interpret = bool(data.get("interpret", True))
 
@@ -208,13 +215,35 @@ def _compile_split_by_difference(
             "name": label_name,
             "expr": {"sign_label": [left, right]},
         },
-        {
-            "op": "sort",
-            "by": [diff_name],
-            "ascending": [False],
-        },
-        {"op": "select_columns", "columns": out_cols},
     ]
+    if direction == "up":
+        steps.append(
+            {
+                "op": "filter_rows",
+                "include_row_types": ["detail"],
+                "drop_blank_dimensions": False,
+                "column_filters": [{"column": label_name, "values": ["증가"]}],
+            }
+        )
+    elif direction == "down":
+        steps.append(
+            {
+                "op": "filter_rows",
+                "include_row_types": ["detail"],
+                "drop_blank_dimensions": False,
+                "column_filters": [{"column": label_name, "values": ["감소"]}],
+            }
+        )
+    steps.extend(
+        [
+            {
+                "op": "sort",
+                "by": [diff_name],
+                "ascending": [False],
+            },
+            {"op": "select_columns", "columns": out_cols},
+        ]
+    )
     return {
         "steps": steps,
         "criteria_note": note,

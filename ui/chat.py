@@ -10,7 +10,11 @@ import streamlit as st
 from core.io.excel_loader import sanitize_dataframe
 from core.summary.file_summary import is_summary_request
 from core.pai.pandasai_config import _friendly_error
-from core.routing.prompt_intent import _expects_plot, detect_aggregate_op
+from core.routing.prompt_intent import (
+    _expects_plot,
+    detect_aggregate_op,
+    wants_full_dataset,
+)
 from core.routing.prompt_router import (
     SingleRouteOutcome,
     needs_chart_context,
@@ -124,7 +128,7 @@ def _apply_route_outcome(outcome: SingleRouteOutcome) -> tuple[str, pd.DataFrame
         )
 
     meta = dict(outcome.meta)
-    if outcome.filter_auto_reset:
+    if outcome.filter_auto_reset or st.session_state.get("filter_auto_reset"):
         meta = _attach_auto_reset_note(meta)
 
     if outcome.set_operation_result is not None:
@@ -395,14 +399,16 @@ def _last_assistant_dataframe() -> pd.DataFrame | None:
 
 
 def _resolve_analysis_source(df: pd.DataFrame, prompt: str) -> pd.DataFrame:
-    """이전 필터 결과에 없는 값을 요청하면 원본 DataFrame으로 되돌린다."""
+    """명시적 필터(analysis_filter_df)가 있으면 그 범위에서, 없으면 원본에서 분석한다.
+
+    analysis_plan 투영 결과(selected_df)는 미리보기용이며 다음 질문의
+    분석 범위로 쓰지 않는다. (축소 스키마로 컬럼이 사라져 오분석되던 문제 방지)
+    """
     filter_df = st.session_state.get("analysis_filter_df")
     selected = st.session_state.get("selected_df")
     active_filter = None
     if filter_df is not None and len(filter_df) > 0:
         active_filter = filter_df
-    elif selected is not None and len(selected) > 0:
-        active_filter = selected
 
     source, reset = resolve_filter_source(
         df,
@@ -413,6 +419,10 @@ def _resolve_analysis_source(df: pd.DataFrame, prompt: str) -> pd.DataFrame:
     if reset:
         clear_filter_state()
         st.session_state.filter_auto_reset = True
+        if wants_full_dataset(prompt):
+            st.session_state.filter_reset_reason = "full_dataset"
+        else:
+            st.session_state.pop("filter_reset_reason", None)
     elif selected is not None and len(selected) == 0:
         st.session_state.selected_df = None
         st.session_state.work_target = "원본 df"
@@ -422,5 +432,13 @@ def _resolve_analysis_source(df: pd.DataFrame, prompt: str) -> pd.DataFrame:
 def _attach_auto_reset_note(meta: dict) -> dict:
     """필터가 원본으로 자동 전환된 경우 안내 문구를 붙인다."""
     if st.session_state.pop("filter_auto_reset", False):
-        meta["filter_note"] = "이전 필터에 해당 값이 없어 전체 데이터에서 다시 찾았습니다."
+        reason = st.session_state.pop("filter_reset_reason", None)
+        if reason == "full_dataset":
+            meta["filter_note"] = (
+                "요청에 따라 이전 필터를 해제하고 전체 데이터에서 분석했습니다."
+            )
+        else:
+            meta["filter_note"] = (
+                "이전 필터에 해당 값이 없어 전체 데이터에서 다시 찾았습니다."
+            )
     return meta
