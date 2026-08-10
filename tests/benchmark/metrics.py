@@ -154,10 +154,29 @@ def save_summary(summary: dict[str, Any], results_dir: Path) -> Path:
     results_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     path = results_dir / f"{stamp}.json"
-    path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    payload = _json_safe(summary)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     latest = results_dir / "latest.json"
-    latest.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    latest.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
+
+
+def _json_safe(obj: Any) -> Any:
+    """JSON dump용 — tuple dict keys 등 non-JSON 타입을 문자열로 정규화."""
+    if isinstance(obj, dict):
+        out: dict[str, Any] = {}
+        for key, val in obj.items():
+            if isinstance(key, (str, int, float, bool)) or key is None:
+                sk = key if isinstance(key, str) or key is None else str(key)
+            else:
+                sk = str(key)
+            out[str(sk) if sk is not None else "null"] = _json_safe(val)
+        return out
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(x) for x in obj]
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+    return str(obj)
 
 
 def load_summary(path: Path) -> dict[str, Any]:

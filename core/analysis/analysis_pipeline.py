@@ -22,7 +22,9 @@ from core.analysis.analysis_result_validate import (
     validation_warning_messages,
 )
 from core.analysis.analysis_plan_contract import (
+    composition_category_from_issues,
     normalize_plan_signature,
+    plan_composition_category,
     planner_failure_reason,
 )
 from core.llm_client import chat_json, chat_text
@@ -91,13 +93,15 @@ def try_analysis_pipeline(
     retry_log: list[dict[str, Any]] = []
     semantic_soft_retried = False
     seen_signatures: list[str] = []
+    seen_composition_categories: list[str] = []
     duplicate_plan_count = 0
+    repeated_failure_category: str | None = None
 
     def _attempt(
         attempt_index: int,
         previous_errors: list[str],
     ) -> RetryAttempt[AnalysisPipelineResult]:
-        nonlocal semantic_soft_retried, duplicate_plan_count
+        nonlocal semantic_soft_retried, duplicate_plan_count, repeated_failure_category
         # 동일 plan 반복 방지 힌트
         errors_for_planner = list(previous_errors or [])
         if attempt_index > 0 and seen_signatures:
@@ -105,6 +109,14 @@ def try_analysis_pipeline(
                 *errors_for_planner,
                 "Do not repeat the previous invalid plan unchanged. "
                 "Change operation shape and/or required fields.",
+            ]
+        if repeated_failure_category:
+            errors_for_planner = [
+                *errors_for_planner,
+                f"Repeated failure category: {repeated_failure_category}. "
+                "Switch to a different composition "
+                "(e.g. global ranking = sort→limit; rate ranking = ratio→sort→limit; "
+                "group-wise = top_per_group).",
             ]
         try:
             plan = build_analysis_plan(
@@ -133,13 +145,18 @@ def try_analysis_pipeline(
 
         plan_dict = plan.to_dict()
         signature = normalize_plan_signature(plan_dict)
+        comp_cat = plan_composition_category(plan_dict)
         if signature and signature in seen_signatures:
             duplicate_plan_count += 1
+            if comp_cat in seen_composition_categories:
+                repeated_failure_category = comp_cat
             retry_log.append(
                 {
                     "attempt": attempt_index,
                     "failure_stage": "duplicate_plan",
                     "planner_failure_reason": "duplicate_plan",
+                    "composition_category": comp_cat,
+                    "repeated_failure_category": repeated_failure_category,
                     "validation_errors": [
                         "duplicate_plan: regenerated the same invalid plan signature"
                     ],
@@ -173,10 +190,17 @@ def try_analysis_pipeline(
                 attempt=attempt_index,
                 failure_stage="plan_validation",
             )
+            codes = [i.code for i in plan_report.errors]
+            fail_cat = composition_category_from_issues(codes) or comp_cat
+            if fail_cat in seen_composition_categories:
+                repeated_failure_category = fail_cat
+            seen_composition_categories.append(fail_cat)
             retry_log.append(
                 {
                     "attempt": attempt_index,
                     "failure_stage": "plan_validation",
+                    "composition_category": fail_cat,
+                    "repeated_failure_category": repeated_failure_category,
                     "validation_errors": [
                         f"{i.code}: {i.message}" for i in plan_report.errors
                     ],
@@ -303,6 +327,7 @@ def try_analysis_pipeline(
             warn_msgs=warn_msgs,
             duplicate_plan_count=duplicate_plan_count,
             final_path="analysis_plan",
+            repeated_failure_category=repeated_failure_category,
         )
         return RetryAttempt(
             ok=True,
@@ -342,6 +367,7 @@ def try_analysis_pipeline(
                 warn_msgs=[],
                 duplicate_plan_count=duplicate_plan_count,
                 final_path="exhausted",
+                repeated_failure_category=repeated_failure_category,
             )
         )
     return None
@@ -368,6 +394,7 @@ def _planner_observability(
     warn_msgs: list[str],
     duplicate_plan_count: int,
     final_path: str,
+    repeated_failure_category: str | None = None,
 ) -> dict[str, Any]:
     selected_operations: list[str] = []
     selected_columns: list[str] = []
@@ -391,6 +418,10 @@ def _planner_observability(
                     selected_columns.append(metric)
             for col in payload.get("group_by") or []:
                 selected_columns.append(str(col))
+            if step.op == "ratio_of_aggregates":
+                name = str(payload.get("name") or "").strip()
+                if name:
+                    selected_columns.append(name)
     # unique preserve
     uniq_cols: list[str] = []
     seen: set[str] = set()
@@ -403,6 +434,11 @@ def _planner_observability(
         for r in retry_log
         if r.get("failure_stage")
     ]
+    comp_cats = [
+        str(r.get("composition_category") or "")
+        for r in retry_log
+        if r.get("composition_category")
+    ]
     return {
         "selected_operations": selected_operations,
         "selected_columns": uniq_cols,
@@ -410,6 +446,8 @@ def _planner_observability(
         "semantic_warnings": [w for w in warn_msgs if "semantic" in w.lower()],
         "planner_failure_reason": failure_reasons[-1] if failure_reasons else None,
         "planner_failure_reasons": failure_reasons,
+        "composition_categories": comp_cats,
+        "repeated_failure_category": repeated_failure_category,
         "duplicate_plan_count": duplicate_plan_count,
         "final_path": final_path,
     }

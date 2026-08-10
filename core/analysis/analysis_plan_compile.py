@@ -17,6 +17,10 @@ def _compile_high_level(data: dict[str, Any], columns: set[str]) -> dict[str, An
     if operation in {"correlation", "correlation_analysis"}:
         return _compile_correlation(data, columns)
     if operation in {"find_items", "item_filter", "condition_select"}:
+        # max/min ranking → sort → limit
+        extremum = _maybe_redirect_extremum_filter(data, columns)
+        if extremum:
+            return extremum
         # mean(...) value → filter_vs_mean 로 승격
         redirected = _maybe_redirect_mean_filter(data, columns)
         if redirected:
@@ -161,6 +165,69 @@ def _looks_like_mean_intent(data: dict[str, Any]) -> bool:
         for k in ("rate_name", "criteria_note", "explanation", "operation")
     ).lower()
     return any(tok in blob for tok in ("평균", "mean", "average", "avg"))
+
+
+def _maybe_redirect_extremum_filter(
+    data: dict[str, Any], columns: set[str]
+) -> dict[str, Any]:
+    """find_items with op=max/min → global ranking sort→limit."""
+    from core.analysis.analysis_plan_sanitize import _resolve_column
+    from core.profile_loader import preferred_columns_present
+
+    raw = data.get("numeric_filters") or data.get("conditions") or []
+    if not isinstance(raw, list) or not raw:
+        return {}
+    for spec in raw:
+        if not isinstance(spec, dict):
+            continue
+        op = str(spec.get("op") or spec.get("operator") or "").lower().strip()
+        if op not in {"max", "min", "argmax", "argmin"}:
+            continue
+        col = _resolve_column(
+            spec.get("column")
+            or spec.get("left_column")
+            or spec.get("value_column")
+            or "",
+            columns,
+        )
+        if not col:
+            continue
+        ascending = op in {"min", "argmin"}
+        label_prefs = preferred_columns_present(columns)
+        out_cols: list[str] = []
+        seen: set[str] = set()
+        for c in [
+            *label_prefs,
+            col,
+            *[str(x) for x in (data.get("output_columns") or []) if str(x) in columns],
+        ]:
+            if c in columns and c not in seen:
+                out_cols.append(c)
+                seen.add(c)
+        try:
+            n = int(data.get("n") or data.get("limit") or 1)
+        except (TypeError, ValueError):
+            n = 1
+        return {
+            "steps": [
+                {"op": "annotate_row_types"},
+                {
+                    "op": "filter_rows",
+                    "include_row_types": ["detail"],
+                    "drop_blank_dimensions": True,
+                },
+                {"op": "sort", "by": [col], "ascending": [ascending]},
+                {"op": "limit", "n": max(1, min(100, n))},
+                {"op": "select_columns", "columns": out_cols},
+            ],
+            "criteria_note": str(
+                data.get("criteria_note")
+                or f"{col} 기준 {'하위' if ascending else '상위'} {n}개"
+            ),
+            "output_columns": out_cols,
+            "interpret": bool(data.get("interpret", False)),
+        }
+    return {}
 
 
 def _maybe_redirect_mean_filter(
@@ -1163,10 +1230,12 @@ def _compile_group_comparison(data: dict[str, Any], columns: set[str]) -> dict[s
     )
 
     out_cols = [group_col, *metric_cols]
-    note = str(
-        data.get("criteria_note")
-        or f"{group_col} 그룹별 집계·비율 비교"
-    )
+    if data.get("criteria_note"):
+        note = str(data["criteria_note"])
+    elif rate_columns:
+        note = f"{group_col} 그룹 비율 비교"
+    else:
+        note = f"{group_col} 그룹 비교"
     return {
         "steps": steps,
         "criteria_note": note,

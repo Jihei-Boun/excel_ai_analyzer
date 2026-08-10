@@ -203,9 +203,294 @@ def validate_analysis_plan(
             row_types_present=row_types_present,
         )
     )
+    # Phase 9: operation composition / dependency rules
+    issues.extend(_validate_plan_composition(plan, known_final=known, available=available))
 
     errors = [i for i in issues if i.level == "error"]
     return ValidationReport(ok=not errors, issues=issues)
+
+
+def _validate_plan_composition(
+    plan: AnalysisPlan,
+    *,
+    known_final: set[str],
+    available: set[str],
+) -> list[ValidationIssue]:
+    """원자 op 조합·의존성 오류. 정답 plan을 만들지 않고 feedback만 낸다."""
+    del known_final
+    issues: list[ValidationIssue] = []
+    ops = [s.op for s in plan.steps]
+    has = set(ops)
+
+    # track produced columns in order
+    produced: set[str] = set(available)
+    produced.update(META_COLUMNS)
+    ratio_names: list[str] = []
+    saw_aggregate = False
+    saw_ratio = False
+    saw_top_per_group = False
+    saw_limit = False
+    saw_sort = False
+    saw_compare = False
+
+    for step in plan.steps:
+        op = step.op
+        payload = step.payload or {}
+        if op == "aggregate":
+            saw_aggregate = True
+            for metric in payload.get("metrics") or []:
+                col = _metric_column(metric)
+                if col:
+                    produced.add(col)
+            for g in payload.get("group_by") or []:
+                produced.add(str(g))
+        elif op == "ratio_of_aggregates":
+            saw_ratio = True
+            name = str(payload.get("name") or "").strip()
+            if not name:
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "missing_ratio_name",
+                        (
+                            "ratio_of_aggregates requires an explicit `name` output. "
+                            "Later sort/compare must reference that name."
+                        ),
+                    )
+                )
+            else:
+                ratio_names.append(name)
+                produced.add(name)
+        elif op == "derive_column":
+            name = str(payload.get("name") or "").strip()
+            if name:
+                produced.add(name)
+        elif op == "top_per_group":
+            saw_top_per_group = True
+        elif op == "limit":
+            saw_limit = True
+        elif op == "sort":
+            saw_sort = True
+            for col in payload.get("by") or []:
+                name = str(col)
+                if name not in produced:
+                    if _looks_like_rate_name(name):
+                        issues.append(
+                            ValidationIssue(
+                                "error",
+                                "missing_ratio_before_sort",
+                                (
+                                    f"Sorting by rate-like column `{name}` requires a prior "
+                                    "ratio_of_aggregates (or derive) that creates it. "
+                                    "For rate ranking use: aggregate → ratio_of_aggregates → sort → limit."
+                                ),
+                            )
+                        )
+                    else:
+                        issues.append(
+                            ValidationIssue(
+                                "error",
+                                "missing_metric_before_sort",
+                                (
+                                    f"The plan sorts by `{name}`, but no previous step creates `{name}`. "
+                                    "Aggregate/derive/ratio first, or sort an existing column."
+                                ),
+                            )
+                        )
+        elif op == "compare_groups":
+            saw_compare = True
+            for metric in payload.get("metrics") or []:
+                col = str(metric)
+                if not col:
+                    continue
+                if col not in produced:
+                    issues.append(
+                        ValidationIssue(
+                            "error",
+                            "compare_before_metric",
+                            (
+                                f"compare_groups metric `{col}` is not available yet. "
+                                "Create it with aggregate and/or ratio_of_aggregates before compare_groups."
+                            ),
+                        )
+                    )
+            for rate in payload.get("rate_columns") or []:
+                col = str(rate)
+                if col and col not in produced:
+                    issues.append(
+                        ValidationIssue(
+                            "error",
+                            "compare_before_metric",
+                            (
+                                f"compare_groups rate_column `{col}` is not available yet. "
+                                "Add ratio_of_aggregates with name=`{col}` before compare_groups."
+                            ),
+                        )
+                    )
+
+    # top_per_group misuse for global ranking
+    if saw_top_per_group and saw_limit:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "misused_top_per_group",
+                (
+                    "top_per_group requires a group column and is only appropriate for "
+                    "ranking within each group. For a single global ranking, use a metric "
+                    "followed by sort and limit — do not combine top_per_group with limit."
+                ),
+            )
+        )
+
+    # Intent signals from planner criteria / high-level fields (not auto-filled note alone)
+    note = str(plan.criteria_note or "")
+    raw = plan.raw or {}
+    op_field = str(raw.get("operation") or "")
+    rate_name_field = str(raw.get("rate_name") or "")
+    intent_blob = " ".join(
+        [
+            note,
+            str(raw.get("criteria_note") or ""),
+            rate_name_field,
+            op_field if _looks_like_rate_request(op_field) else "",
+        ]
+    )
+    rate_outputs = {c for c in produced if _looks_like_rate_name(c)}
+    if (
+        (_looks_like_rate_request(intent_blob) or bool(rate_name_field.strip()))
+        and not saw_ratio
+        and not rate_outputs
+    ):
+        # allow if a rate-named column already exists in the source inventory
+        if not any(_looks_like_rate_name(c) for c in available):
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "missing_ratio_composition",
+                    (
+                        "The request appears to need a rate/ratio, but the plan has no "
+                        "ratio_of_aggregates (or derive ratio) step. Typical composition: "
+                        "aggregate → ratio_of_aggregates(name=...) → (sort → limit | compare_groups)."
+                    ),
+                )
+            )
+
+    # ranking incomplete: sort without limit when criteria suggests top-N
+    if (
+        saw_sort
+        and not saw_limit
+        and not saw_top_per_group
+        and _looks_like_topn_request(intent_blob)
+    ):
+        issues.append(
+            ValidationIssue(
+                "error",
+                "global_ranking_missing_limit",
+                (
+                    "Global ranking needs sort → limit. "
+                    "A sort without limit does not produce a top-N result."
+                ),
+            )
+        )
+
+    # top_per_group used when request looks like a single global ranking
+    if (
+        saw_top_per_group
+        and not saw_compare
+        and _looks_like_topn_request(intent_blob)
+        and not _looks_like_groupwise_ranking(intent_blob)
+    ):
+        issues.append(
+            ValidationIssue(
+                "error",
+                "misused_top_per_group",
+                (
+                    "top_per_group is only appropriate for ranking within each group. "
+                    "For a single global ranking, use a metric followed by sort and limit."
+                ),
+            )
+        )
+
+    # filter_vs_mean alone used for max ranking
+    if (
+        "filter_vs_mean" in has
+        and saw_sort
+        and not saw_limit
+        and not saw_aggregate
+        and _looks_like_extremum_request(intent_blob)
+    ):
+        issues.append(
+            ValidationIssue(
+                "error",
+                "global_ranking_misclassified",
+                (
+                    "Finding the largest/smallest value is a global ranking: "
+                    "sort → limit. Do not use filter_vs_mean to find a max/min."
+                ),
+            )
+        )
+
+    del saw_aggregate
+    return issues
+
+
+def _looks_like_groupwise_ranking(blob: str) -> bool:
+    text = str(blob or "").lower()
+    if "별" in text or "각각" in text or "마다" in text:
+        return True
+    return any(
+        tok in text
+        for tok in (
+            "each ",
+            " per ",
+            "within each",
+            "group-wise",
+            "groupwise",
+        )
+    )
+
+
+def _looks_like_rate_name(name: str) -> bool:
+    text = str(name or "").lower()
+    return any(
+        tok in text
+        for tok in ("률", "비율", "rate", "ratio", "attainment", "execution")
+    )
+
+
+def _looks_like_rate_request(blob: str) -> bool:
+    text = str(blob or "").lower()
+    return any(
+        tok in text
+        for tok in (
+            "률",
+            "비율",
+            "대비",
+            "rate",
+            "ratio",
+            "목표 대비",
+            "예산 대비",
+            "실적률",
+            "집행률",
+        )
+    )
+
+
+def _looks_like_topn_request(blob: str) -> bool:
+    text = str(blob or "").lower()
+    if any(tok in text for tok in ("상위", "하위", "top", "bottom")):
+        return True
+    if re.search(r"\b\d+\s*(개|명|건|items?)\b", text):
+        return True
+    return False
+
+
+def _looks_like_extremum_request(blob: str) -> bool:
+    text = str(blob or "").lower()
+    return any(
+        tok in text
+        for tok in ("가장 큰", "가장 높은", "가장 작은", "가장 낮은", "max", "min", "largest", "highest")
+    )
 
 
 def format_plan_validation_feedback(
@@ -244,6 +529,35 @@ def format_plan_validation_feedback(
             continue
         prefix = "ERROR" if issue.level == "error" else "WARNING"
         lines.append(f"{i}. [{prefix}/{issue.code}] {issue.message}")
+
+    # Composition-specific guidance (hints only — do not force a full answer plan)
+    codes = {i.code for i in report.errors}
+    if codes & {
+        "misused_top_per_group",
+        "missing_group_column",
+        "global_ranking_missing_limit",
+        "global_ranking_misclassified",
+    }:
+        lines.append(
+            "Composition hint: global ranking = metric → sort → limit; "
+            "group-wise ranking = metric → top_per_group(group, value, n)."
+        )
+    if codes & {
+        "missing_ratio_composition",
+        "missing_ratio_before_sort",
+        "missing_ratio_name",
+        "missing_numerator",
+        "missing_denominator",
+    }:
+        lines.append(
+            "Composition hint: rate/ratio needs ratio_of_aggregates with an explicit "
+            "`name`, then sort/compare may reference that same name."
+        )
+    if codes & {"missing_metric_before_sort", "compare_before_metric"}:
+        lines.append(
+            "Composition hint: create the metric (aggregate and/or ratio_of_aggregates) "
+            "before sort or compare_groups."
+        )
 
     # 컬럼 후보 힌트 (강제 지시 금지)
     if df is not None and not df.empty:
@@ -819,6 +1133,19 @@ def _validate_ratio(
                 )
             )
 
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "missing_ratio_name",
+                (
+                    "ratio_of_aggregates requires an explicit `name` so later "
+                    "sort/compare can reference the rate column."
+                ),
+            )
+        )
+
     return issues
 
 
@@ -859,15 +1186,29 @@ def _validate_compare_groups(
     for metric in payload.get("metrics") or []:
         col = str(metric)
         if col and col not in known and col not in available:
-            # rate 컬럼은 직전에 만들어졌을 수 있음
-            if col not in known:
-                issues.append(
-                    ValidationIssue(
-                        "warning",
-                        "compare_metric_maybe_missing",
-                        f"compare_groups metric `{col}` is not yet in known columns.",
-                    )
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "compare_before_metric",
+                    (
+                        f"compare_groups metric `{col}` is not yet available. "
+                        "Create it with aggregate and/or ratio_of_aggregates before compare_groups."
+                    ),
                 )
+            )
+    for rate in payload.get("rate_columns") or []:
+        col = str(rate)
+        if col and col not in known and col not in available:
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "compare_before_metric",
+                    (
+                        f"compare_groups rate_column `{col}` is not yet available. "
+                        "Add ratio_of_aggregates with an explicit name before compare_groups."
+                    ),
+                )
+            )
     return issues
 
 
