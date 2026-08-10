@@ -17,9 +17,15 @@ def _compile_high_level(data: dict[str, Any], columns: set[str]) -> dict[str, An
     if operation in {"correlation", "correlation_analysis"}:
         return _compile_correlation(data, columns)
     if operation in {"find_items", "item_filter", "condition_select"}:
+        # mean(...) value → filter_vs_mean 로 승격
+        redirected = _maybe_redirect_mean_filter(data, columns)
+        if redirected:
+            return redirected
         return _compile_find_items(data, columns)
     if operation in {"rate_vs_mean", "execution_rate_vs_mean"}:
         return _compile_rate_vs_mean(data, columns)
+    if operation in {"filter_vs_mean", "above_mean", "below_mean"}:
+        return _compile_filter_vs_mean(data, columns)
     if operation in {"top_n_per_group", "top_per_group", "rank_per_group"}:
         return _compile_top_n_per_group(data, columns)
     if operation in {
@@ -33,9 +39,234 @@ def _compile_high_level(data: dict[str, Any], columns: set[str]) -> dict[str, An
     return {}
 
 
+def _metric_alias_candidates(name: str) -> list[str]:
+    """매출액_합계 / amount_sum 같은 별칭에서 원 컬럼 후보를 만든다."""
+    import re
+
+    text = str(name or "").strip()
+    if not text:
+        return []
+    candidates = [text]
+    stripped = re.sub(
+        r"(_?(합계|합|평균|총계|sum|total|mean|avg|count|min|max))$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if stripped and stripped != text:
+        candidates.append(stripped)
+    # 한글 접미 공백형
+    for suffix in (" 합계", " 평균", "합계", "평균"):
+        if text.endswith(suffix) and len(text) > len(suffix):
+            candidates.append(text[: -len(suffix)].strip())
+    # unique preserve
+    out: list[str] = []
+    seen: set[str] = set()
+    for c in candidates:
+        if c and c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def _resolve_metric_column(name: object, columns: set[str]) -> str | None:
+    from core.analysis.analysis_plan_sanitize import _resolve_column
+
+    raw = str(name or "").strip()
+    if not raw:
+        return None
+    direct = _resolve_column(raw, columns)
+    if direct:
+        return direct
+    for cand in _metric_alias_candidates(raw):
+        resolved = _resolve_column(cand, columns)
+        if resolved:
+            return resolved
+    return None
+
+
+def _parse_metric_specs(
+    metrics: Any,
+    columns: set[str],
+    *,
+    default_fn: str | None = None,
+    require_fn: bool = True,
+) -> list[dict[str, str]]:
+    """다양한 LLM metric 형태를 [{column, fn}]으로 정규화.
+
+    require_fn=True이면 fn 누락 항목은 버린다 (silent sum 금지).
+    """
+    from core.analysis.ops_filters import AGGREGATE_FNS
+
+    aliases = {
+        "avg": "mean",
+        "average": "mean",
+        "med": "median",
+        "n": "count",
+        "cnt": "count",
+        "total": "sum",
+    }
+    raw_list: list[Any]
+    if isinstance(metrics, dict):
+        # {"매출액": "sum"} 또는 {"column":..,"fn":..}
+        if "column" in metrics or "name" in metrics or "fn" in metrics or "agg" in metrics:
+            raw_list = [metrics]
+        else:
+            raw_list = [{k: v} for k, v in metrics.items()]
+    elif isinstance(metrics, list):
+        raw_list = metrics
+    else:
+        raw_list = []
+
+    out: list[dict[str, str]] = []
+    for metric in raw_list:
+        col = ""
+        fn = ""
+        if isinstance(metric, str):
+            col = metric
+            fn = default_fn or ""
+        elif isinstance(metric, dict):
+            if "column" in metric or "name" in metric:
+                col = str(metric.get("column") or metric.get("name") or "")
+                fn = str(metric.get("fn") or metric.get("agg") or default_fn or "")
+            elif len(metric) == 1:
+                key, val = next(iter(metric.items()))
+                # {"실행예산_합계": "sum"} or {"column": "x"} malformed
+                if str(key) in {"column", "name", "fn", "agg"}:
+                    continue
+                col = str(key)
+                fn = str(val or default_fn or "")
+            else:
+                col = str(metric.get("column") or metric.get("name") or "")
+                fn = str(metric.get("fn") or metric.get("agg") or default_fn or "")
+        else:
+            continue
+        resolved = _resolve_metric_column(col, columns)
+        if not resolved:
+            continue
+        fn_norm = aliases.get(fn.lower().strip(), fn.lower().strip()) if fn else ""
+        if require_fn and not fn_norm:
+            continue
+        if fn_norm and fn_norm not in AGGREGATE_FNS:
+            continue
+        if not fn_norm:
+            continue
+        out.append({"column": resolved, "fn": fn_norm})
+    return out
+
+
+def _looks_like_mean_intent(data: dict[str, Any]) -> bool:
+    blob = " ".join(
+        str(data.get(k) or "")
+        for k in ("rate_name", "criteria_note", "explanation", "operation")
+    ).lower()
+    return any(tok in blob for tok in ("평균", "mean", "average", "avg"))
+
+
+def _maybe_redirect_mean_filter(
+    data: dict[str, Any], columns: set[str]
+) -> dict[str, Any]:
+    """find_items value에 mean(...)가 있으면 filter_vs_mean으로 변환."""
+    import re
+
+    raw = data.get("numeric_filters") or data.get("conditions") or []
+    if not isinstance(raw, list) or not raw:
+        return {}
+    for spec in raw:
+        if not isinstance(spec, dict):
+            continue
+        value = str(spec.get("value") or "").strip()
+        col = str(spec.get("column") or spec.get("left_column") or "").strip()
+        if not value:
+            continue
+        mean_match = re.match(
+            r"^(?:mean|avg|average|평균)\s*\(\s*([^)]+)\s*\)$",
+            value,
+            flags=re.IGNORECASE,
+        )
+        target = col
+        if mean_match:
+            inner = mean_match.group(1).strip()
+            if inner and inner.lower() not in {"x", "col", "column"}:
+                target = inner
+        elif value.lower() in {"mean", "avg", "average", "평균"}:
+            pass
+        else:
+            continue
+        from core.analysis.analysis_plan_sanitize import _resolve_column
+
+        resolved = _resolve_column(target, columns)
+        if not resolved:
+            continue
+        op = str(spec.get("op") or spec.get("operator") or "gt").lower()
+        relation = "above"
+        if op in {"lt", "lte", "<", "<=", "below"}:
+            relation = "below"
+        return _compile_filter_vs_mean(
+            {
+                **data,
+                "column": resolved,
+                "relation": relation,
+            },
+            columns,
+        )
+    return {}
+
+
+def _compile_filter_vs_mean(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
+    from core.analysis.analysis_plan_sanitize import _resolve_column
+    from core.profile_loader import preferred_columns_present
+
+    col = _resolve_column(
+        data.get("column") or data.get("value_column") or data.get("metric") or "",
+        columns,
+    )
+    if not col:
+        return {}
+    relation = str(data.get("relation") or data.get("compare") or "above").lower()
+    if any(tok in relation for tok in ("below", "낮", "이하", "미만", "lt")):
+        relation = "below"
+    else:
+        relation = "above"
+    label_prefs = preferred_columns_present(columns)
+    out_cols: list[str] = []
+    seen: set[str] = set()
+    for c in [
+        *label_prefs,
+        col,
+        *[str(x) for x in (data.get("output_columns") or []) if str(x) in columns],
+    ]:
+        if c in columns and c not in seen:
+            out_cols.append(c)
+            seen.add(c)
+    return {
+        "steps": [
+            {"op": "annotate_row_types"},
+            {
+                "op": "filter_rows",
+                "include_row_types": ["detail"],
+                "drop_blank_dimensions": True,
+            },
+            {"op": "filter_vs_mean", "column": col, "relation": relation},
+            {
+                "op": "sort",
+                "by": [col],
+                "ascending": [relation == "below"],
+            },
+            {"op": "select_columns", "columns": out_cols},
+        ],
+        "criteria_note": str(
+            data.get("criteria_note")
+            or f"{col}이(가) 산술평균보다 {'높은' if relation == 'above' else '낮은'} 행"
+        ),
+        "output_columns": out_cols,
+        "interpret": bool(data.get("interpret", False)),
+    }
+
+
 def _compile_aggregate(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
     """고수준 aggregate → annotate/filter/aggregate 원자 steps."""
-    from core.analysis.analysis_plan_sanitize import _resolve_column, _resolve_columns
+    from core.analysis.analysis_plan_sanitize import _resolve_columns
 
     group_by = data.get("group_by") or data.get("group_column") or data.get(
         "dimension_columns"
@@ -46,32 +277,11 @@ def _compile_aggregate(data: dict[str, Any], columns: set[str]) -> dict[str, Any
     if not group_by:
         return {}
 
-    metrics = data.get("metrics") or data.get("aggregations") or []
-    if isinstance(metrics, dict):
-        metrics = [
-            {"column": k, "fn": v} if not isinstance(v, dict) else {"column": k, **v}
-            for k, v in metrics.items()
-        ]
-    if not isinstance(metrics, list):
-        metrics = []
-
-    resolved_metrics: list[dict[str, Any]] = []
-    for metric in metrics:
-        if isinstance(metric, str):
-            col = _resolve_column(metric, columns)
-            if col:
-                resolved_metrics.append({"column": col, "fn": "sum"})
-            continue
-        if not isinstance(metric, dict):
-            continue
-        col = _resolve_column(metric.get("column") or metric.get("name") or "", columns)
-        if not col:
-            continue
-        fn = str(metric.get("fn") or metric.get("agg") or "sum").lower().strip() or "sum"
-        resolved_metrics.append({"column": col, "fn": fn})
-
-    # metrics가 비어 있으면 output_columns 중 group이 아닌 수치 후보 1개를 sum으로 추정하지 않는다.
-    # (환각 방지) — 단, value_column/metric 단일 필드가 있으면 사용.
+    resolved_metrics = _parse_metric_specs(
+        data.get("metrics") or data.get("aggregations") or [],
+        columns,
+        require_fn=True,
+    )
     if not resolved_metrics:
         single = (
             data.get("value_column")
@@ -79,10 +289,14 @@ def _compile_aggregate(data: dict[str, Any], columns: set[str]) -> dict[str, Any
             or data.get("metric_column")
             or data.get("column")
         )
-        col = _resolve_column(single or "", columns)
-        if col and col not in group_by:
-            fn = str(data.get("fn") or data.get("agg") or "sum").lower().strip() or "sum"
-            resolved_metrics.append({"column": col, "fn": fn})
+        fn = str(data.get("fn") or data.get("agg") or "").lower().strip()
+        col = _resolve_metric_column(single or "", columns)
+        if col and fn:
+            resolved_metrics = _parse_metric_specs(
+                [{"column": col, "fn": fn}],
+                columns,
+                require_fn=True,
+            )
     if not resolved_metrics:
         return {}
 
@@ -94,7 +308,6 @@ def _compile_aggregate(data: dict[str, Any], columns: set[str]) -> dict[str, Any
         include_groups = [include_groups]
 
     metric_names = [m["column"] for m in resolved_metrics]
-    # output은 group + metric 실제 컬럼을 유지. LLM이 만든 `매출액_합계` 같은 별칭은 무시.
     out_cols: list[str] = []
     seen: set[str] = set()
     for col in [*group_by, *metric_names]:
@@ -103,9 +316,10 @@ def _compile_aggregate(data: dict[str, Any], columns: set[str]) -> dict[str, Any
             seen.add(col)
     for col in data.get("output_columns") or []:
         name = str(col)
-        if name in columns and name not in seen:
-            out_cols.append(name)
-            seen.add(name)
+        resolved = _resolve_metric_column(name, columns)
+        if resolved and resolved not in seen:
+            out_cols.append(resolved)
+            seen.add(resolved)
 
     steps: list[dict[str, Any]] = [
         {"op": "annotate_row_types"},
@@ -451,17 +665,51 @@ def _compile_rate_vs_mean(data: dict[str, Any], columns: set[str]) -> dict[str, 
     }
 
 def _compile_find_items(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
-    """세부 항목 조건 탐색: 수치 필터 → (선택) 비중 파생 → 필요 열만 선택 → 정렬."""
+    """세부 항목 조건 탐색: 수치/라벨 필터 → 필요 열만 선택 → 정렬."""
+    from core.analysis.analysis_plan_sanitize import _resolve_column
     from core.profile_loader import (
         preferred_columns_present,
         related_metric_columns_present,
     )
 
+    # categorical equality가 numeric_filters에 들어온 경우 column_filters로 승격
+    column_filters: list[dict[str, Any]] = []
+    raw_numeric = data.get("numeric_filters") or data.get("conditions") or []
+    kept_numeric: list[Any] = []
+    if isinstance(raw_numeric, list):
+        for spec in raw_numeric:
+            if not isinstance(spec, dict):
+                continue
+            col = _resolve_column(
+                spec.get("column") or spec.get("left_column") or "", columns
+            )
+            op = str(spec.get("op") or spec.get("operator") or "").lower()
+            val = spec.get("value")
+            right = _resolve_column(
+                spec.get("right_column") or spec.get("other_column") or "", columns
+            )
+            if (
+                col
+                and col in columns
+                and not right
+                and op in {"eq", "==", "=", "ne", "!=", "<>"}
+                and val is not None
+                and str(val).strip()
+                and not _value_looks_numeric(val)
+            ):
+                column_filters.append({"column": col, "values": [str(val)]})
+            else:
+                kept_numeric.append(spec)
+
+    for spec in data.get("column_filters") or []:
+        if isinstance(spec, dict):
+            column_filters.append(spec)
+
     numeric_filters = _sanitize_numeric_filters(
-        {"numeric_filters": data.get("numeric_filters") or data.get("conditions") or []},
+        {"numeric_filters": kept_numeric},
         columns,
     )
-    if not numeric_filters:
+    if not numeric_filters and not column_filters:
         return {}
 
     label_prefs = preferred_columns_present(columns)
@@ -471,11 +719,14 @@ def _compile_find_items(data: dict[str, Any], columns: set[str]) -> dict[str, An
             col = str(filt.get(key) or "")
             if col and col not in metric_cols:
                 metric_cols.append(col)
+    for filt in column_filters:
+        col = str(filt.get("column") or "")
+        if col and col not in metric_cols:
+            metric_cols.append(col)
 
     numerator = str(data.get("numerator") or "")
     denominator = str(data.get("denominator") or "")
     rate_name = str(data.get("rate_name") or data.get("ratio_name") or "").strip()
-    # rate_name이 명시된 경우만 비중 열을 만든다 (오탐 방지)
     derive_ratio = bool(
         rate_name and numerator in columns and denominator in columns
     )
@@ -498,7 +749,6 @@ def _compile_find_items(data: dict[str, Any], columns: set[str]) -> dict[str, An
             for c in related_metric_columns_present(columns)
             if c not in metric_cols
         ]
-        # condition_related_metrics 보조 (없으면 find_related만)
         if not related:
             related = [
                 c
@@ -526,8 +776,11 @@ def _compile_find_items(data: dict[str, Any], columns: set[str]) -> dict[str, An
                 out_cols.append(col)
 
     sort_by = data.get("sort_by") or data.get("sort") or []
+    if isinstance(sort_by, dict):
+        sort_by = [sort_by.get("column") or sort_by.get("by") or ""]
     if isinstance(sort_by, str):
-        sort_by = [sort_by]
+        # "temperature desc" 형태
+        sort_by = [sort_by.split()[0]] if sort_by.strip() else []
     sort_by = [
         str(c)
         for c in sort_by
@@ -542,7 +795,7 @@ def _compile_find_items(data: dict[str, Any], columns: set[str]) -> dict[str, An
                     sort_by = [str(filt.get("column") or filt.get("left_column") or "")]
                     sort_by = [c for c in sort_by if c]
                     break
-            if not sort_by:
+            if not sort_by and numeric_filters:
                 first = numeric_filters[0]
                 sort_by = [
                     str(first.get("column") or first.get("left_column") or "")
@@ -551,24 +804,28 @@ def _compile_find_items(data: dict[str, Any], columns: set[str]) -> dict[str, An
 
     ascending = data.get("ascending", False)
     if isinstance(ascending, bool):
-        ascending = [ascending] * len(sort_by)
+        ascending = [ascending] * max(len(sort_by), 1)
     elif isinstance(ascending, list):
         ascending = [bool(x) for x in ascending]
         while len(ascending) < len(sort_by):
             ascending.append(False)
         ascending = ascending[: len(sort_by)]
     else:
-        ascending = [False] * len(sort_by)
+        ascending = [False] * max(len(sort_by), 1)
+
+    filter_payload: dict[str, Any] = {
+        "include_row_types": ["detail"],
+        "drop_blank_dimensions": True,
+        "exclude_uncertain": False,
+    }
+    if numeric_filters:
+        filter_payload["numeric_filters"] = numeric_filters
+    if column_filters:
+        filter_payload["column_filters"] = column_filters
 
     steps: list[dict[str, Any]] = [
         {"op": "annotate_row_types"},
-        {
-            "op": "filter_rows",
-            "include_row_types": ["detail"],
-            "drop_blank_dimensions": True,
-            "exclude_uncertain": False,
-            "numeric_filters": numeric_filters,
-        },
+        {"op": "filter_rows", **filter_payload},
     ]
     if derive_ratio:
         steps.append(
@@ -588,12 +845,9 @@ def _compile_find_items(data: dict[str, Any], columns: set[str]) -> dict[str, An
                 ],
             }
         )
-    steps.extend(
-        [
-            {"op": "sort", "by": sort_by, "ascending": ascending},
-            {"op": "select_columns", "columns": out_cols},
-        ]
-    )
+    if sort_by:
+        steps.append({"op": "sort", "by": sort_by, "ascending": ascending[: len(sort_by)]})
+    steps.append({"op": "select_columns", "columns": out_cols})
     note = str(
         data.get("criteria_note")
         or (
@@ -610,6 +864,15 @@ def _compile_find_items(data: dict[str, Any], columns: set[str]) -> dict[str, An
         "output_columns": out_cols,
         "interpret": interpret,
     }
+
+
+def _value_looks_numeric(value: object) -> bool:
+    try:
+        float(value)  # type: ignore[arg-type]
+        return True
+    except (TypeError, ValueError):
+        return False
+
 
 
 
@@ -795,14 +1058,20 @@ def _compile_top_n_difference(data: dict[str, Any], columns: set[str]) -> dict[s
 
 
 def _compile_group_comparison(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
-    group_col = str(
+    from core.analysis.analysis_plan_sanitize import _resolve_column
+
+    group_col = _resolve_column(
         data.get("group_column")
         or (data.get("group_by") or [None])[0]
-        or ""
-    )
-    if group_col not in columns:
-        # dimension_columns 첫 열 시도
-        dims = [str(c) for c in (data.get("dimension_columns") or []) if str(c) in columns]
+        or "",
+        columns,
+    ) or ""
+    if not group_col:
+        dims = [
+            _resolve_column(c, columns)
+            for c in (data.get("dimension_columns") or [])
+        ]
+        dims = [c for c in dims if c]
         group_col = dims[0] if dims else ""
     if not group_col or group_col not in columns:
         return {}
@@ -812,39 +1081,52 @@ def _compile_group_comparison(data: dict[str, Any], columns: set[str]) -> dict[s
         groups = [groups]
     groups = [str(g) for g in groups if str(g).strip()]
 
-    metrics_raw = data.get("metrics") or data.get("value_columns") or []
-    metric_cols: list[str] = []
-    metric_specs: list[dict[str, str]] = []
-    if isinstance(metrics_raw, list):
-        for item in metrics_raw:
-            if isinstance(item, str) and item in columns:
-                metric_cols.append(item)
-                metric_specs.append({"column": item, "fn": "sum"})
-            elif isinstance(item, dict):
-                col = str(item.get("column") or item.get("name") or "")
-                if col in columns:
-                    metric_cols.append(col)
-                    metric_specs.append(
-                        {"column": col, "fn": str(item.get("fn") or "sum")}
-                    )
+    metric_specs = _parse_metric_specs(
+        data.get("metrics") or data.get("value_columns") or [],
+        columns,
+        require_fn=True,
+    )
+    metric_cols = [m["column"] for m in metric_specs]
 
-    numerator = str(data.get("numerator") or "")
-    denominator = str(data.get("denominator") or "")
+    numerator = _resolve_column(data.get("numerator") or "", columns) or ""
+    den_raw = data.get("denominator")
+    denominator = ""
+    if den_raw is not None and str(den_raw).strip().lower() not in {
+        "",
+        "null",
+        "none",
+        "count",
+        "n",
+        "cnt",
+    }:
+        denominator = _resolve_column(den_raw, columns) or ""
+
     from core.profile_loader import default_rate_name
 
     rate_name = str(data.get("rate_name") or default_rate_name())
-    if numerator in columns and denominator in columns:
+
+    # mean intent with fake denominator=count → aggregate(fn=mean)
+    if numerator and not denominator and _looks_like_mean_intent(data):
+        metric_specs = [{"column": numerator, "fn": "mean"}]
+        metric_cols = [numerator]
+    elif numerator and denominator and numerator in columns and denominator in columns:
         for col in (denominator, numerator):
             if col not in metric_cols:
                 metric_cols.append(col)
                 metric_specs.append({"column": col, "fn": "sum"})
+    elif numerator and not denominator and numerator in columns:
+        # 단일 metric 그룹 비교: 명시 fn 없으면 sum (비교용 합계)
+        if numerator not in metric_cols:
+            fn = "mean" if _looks_like_mean_intent(data) else "sum"
+            metric_specs.append({"column": numerator, "fn": fn})
+            metric_cols.append(numerator)
 
     if len(metric_specs) < 1:
         return {}
 
     prefer = data.get("prefer_subtotals")
     if prefer is None:
-        prefer = True
+        prefer = all(m["fn"] == "sum" for m in metric_specs)
 
     steps: list[dict[str, Any]] = [
         {"op": "annotate_row_types"},
@@ -856,7 +1138,8 @@ def _compile_group_comparison(data: dict[str, Any], columns: set[str]) -> dict[s
             "include_groups": groups,
         },
     ]
-    if numerator in columns and denominator in columns:
+    rate_columns: list[str] = []
+    if numerator and denominator and numerator in columns and denominator in columns:
         steps.append(
             {
                 "op": "ratio_of_aggregates",
@@ -867,14 +1150,15 @@ def _compile_group_comparison(data: dict[str, Any], columns: set[str]) -> dict[s
         )
         if rate_name not in metric_cols:
             metric_cols.append(rate_name)
+        rate_columns = [rate_name]
 
     steps.append(
         {
             "op": "compare_groups",
             "group_column": group_col,
             "groups": groups,
-            "metrics": metric_cols,
-            "rate_columns": [rate_name] if numerator and denominator else [],
+            "metrics": [c for c in metric_cols if c in columns or c == rate_name],
+            "rate_columns": rate_columns,
         }
     )
 

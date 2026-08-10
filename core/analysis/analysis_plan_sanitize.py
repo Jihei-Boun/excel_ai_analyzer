@@ -199,25 +199,39 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
         group_by = _resolve_columns([str(c) for c in group_by], columns)
         if not group_by:
             return None
+        from core.analysis.analysis_plan_compile import (
+            _metric_alias_candidates,
+            _resolve_metric_column,
+        )
+
         metrics = item.get("metrics") or []
+        if isinstance(metrics, dict):
+            if "column" in metrics or "fn" in metrics or "agg" in metrics:
+                metrics = [metrics]
+            else:
+                metrics = [{k: v} for k, v in metrics.items()]
         if not isinstance(metrics, list) or not metrics:
             return None
         resolved_metrics: list[Any] = []
         for metric in metrics:
+            col = ""
+            fn = ""
             if isinstance(metric, str):
-                col = _resolve_column(metric, columns)
-                if col:
-                    resolved_metrics.append({"column": col, "fn": "sum"})
-            elif isinstance(metric, dict):
-                col = _resolve_column(
-                    metric.get("column") or metric.get("name") or "",
-                    columns,
-                )
-                if not col:
-                    continue
-                entry = dict(metric)
-                entry["column"] = col
-                resolved_metrics.append(entry)
+                # string-only metric is invalid without fn (Phase 8)
+                continue
+            if isinstance(metric, dict):
+                if "column" in metric or "name" in metric:
+                    col = str(metric.get("column") or metric.get("name") or "")
+                    fn = str(metric.get("fn") or metric.get("agg") or "").strip()
+                elif len(metric) == 1:
+                    key, val = next(iter(metric.items()))
+                    if str(key) not in {"column", "name", "fn", "agg"}:
+                        col = str(key)
+                        fn = str(val or "").strip()
+            resolved = _resolve_metric_column(col, columns)
+            if not resolved or not fn:
+                continue
+            resolved_metrics.append({"column": resolved, "fn": fn.lower()})
         if not resolved_metrics:
             return None
         include_groups = item.get("include_groups") or item.get("groups") or []
@@ -225,7 +239,7 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
             include_groups = [include_groups]
         prefer = item.get("prefer_subtotals")
         if prefer is None:
-            prefer = True
+            prefer = all(str(m.get("fn")) == "sum" for m in resolved_metrics)
         return AnalysisStep(
             op,
             {

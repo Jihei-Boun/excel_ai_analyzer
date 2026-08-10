@@ -249,7 +249,9 @@ def ratio_of_columns(
 
 
 def _canonical_agg_fn(fn: str) -> str:
-    raw = str(fn or "sum").lower().strip()
+    raw = str(fn or "").lower().strip()
+    if not raw:
+        return ""
     aliases = {
         "avg": "mean",
         "average": "mean",
@@ -267,20 +269,35 @@ def _normalize_metrics(
 ) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     unsupported: list[str] = []
+    missing_fn: list[str] = []
     for item in metrics or []:
         if isinstance(item, str):
-            col, fn = item, "sum"
-        elif isinstance(item, dict):
+            missing_fn.append(item)
+            continue
+        if isinstance(item, dict):
             col = str(item.get("column") or item.get("name") or "")
-            fn = _canonical_agg_fn(str(item.get("fn") or item.get("agg") or "sum"))
+            if "fn" not in item and "agg" not in item:
+                if col:
+                    missing_fn.append(col)
+                continue
+            fn = _canonical_agg_fn(str(item.get("fn") or item.get("agg") or ""))
         else:
             continue
         if col not in columns:
+            continue
+        if not fn:
+            missing_fn.append(col or "?")
             continue
         if fn not in AGGREGATE_FNS:
             unsupported.append(fn)
             continue
         out.append((col, fn))
+    if missing_fn:
+        raise ValueError(
+            "aggregate metric missing required fn for: "
+            + ", ".join(sorted(set(missing_fn)))
+            + f"; allowed={sorted(AGGREGATE_FNS)}"
+        )
     if unsupported:
         raise ValueError(
             "unsupported aggregation fn: "

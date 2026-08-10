@@ -9,85 +9,25 @@ import pandas as pd
 
 from core.analysis.analysis_plan_types import AnalysisPlan, analysis_plan_from_dict
 from core.analysis.analysis_column_prefs import apply_safety_column_normalization
+from core.analysis.analysis_plan_contract import PLANNER_SYSTEM_PROMPT
 from core.llm_client import chat_json
 from core.profile_loader import active_profile, roles_for
 from core.schema.row_classify import ROW_TYPE_COL, classification_summary, row_type_distribution
 from core.integrate.schema_infer import semantic_hints_text
-
-# 도메인 비의존 범용 계획 프롬프트
-_GENERIC_PLAN_SYSTEM = (
-    "You are a planning module for a generic Excel analyzer. "
-    "Given a pandas DataFrame inventory and optional row-type distribution, "
-    "produce ONE JSON analysis plan for a deterministic executor. "
-    "Do NOT write pandas code. Do NOT invent columns that are not in the inventory. "
-    "Prefer a pipeline of atomic steps. Allowed ops: "
-    "annotate_row_types, filter_rows, select_columns, derive_column, sort, limit, "
-    "drop_columns, aggregate, ratio_of_aggregates, compare_groups, "
-    "distribution_summary, correlation, filter_vs_mean, top_per_group. "
-    "filter_rows may include include_row_types, column_filters "
-    "[{column, values}] for label membership, and numeric_filters either "
-    "[{column, op, value}] for scalar compares OR "
-    "[{left_column, op, right_column}] for column-vs-column compares "
-    "(op: eq|ne|gt|gte|lt|lte). Example: stock below safety stock → "
-    "numeric_filters:[{left_column: stock_qty, op: lt, right_column: safety_stock}]. "
-    "aggregate: group_by, metrics[{column, fn}], prefer_subtotals(bool), include_groups. "
-    "fn MUST be one of sum|mean|median|min|max|count (avg→mean). "
-    "prefer_subtotals applies to sum only; mean/count/min/max/median always use detail rows. "
-    "Never double-count subtotals with details. "
-    "RANKING / TOP-N (상위 N, 가장 큰/높은/낮은, top N): do NOT invent a special op. "
-    "Use atomic steps: (optional metric derive or aggregate/ratio) → sort → limit. "
-    "Examples: "
-    "(1) top products by sales: aggregate by product sum sales → sort desc → limit N; "
-    "(2) top rates: derive or ratio_of_aggregates → sort by rate desc → limit N; "
-    "(3) largest remaining amount: filter detail → sort by remaining desc → limit 1. "
-    "ratio_of_aggregates: name, numerator, denominator — compute sum-level ratio "
-    "(NOT the mean of row ratios). Apply after aggregate. "
-    "compare_groups: group_column, groups, metrics, rate_columns. "
-    "distribution_summary: denominator_column, numerator_column "
-    "(aliases: budget_column, executed_column), optional group_column/group_value. "
-    "correlation: x_column, y_column, optional label_column, methods "
-    "— row-level Pearson/Spearman on detail rows (NOT a ratio, NOT group aggregate). "
-    "filter_vs_mean: column, relation(below|above) — keep rows vs arithmetic mean. "
-    "For ranking by 'largest difference' / '차이가 큰', use abs_diff and descending sort, "
-    "and set criteria_note explaining absolute difference. "
-    "For directional comparisons use signed diffs matching the user wording. "
-    "For '상관' / '상관관계' / 'correlation' / Pearson / Spearman: "
-    "MUST use operation='correlation' with x_column, y_column, optional label_column, "
-    "interpret=true. Never answer correlation with group_comparison or "
-    "ratio_of_aggregates. Zero denominator is not correlation. "
-    "For finding items by numeric conditions (많다/없는/0/=0/>0): "
-    "MUST use operation='find_items' with numeric_filters, sort_by, "
-    "output_columns (ONLY labels + condition columns + 1-2 related metrics — "
-    "NEVER return all source columns), interpret=true when 의미/설명 asked. "
-    "For vague risk/shortage concepts (e.g. stockout risk), prefer comparing "
-    "related numeric columns from inventory (qty vs safety/min/reorder) via "
-    "column-vs-column numeric_filters — do not invent business formulas not "
-    "supported by columns. "
-    "For rate vs mean comparisons: operation='rate_vs_mean' with numerator, "
-    "denominator, relation; exclude denominator==0; interpret=false for table-only. "
-    "For per-group top/bottom item: operation='top_n_per_group' with group_column, "
-    "value_column, n, ascending. Filter to detail rows only. "
-    "For splitting increases vs decreases between two numeric columns: "
-    "operation='split_by_difference' with left, right; keep ALL detail rows. "
-    "For comparing categories with a rate: prefer operation='group_comparison' "
-    "with group_column, groups, numerator, denominator, rate_name, "
-    "prefer_subtotals=true when useful. "
-    "When several similarly named metric columns exist (e.g. current/ytd/target sales), "
-    "pick the one that best matches the user wording; if the request is ambiguous, "
-    "prefer the most general cumulative/total-like metric and note the choice in "
-    "criteria_note. Never invent a column. "
-    "Always exclude non-detail rows when the user asks for item rankings: "
-    "annotate_row_types then filter_rows with include_row_types=['detail'] "
-    "and drop_blank_dimensions=true. "
-    "Semantic role_hints are OPTIONAL hints only — never invent columns from them. "
-    "You may return compact high-level forms: "
-    "operation='top_n_difference', operation='group_comparison', "
-    "operation='correlation', operation='find_items', operation='rate_vs_mean', "
-    "operation='top_n_per_group', or operation='split_by_difference'. "
-    "Return ONLY a JSON object."
-)
+from core.io.text_normalize import normalize_text
 
 _MAX_SAMPLE_VALUES = 6
+
+# 컬럼명에서 추정하는 범용 role hint (profile roles와 병합)
+_NAME_ROLE_PATTERNS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("당년도", "당해", "current", "당기"), "current_period_actual"),
+    (("누적", "ytd", "cumulative", "누계"), "cumulative_actual"),
+    (("목표", "target", "계획", "plan"), "target"),
+    (("전년", "prior", "작년"), "prior_period"),
+    (("안전", "safety", "min", "최소", "reorder"), "threshold_or_min"),
+    (("재고수량", "stock", "qty", "수량"), "quantity"),
+    (("평균", "mean", "avg"), "average_metric"),
+)
 
 
 def _plan_system_prompt(
@@ -101,12 +41,12 @@ def _plan_system_prompt(
     )
     guidance = str(profile.get("plan_guidance") or "").strip()
     lang_note = plan_language_note_for(profile_name=profile_name)
-    parts = [_GENERIC_PLAN_SYSTEM]
+    parts = [PLANNER_SYSTEM_PROMPT]
     if lang_note:
         parts.append(lang_note)
     if guidance:
         parts.append(f"Domain guidance (hints only, not hard rules): {guidance}")
-    return " ".join(parts)
+    return "\n\n".join(parts)
 
 
 def build_planner_column_inventory(
@@ -155,7 +95,12 @@ def build_planner_column_inventory(
             "unique_count": int(non_null.nunique()),
             "sample_values": sample,
         }
-        hints = role_index.get(name) or []
+        hints = list(role_index.get(name) or [])
+        for tokens, hint in _NAME_ROLE_PATTERNS:
+            norm = normalize_text(name)
+            if any(normalize_text(tok) in norm for tok in tokens):
+                if hint not in hints:
+                    hints.append(hint)
         if hints:
             entry["role_hints"] = hints
         columns.append(entry)
@@ -217,27 +162,9 @@ def build_analysis_plan(
         f"Row levels:\n{json.dumps(row_context, ensure_ascii=False, indent=2)}",
         f"Row type summary:\n{json.dumps(row_summary, ensure_ascii=False, indent=2)}",
         (
-            "Return JSON with either:\n"
-            "1) steps[], criteria_note, dimension_columns, output_columns, interpret(bool)\n"
-            "2) operation=top_n_difference with dimension_columns, value_columns, "
-            "difference_mode (absolute|signed), sort, limit, exclude_rows, criteria_note\n"
-            "3) operation=group_comparison with group_column, groups, "
-            "numerator, denominator, rate_name, prefer_subtotals, criteria_note, interpret\n"
-            "4) operation=correlation with x_column, y_column, label_column, "
-            "methods, criteria_note, interpret\n"
-            "5) operation=find_items with numeric_filters as "
-            "[{column,op,value}] OR [{left_column,op,right_column}] "
-            "(column-vs-column; do NOT put a column name in value), "
-            "sort_by, output_columns (minimal), criteria_note, interpret\n"
-            "6) operation=rate_vs_mean with numerator, denominator, relation "
-            "(below|above), rate_name, output_columns (minimal), interpret\n"
-            "7) operation=top_n_per_group with group_column, value_column, n, "
-            "ascending, output_columns (minimal), interpret\n"
-            "8) operation=split_by_difference with left, right, diff_name, "
-            "label_name, output_columns, interpret=true (NO limit)\n"
-            "9) operation=aggregate with group_by (or dimension_columns), "
-            "metrics[{column,fn}] where fn is sum|mean|median|min|max|count "
-            "(required — never omit metrics)"
+            "Return JSON using either atomic steps[] matching the contracts, "
+            "or one compact high-level operation from the system prompt. "
+            "Always include required fields (especially aggregate.metrics[].fn)."
         ),
     ]
     hint = semantic_hints_text(
@@ -252,6 +179,7 @@ def build_analysis_plan(
         user_parts.append(
             "Previous plan failed validation. Fix these issues and regenerate "
             "a corrected AnalysisPlan. Do NOT invent columns. "
+            "Do not repeat the previous invalid plan unchanged. "
             "Hints list candidates only — do not treat them as mandatory answers:\n"
             + "\n".join(f"- {err}" for err in previous_errors)
         )
@@ -287,18 +215,39 @@ def _role_semantic_hint_text(
     lines: list[str] = []
     for col in roles.get("metric_denominator") or ():
         if col in present:
-            lines.append(f"- `{col}` may represent a budget/planned amount (denominator candidate).")
+            lines.append(
+                f"- `{col}` role_hint: denominator_candidate / planned_or_budget_like"
+            )
     for col in roles.get("metric_numerator") or ():
         if col in present:
-            lines.append(f"- `{col}` may represent an executed/spent amount (numerator candidate).")
+            lines.append(
+                f"- `{col}` role_hint: numerator_candidate / actual_or_executed_like"
+            )
     for col in roles.get("group_columns") or ():
         if col in present:
-            lines.append(f"- `{col}` may be a category/group column.")
+            lines.append(f"- `{col}` role_hint: group_candidate")
+    # name-based siblings
+    for col in df.columns:
+        name = str(col)
+        if name.startswith("_"):
+            continue
+        for tokens, hint in _NAME_ROLE_PATTERNS:
+            norm = normalize_text(name)
+            if any(normalize_text(tok) in norm for tok in tokens):
+                lines.append(f"- `{name}` role_hint: {hint}")
+                break
     if not lines:
         return ""
+    # dedupe preserve order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for line in lines:
+        if line not in seen:
+            seen.add(line)
+            unique.append(line)
     return (
-        "Optional semantic hints (do NOT hardcode; use only if they fit the request "
-        "and actual columns):\n" + "\n".join(lines[:12])
+        "Optional semantic role_hints (do NOT hardcode; use only if they fit the request "
+        "and actual columns):\n" + "\n".join(unique[:16])
     )
 
 

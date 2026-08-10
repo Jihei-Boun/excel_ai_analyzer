@@ -366,8 +366,12 @@ def _metric_column(metric: Any) -> str | None:
 
 def _metric_fn(metric: Any) -> str:
     if isinstance(metric, dict):
-        return str(metric.get("fn") or metric.get("agg") or "sum").lower()
-    return "sum"
+        raw = metric.get("fn") if "fn" in metric else metric.get("agg")
+        if raw is None or str(raw).strip() == "":
+            return ""
+        return str(raw).lower().strip()
+    return ""
+
 
 
 def _validate_raw_high_level(
@@ -703,6 +707,16 @@ def _validate_aggregate(
     for metric in metrics:
         col = _metric_column(metric)
         fn_raw = _metric_fn(metric)
+        if not fn_raw:
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "missing_aggregation_fn",
+                    f"aggregate metric `{col or '?'}` missing required fn "
+                    f"(sum|mean|median|min|max|count). Do not default to sum.",
+                )
+            )
+            continue
         fn_aliases = {"avg": "mean", "average": "mean", "med": "median", "n": "count"}
         fn = fn_aliases.get(fn_raw, fn_raw)
         if fn not in AGGREGATE_FNS:

@@ -21,6 +21,10 @@ from core.analysis.analysis_result_validate import (
     validation_info_messages,
     validation_warning_messages,
 )
+from core.analysis.analysis_plan_contract import (
+    normalize_plan_signature,
+    planner_failure_reason,
+)
 from core.llm_client import chat_json, chat_text
 from core.pai.pandasai_config import prepare_dataframe_for_ai
 from core.common.plan_retry import RetryAttempt, run_plan_retries
@@ -86,12 +90,22 @@ def try_analysis_pipeline(
     )
     retry_log: list[dict[str, Any]] = []
     semantic_soft_retried = False
+    seen_signatures: list[str] = []
+    duplicate_plan_count = 0
 
     def _attempt(
         attempt_index: int,
         previous_errors: list[str],
     ) -> RetryAttempt[AnalysisPipelineResult]:
-        nonlocal semantic_soft_retried
+        nonlocal semantic_soft_retried, duplicate_plan_count
+        # 동일 plan 반복 방지 힌트
+        errors_for_planner = list(previous_errors or [])
+        if attempt_index > 0 and seen_signatures:
+            errors_for_planner = [
+                *errors_for_planner,
+                "Do not repeat the previous invalid plan unchanged. "
+                "Change operation shape and/or required fields.",
+            ]
         try:
             plan = build_analysis_plan(
                 prompt,
@@ -100,20 +114,49 @@ def try_analysis_pipeline(
                 model=model,
                 classified_df=classified,
                 profile_name=profile_name,
-                previous_errors=previous_errors or None,
+                previous_errors=errors_for_planner or None,
                 chat_json_fn=json_fn,
             )
         except Exception as exc:  # noqa: BLE001 — LLM/sanitize 실패 시 폴백
+            reason = planner_failure_reason(exc)
             retry_log.append(
                 {
                     "attempt": attempt_index,
                     "failure_stage": "plan_build",
+                    "planner_failure_reason": reason,
                     "validation_errors": [f"plan_build: {exc}"],
                     "validation_warnings": [],
                     "previous_plan": None,
                 }
             )
             return RetryAttempt(ok=False, errors=[f"plan_build: {exc}"])
+
+        plan_dict = plan.to_dict()
+        signature = normalize_plan_signature(plan_dict)
+        if signature and signature in seen_signatures:
+            duplicate_plan_count += 1
+            retry_log.append(
+                {
+                    "attempt": attempt_index,
+                    "failure_stage": "duplicate_plan",
+                    "planner_failure_reason": "duplicate_plan",
+                    "validation_errors": [
+                        "duplicate_plan: regenerated the same invalid plan signature"
+                    ],
+                    "validation_warnings": [],
+                    "previous_plan": plan_dict,
+                    "plan_signature": signature,
+                }
+            )
+            return RetryAttempt(
+                ok=False,
+                errors=[
+                    *previous_errors,
+                    "Duplicate plan detected. Do not repeat the previous invalid plan unchanged.",
+                ],
+            )
+        if signature:
+            seen_signatures.append(signature)
 
         # --- Plan-time validation (실행 전) ---
         plan_report = validate_analysis_plan(
@@ -124,7 +167,7 @@ def try_analysis_pipeline(
         if not plan_report.ok:
             feedback = format_plan_validation_feedback(
                 plan_report,
-                previous_plan=plan.to_dict(),
+                previous_plan=plan_dict,
                 df=prepared,
                 profile_name=profile_name,
                 attempt=attempt_index,
@@ -140,7 +183,8 @@ def try_analysis_pipeline(
                     "validation_warnings": [
                         f"{i.code}: {i.message}" for i in plan_report.warnings
                     ],
-                    "previous_plan": plan.to_dict(),
+                    "previous_plan": plan_dict,
+                    "plan_signature": signature,
                 }
             )
             return RetryAttempt(ok=False, errors=feedback)
@@ -154,7 +198,7 @@ def try_analysis_pipeline(
                     "failure_stage": "execute",
                     "validation_errors": [f"execute: {exc}"],
                     "validation_warnings": [],
-                    "previous_plan": plan.to_dict(),
+                    "previous_plan": plan_dict,
                 }
             )
             return RetryAttempt(ok=False, errors=[f"execute: {exc}"])
@@ -171,7 +215,7 @@ def try_analysis_pipeline(
         if not report.ok:
             feedback = format_result_validation_feedback(
                 report,
-                previous_plan=plan.to_dict(),
+                previous_plan=plan_dict,
                 attempt=attempt_index,
             )
             retry_log.append(
@@ -184,13 +228,13 @@ def try_analysis_pipeline(
                     "validation_warnings": [
                         f"{i.code}: {i.message}" for i in report.warnings
                     ],
-                    "previous_plan": plan.to_dict(),
+                    "previous_plan": plan_dict,
                 }
             )
             return RetryAttempt(ok=False, errors=feedback)
 
         # Semantic mismatch: rewrite 없이 Planner soft retry 1회
-        # (재시도 여유 있을 때만 — 소진 시 warning을 붙인 채 결과 수용)
+        # sibling ambiguity / role mismatch가 명확할 때만
         semantic_warnings = [
             i
             for i in report.warnings
@@ -200,20 +244,22 @@ def try_analysis_pipeline(
             semantic_warnings
             and not semantic_soft_retried
             and attempt_index < max_retries
+            and _should_semantic_retry(semantic_warnings, prompt)
         ):
             semantic_soft_retried = True
             feedback = format_result_validation_feedback(
                 report,
-                previous_plan=plan.to_dict(),
+                previous_plan=plan_dict,
                 attempt=attempt_index,
             )
             soft_msgs = [
                 f"WARNING {i.code}: {i.message}" for i in semantic_warnings
             ]
             soft_msgs.append(
-                "Semantic role mismatch detected. Do NOT invent columns. "
-                "Prefer profile role candidates when they better match the request, "
-                "then regenerate a corrected AnalysisPlan."
+                "Semantic role mismatch / ambiguous sibling columns detected. "
+                "Do NOT invent columns. Re-select the metric that best matches the "
+                "user request using role_hints and criteria_note. "
+                "Do not repeat the previous plan unchanged."
             )
             retry_log.append(
                 {
@@ -221,7 +267,7 @@ def try_analysis_pipeline(
                     "failure_stage": "semantic_soft_retry",
                     "validation_errors": [],
                     "validation_warnings": soft_msgs,
-                    "previous_plan": plan.to_dict(),
+                    "previous_plan": plan_dict,
                 }
             )
             return RetryAttempt(ok=False, errors=feedback + soft_msgs)
@@ -251,6 +297,13 @@ def try_analysis_pipeline(
                     "interpretation_error": str(exc),
                 }
 
+        obs = _planner_observability(
+            plan,
+            retry_log=retry_log,
+            warn_msgs=warn_msgs,
+            duplicate_plan_count=duplicate_plan_count,
+            final_path="analysis_plan",
+        )
         return RetryAttempt(
             ok=True,
             value=AnalysisPipelineResult(
@@ -266,6 +319,7 @@ def try_analysis_pipeline(
                     "validation_warnings": warn_msgs,
                     "validation_infos": info_msgs,
                     "retry_log": list(retry_log),
+                    **obs,
                     **exec_meta,
                 },
             ),
@@ -275,13 +329,90 @@ def try_analysis_pipeline(
     if outcome.value is not None:
         # 실패 이력도 성공 결과에 남김
         outcome.value.meta.setdefault("retry_log", retry_log)
+        outcome.value.meta.setdefault("retry_count", len(retry_log))
         return outcome.value
     if exhaust_meta is not None:
         exhaust_meta.update(_classify_pipeline_exhaust(retry_log))
         exhaust_meta["retry_log"] = list(retry_log)
-    # 소진 시에도 테스트/디버그가 retry_log를 볼 수 있게 None만 반환
-    # (Analyzer는 None → legacy fallback)
+        exhaust_meta["duplicate_plan_count"] = duplicate_plan_count
+        exhaust_meta.update(
+            _planner_observability(
+                None,
+                retry_log=retry_log,
+                warn_msgs=[],
+                duplicate_plan_count=duplicate_plan_count,
+                final_path="exhausted",
+            )
+        )
     return None
+
+
+def _should_semantic_retry(warnings: list[Any], prompt: str) -> bool:
+    """명확한 sibling ambiguity가 있을 때만 soft retry."""
+    del prompt
+    if not warnings:
+        return False
+    for item in warnings:
+        msg = str(getattr(item, "message", item) or "")
+        if "alternatives" in msg.lower() or "similarly named" in msg.lower():
+            return True
+        if "role" in msg.lower() and "candidate" in msg.lower():
+            return True
+    return False
+
+
+def _planner_observability(
+    plan: AnalysisPlan | None,
+    *,
+    retry_log: list[dict[str, Any]],
+    warn_msgs: list[str],
+    duplicate_plan_count: int,
+    final_path: str,
+) -> dict[str, Any]:
+    selected_operations: list[str] = []
+    selected_columns: list[str] = []
+    if plan is not None:
+        selected_operations = [s.op for s in plan.steps]
+        raw = plan.raw or {}
+        for key in ("numerator", "denominator", "group_column", "value_column"):
+            val = raw.get(key)
+            if isinstance(val, str) and val.strip():
+                selected_columns.append(val)
+        for step in plan.steps:
+            payload = step.payload or {}
+            for key in ("column", "left_column", "right_column", "numerator", "denominator"):
+                val = payload.get(key)
+                if isinstance(val, str) and val.strip():
+                    selected_columns.append(val)
+            for metric in payload.get("metrics") or []:
+                if isinstance(metric, dict) and metric.get("column"):
+                    selected_columns.append(str(metric["column"]))
+                elif isinstance(metric, str):
+                    selected_columns.append(metric)
+            for col in payload.get("group_by") or []:
+                selected_columns.append(str(col))
+    # unique preserve
+    uniq_cols: list[str] = []
+    seen: set[str] = set()
+    for c in selected_columns:
+        if c not in seen:
+            seen.add(c)
+            uniq_cols.append(c)
+    failure_reasons = [
+        str(r.get("planner_failure_reason") or r.get("failure_stage") or "")
+        for r in retry_log
+        if r.get("failure_stage")
+    ]
+    return {
+        "selected_operations": selected_operations,
+        "selected_columns": uniq_cols,
+        "retry_count": len(retry_log),
+        "semantic_warnings": [w for w in warn_msgs if "semantic" in w.lower()],
+        "planner_failure_reason": failure_reasons[-1] if failure_reasons else None,
+        "planner_failure_reasons": failure_reasons,
+        "duplicate_plan_count": duplicate_plan_count,
+        "final_path": final_path,
+    }
 
 
 def _classify_pipeline_exhaust(retry_log: list[dict[str, Any]]) -> dict[str, Any]:
@@ -289,10 +420,25 @@ def _classify_pipeline_exhaust(retry_log: list[dict[str, Any]]) -> dict[str, Any
     if not retry_log:
         return {"fallback_reason": "planner_generation_failed"}
     stages = [str(r.get("failure_stage") or "") for r in retry_log]
+    reasons = [
+        str(r.get("planner_failure_reason") or "")
+        for r in retry_log
+        if r.get("planner_failure_reason")
+    ]
     if any(s == "plan_build" for s in stages) and all(
-        s in {"plan_build", ""} for s in stages
+        s in {"plan_build", "duplicate_plan", ""} for s in stages
     ):
-        return {"fallback_reason": "planner_generation_failed"}
+        return {
+            "fallback_reason": "planner_generation_failed",
+            "planner_failure_reason": reasons[-1] if reasons else "empty_plan",
+        }
+    if any(s == "duplicate_plan" for s in stages) and not any(
+        s in {"execute", "result_validation", "plan_validation"} for s in stages
+    ):
+        return {
+            "fallback_reason": "planner_generation_failed",
+            "planner_failure_reason": "duplicate_plan",
+        }
     if any(s == "execute" for s in stages):
         return {"fallback_reason": "execution_error"}
     if any(s == "result_validation" for s in stages):
@@ -304,6 +450,11 @@ def _classify_pipeline_exhaust(retry_log: list[dict[str, Any]]) -> dict[str, Any
         )
         if "unsupported_aggregation" in joined or "unsupported" in joined.lower():
             return {"fallback_reason": "unsupported_operation"}
+        if "missing_aggregation_fn" in joined:
+            return {
+                "fallback_reason": "plan_validation_exhausted",
+                "planner_failure_reason": "missing_required_field",
+            }
         return {"fallback_reason": "plan_validation_exhausted"}
     if any(s == "semantic_soft_retry" for s in stages):
         return {"fallback_reason": "plan_validation_exhausted"}
