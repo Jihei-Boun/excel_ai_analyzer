@@ -164,9 +164,13 @@ def build_analysis_plan(
         f"User request:\n{prompt}",
         f"Available columns:\n{json.dumps(columns, ensure_ascii=False)}",
         (
-            "Column inventory (samples are limited; role_hints are optional semantic hints "
-            "only — never invent columns):\n"
-            f"{json.dumps(column_inventory, ensure_ascii=False, indent=2)}"
+            "Column inventory (samples are limited; role_hints/grain_hint are optional "
+            "semantic hints only — never invent columns):\n"
+            f"{json.dumps(column_inventory, ensure_ascii=False, indent=2)}\n"
+            "Grain notes: grain_hint=repeated_entity_candidate (low unique_ratio) usually "
+            "means entity-level ranking needs aggregate before sort. "
+            "grain_hint=row_id_like (unique_ratio≈1) often means row-level sort→limit is enough. "
+            "After aggregate, sort/select the source metric column name — not X_합계/X_sum."
         ),
         f"Row levels:\n{json.dumps(row_context, ensure_ascii=False, indent=2)}",
         f"Row type summary:\n{json.dumps(row_summary, ensure_ascii=False, indent=2)}",
@@ -254,9 +258,34 @@ def _role_semantic_hint_text(
         if line not in seen:
             seen.add(line)
             unique.append(line)
+    # Generic relation hint when both quantity-like and threshold-like columns exist
+    qty_cols = [
+        str(c)
+        for c in df.columns
+        if any(
+            normalize_text(tok) in normalize_text(str(c))
+            for tok in ("재고수량", "수량", "qty", "stock", "quantity")
+        )
+        and not str(c).startswith("_")
+    ]
+    thr_cols = [
+        str(c)
+        for c in df.columns
+        if any(
+            normalize_text(tok) in normalize_text(str(c))
+            for tok in ("안전", "safety", "min", "최소", "reorder", "threshold")
+        )
+        and not str(c).startswith("_")
+    ]
+    if qty_cols and thr_cols:
+        unique.append(
+            f"- When comparing quantity vs threshold (e.g. risk/below-min), prefer "
+            f"filter_rows left/right columns such as `{qty_cols[0]}` vs `{thr_cols[0]}` "
+            f"(not filter_vs_mean)."
+        )
     return (
         "Optional semantic role_hints (do NOT hardcode; use only if they fit the request "
-        "and actual columns):\n" + "\n".join(unique[:16])
+        "and actual columns):\n" + "\n".join(unique[:18])
     )
 
 

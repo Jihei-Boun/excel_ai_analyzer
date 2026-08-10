@@ -22,6 +22,7 @@ from core.analysis.analysis_result_validate import (
     validation_warning_messages,
 )
 from core.analysis.analysis_plan_contract import (
+    choose_retry_mode,
     composition_category_from_issues,
     normalize_plan_signature,
     plan_composition_category,
@@ -96,12 +97,18 @@ def try_analysis_pipeline(
     seen_composition_categories: list[str] = []
     duplicate_plan_count = 0
     repeated_failure_category: str | None = None
+    repair_retry_success = 0
+    regenerate_retry_success = 0
+    last_retry_mode: str | None = None
+    semantic_ambiguity = False
 
     def _attempt(
         attempt_index: int,
         previous_errors: list[str],
     ) -> RetryAttempt[AnalysisPipelineResult]:
         nonlocal semantic_soft_retried, duplicate_plan_count, repeated_failure_category
+        nonlocal repair_retry_success, regenerate_retry_success, last_retry_mode
+        nonlocal semantic_ambiguity
         # 동일 plan 반복 방지 힌트
         errors_for_planner = list(previous_errors or [])
         if attempt_index > 0 and seen_signatures:
@@ -115,8 +122,8 @@ def try_analysis_pipeline(
                 *errors_for_planner,
                 f"Repeated failure category: {repeated_failure_category}. "
                 "Switch to a different composition "
-                "(e.g. global ranking = sort→limit; rate ranking = ratio→sort→limit; "
-                "group-wise = top_per_group).",
+                "(e.g. entity ranking = aggregate→sort→limit; "
+                "rate ranking = ratio→sort→limit; group-wise = top_per_group).",
             ]
         try:
             plan = build_analysis_plan(
@@ -183,6 +190,10 @@ def try_analysis_pipeline(
             user_prompt=prompt,
         )
         if not plan_report.ok:
+            codes = [i.code for i in plan_report.errors]
+            fail_cat = composition_category_from_issues(codes) or comp_cat
+            mode = choose_retry_mode(codes)
+            last_retry_mode = mode
             feedback = format_plan_validation_feedback(
                 plan_report,
                 previous_plan=plan_dict,
@@ -190,9 +201,9 @@ def try_analysis_pipeline(
                 profile_name=profile_name,
                 attempt=attempt_index,
                 failure_stage="plan_validation",
+                retry_mode=mode,
+                failure_category=fail_cat,
             )
-            codes = [i.code for i in plan_report.errors]
-            fail_cat = composition_category_from_issues(codes) or comp_cat
             if fail_cat in seen_composition_categories:
                 repeated_failure_category = fail_cat
             seen_composition_categories.append(fail_cat)
@@ -201,6 +212,7 @@ def try_analysis_pipeline(
                     "attempt": attempt_index,
                     "failure_stage": "plan_validation",
                     "composition_category": fail_cat,
+                    "retry_mode": mode,
                     "repeated_failure_category": repeated_failure_category,
                     "validation_errors": [
                         f"{i.code}: {i.message}" for i in plan_report.errors
@@ -299,8 +311,18 @@ def try_analysis_pipeline(
                 }
             )
             return RetryAttempt(ok=False, errors=feedback + soft_msgs)
+        if semantic_warnings and not _should_semantic_retry(semantic_warnings, prompt):
+            # Prompt does not disambiguate siblings — keep plan, record ambiguity.
+            semantic_ambiguity = True
+            warn_extra = [
+                f"WARNING semantic_ambiguity: {i.message}" for i in semantic_warnings
+            ]
+            # fall through with warnings only
+            report_warnings_extra = warn_extra
+        else:
+            report_warnings_extra = []
 
-        warn_msgs = validation_warning_messages(report)
+        warn_msgs = validation_warning_messages(report) + report_warnings_extra
         info_msgs = validation_info_messages(report)
         reply = _build_reply(result_df, plan, exec_meta)
         if plan.interpret:
@@ -332,7 +354,22 @@ def try_analysis_pipeline(
             duplicate_plan_count=duplicate_plan_count,
             final_path="analysis_plan",
             repeated_failure_category=repeated_failure_category,
+            repair_retry_success=repair_retry_success,
+            regenerate_retry_success=regenerate_retry_success,
+            last_retry_mode=last_retry_mode,
+            semantic_ambiguity=semantic_ambiguity,
         )
+        # Count recovery if a prior attempt failed and this one succeeded
+        if attempt_index > 0 and last_retry_mode == "repair":
+            repair_retry_success += 1
+            obs["repair_retry_success"] = repair_retry_success
+        elif attempt_index > 0 and last_retry_mode == "regenerate":
+            regenerate_retry_success += 1
+            obs["regenerate_retry_success"] = regenerate_retry_success
+        elif attempt_index > 0:
+            # mode unknown (e.g. execute/result) — count as regenerate bucket
+            regenerate_retry_success += 1
+            obs["regenerate_retry_success"] = regenerate_retry_success
         return RetryAttempt(
             ok=True,
             value=AnalysisPipelineResult(
@@ -372,22 +409,50 @@ def try_analysis_pipeline(
                 duplicate_plan_count=duplicate_plan_count,
                 final_path="exhausted",
                 repeated_failure_category=repeated_failure_category,
+                repair_retry_success=repair_retry_success,
+                regenerate_retry_success=regenerate_retry_success,
+                last_retry_mode=last_retry_mode,
+                semantic_ambiguity=semantic_ambiguity,
             )
         )
     return None
 
 
 def _should_semantic_retry(warnings: list[Any], prompt: str) -> bool:
-    """명확한 sibling ambiguity가 있을 때만 soft retry."""
-    del prompt
+    """명확한 sibling/role mismatch일 때만 soft retry.
+
+    질문이 period/target 단서 없이 모호하면 첫 plan을 유지(semantic_ambiguity).
+    numerator/denominator role mismatch는 단서 없이도 soft retry 허용.
+    """
     if not warnings:
         return False
+    text = str(prompt or "").lower()
+    has_cue = any(
+        tok in text
+        for tok in (
+            "당년",
+            "당해",
+            "누적",
+            "목표",
+            "계획",
+            "전년",
+            "current",
+            "ytd",
+            "target",
+            "prior",
+            "actual",
+            "효율",
+            "집행률",
+        )
+    )
     for item in warnings:
-        msg = str(getattr(item, "message", item) or "")
-        if "alternatives" in msg.lower() or "similarly named" in msg.lower():
+        msg = str(getattr(item, "message", item) or "").lower()
+        if "role" in msg and "candidate" in msg:
             return True
-        if "role" in msg.lower() and "candidate" in msg.lower():
+        if "numerator" in msg or "denominator" in msg:
             return True
+        if "alternatives" in msg or "similarly named" in msg:
+            return bool(has_cue)
     return False
 
 
@@ -399,6 +464,10 @@ def _planner_observability(
     duplicate_plan_count: int,
     final_path: str,
     repeated_failure_category: str | None = None,
+    repair_retry_success: int = 0,
+    regenerate_retry_success: int = 0,
+    last_retry_mode: str | None = None,
+    semantic_ambiguity: bool = False,
 ) -> dict[str, Any]:
     selected_operations: list[str] = []
     selected_columns: list[str] = []
@@ -443,6 +512,7 @@ def _planner_observability(
         for r in retry_log
         if r.get("composition_category")
     ]
+    modes = [str(r.get("retry_mode") or "") for r in retry_log if r.get("retry_mode")]
     return {
         "selected_operations": selected_operations,
         "selected_columns": uniq_cols,
@@ -454,6 +524,11 @@ def _planner_observability(
         "repeated_failure_category": repeated_failure_category,
         "duplicate_plan_count": duplicate_plan_count,
         "final_path": final_path,
+        "repair_retry_success": repair_retry_success,
+        "regenerate_retry_success": regenerate_retry_success,
+        "last_retry_mode": last_retry_mode or (modes[-1] if modes else None),
+        "retry_modes": modes,
+        "semantic_ambiguity": semantic_ambiguity,
     }
 
 

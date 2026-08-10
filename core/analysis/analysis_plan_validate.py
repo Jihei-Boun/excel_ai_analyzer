@@ -694,16 +694,45 @@ def format_plan_validation_feedback(
     profile_name: str | None = None,
     attempt: int | None = None,
     failure_stage: str = "plan_validation",
+    retry_mode: str | None = None,
+    failure_category: str | None = None,
 ) -> list[str]:
-    """Planner 재시도용 feedback 문자열. 답을 강제하지 않고 후보만 제시."""
+    """Planner 재시도용 feedback 문자열. 답을 강제하지 않고 invariant만 제시."""
+    from core.analysis.analysis_plan_contract import (
+        composition_category_from_issues,
+        choose_retry_mode,
+        retry_invariant_message,
+    )
+
+    codes = [i.code for i in report.errors]
+    fail_cat = failure_category or composition_category_from_issues(codes) or "unsupported_composition"
+    mode = retry_mode or choose_retry_mode(codes)
+
     lines: list[str] = []
     if attempt is not None:
         lines.append(f"Attempt: {attempt}")
     lines.append(f"Failure stage: {failure_stage}")
+    lines.append(f"Failure category: {fail_cat}")
+    lines.append(f"retry_mode: {mode}")
     if failure_stage == "plan_validation":
         lines.append("The plan cannot be executed because:")
     else:
         lines.append("The plan executed, but the produced result is invalid because:")
+
+    invariant = retry_invariant_message(codes, fail_cat)
+    if invariant:
+        lines.append(f"Invariant: {invariant}")
+
+    if mode == "repair":
+        lines.append(
+            "Repair the previous plan: keep the same operation sequence and group_by/filters "
+            "when possible; only fix the invalid fields below. Do not invent columns."
+        )
+    else:
+        lines.append(
+            "Regenerate with a different composition that satisfies the invariant. "
+            "Do not repeat the previous invalid plan unchanged."
+        )
 
     if previous_plan:
         import json
@@ -712,55 +741,54 @@ def format_plan_validation_feedback(
             compact = json.dumps(previous_plan, ensure_ascii=False, default=str)
             if len(compact) > 1200:
                 compact = compact[:1200] + "…"
-            lines.append(f"Previous plan: {compact}")
+            lines.append(f"Previous invalid plan: {compact}")
         except Exception:  # noqa: BLE001
-            lines.append("Previous plan: (unserializable)")
+            lines.append("Previous invalid plan: (unserializable)")
 
     lines.append("Validation errors:")
-    for i, issue in enumerate(report.issues, start=1):
-        if issue.level != "error" and issue.level != "warning":
-            continue
-        prefix = "ERROR" if issue.level == "error" else "WARNING"
-        lines.append(f"{i}. [{prefix}/{issue.code}] {issue.message}")
+    for i, issue in enumerate(report.errors, start=1):
+        lines.append(f"{i}. [{issue.code}] {issue.message}")
+    for issue in report.warnings:
+        lines.append(f"- [WARNING/{issue.code}] {issue.message}")
 
-    # Composition-specific guidance (hints only — do not force a full answer plan)
-    codes = {i.code for i in report.errors}
-    if codes & {
+    # Short composition hints (not a full answer plan)
+    code_set = set(codes)
+    if code_set & {
         "misused_top_per_group",
-        "missing_group_column",
-        "global_ranking_missing_limit",
-        "global_ranking_misclassified",
         "entity_ranking_missing_aggregate",
+        "global_ranking_misclassified",
+        "global_ranking_missing_limit",
     }:
         lines.append(
-            "Composition hint: row ranking = sort → limit; "
-            "entity ranking = aggregate → sort → limit; "
-            "group-wise = top_per_group(group, value, n)."
+            "Hint: entity ranking needs aggregate before sort→limit; "
+            "row ranking uses sort→limit; after aggregate, sort the source metric name "
+            "(매출), never invent 매출_합계 / amount_sum."
         )
-    if codes & {
+    if code_set & {
+        "missing_sort_column",
+        "missing_select_column",
+        "missing_metric_before_sort",
+        "compare_before_metric",
+    }:
+        lines.append(
+            "Hint: aggregate keeps the metric column name unchanged. "
+            "Sort/select/compare must reference that same name, not X_합계 / X_sum / X_mean."
+        )
+    if code_set & {
         "missing_ratio_composition",
         "missing_ratio_before_sort",
-        "missing_ratio_name",
-        "missing_numerator",
-        "missing_denominator",
         "missing_rate_vs_mean_composition",
     }:
         lines.append(
-            "Composition hint: rate/ratio needs ratio_of_aggregates or derive with an explicit "
-            "`name`; rate vs mean needs filter_vs_mean on that rate name (or rate_vs_mean)."
+            "Hint: rate needs ratio_of_aggregates/derive with explicit name, "
+            "then sort or filter_vs_mean on that name."
         )
-    if codes & {"missing_metric_before_sort", "compare_before_metric"}:
+    if code_set & {"column_vs_column_misclassified", "missing_vs_mean_column"}:
         lines.append(
-            "Composition hint: create the metric (aggregate and/or ratio_of_aggregates) "
-            "before sort or compare_groups. Named group compare keeps compare_groups."
-        )
-    if codes & {"column_vs_column_misclassified"}:
-        lines.append(
-            "Composition hint: row-wise column comparison uses "
-            "filter_rows numeric_filters: {left_column, op, right_column}."
+            "Hint: compare two numeric columns with filter_rows "
+            "{left_column, op, right_column} — not filter_vs_mean or expression column names."
         )
 
-    # 컬럼 후보 힌트 (강제 지시 금지)
     if df is not None and not df.empty:
         candidates = suggest_column_candidates(df, profile_name=profile_name)
         if candidates:

@@ -50,6 +50,29 @@ def _resolve_columns(names: list[str], columns: set[str]) -> list[str]:
     return out
 
 
+def _resolve_output_column_alias(name: object, columns: set[str]) -> str | None:
+    """aggregate 이후 LLM이 만든 ``매출_합계`` / ``amount_sum`` 별칭을 원 컬럼명으로 되돌린다.
+
+    Executor contract: aggregate는 metric column 이름을 바꾸지 않는다.
+    의미 변경이 아니라 출력 naming 정합만 맞춘다.
+    """
+    raw = str(name or "").strip()
+    if not raw:
+        return None
+    direct = _resolve_column(raw, columns)
+    if direct:
+        return direct
+    from core.analysis.analysis_plan_compile import _metric_alias_candidates
+
+    for cand in _metric_alias_candidates(raw):
+        resolved = _resolve_column(cand, columns)
+        if resolved:
+            return resolved
+        if cand in columns:
+            return cand
+    return None
+
+
 def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | None:
     op = str(item.get("op") or item.get("operation") or "").strip()
     if op not in SUPPORTED_ANALYSIS_OPS:
@@ -130,7 +153,7 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
             cols = [cols]
         resolved_cols: list[str] = []
         for c in cols or []:
-            resolved = _resolve_column(c, columns)
+            resolved = _resolve_output_column_alias(str(c), columns)
             resolved_cols.append(resolved or str(c))
         renames = item.get("renames") or item.get("column_renames") or {}
         if not isinstance(renames, dict):
@@ -193,7 +216,8 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
         by = item.get("by") or item.get("columns") or []
         if isinstance(by, str):
             by = [by]
-        by = [str(x) for x in by]
+        by = [_resolve_output_column_alias(str(x), columns) for x in by]
+        by = [x for x in by if x]
         if not by:
             return None
         ascending = item.get("ascending", False)
@@ -317,13 +341,13 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
         for m in metrics:
             if isinstance(m, dict):
                 col = str(m.get("column") or m.get("name") or "").strip()
-                resolved = _resolve_column(col, columns) if col else None
+                resolved = _resolve_output_column_alias(col, columns) if col else None
                 if resolved:
                     resolved_metrics.append(resolved)
                 elif col:
                     resolved_metrics.append(col)
                 continue
-            resolved = _resolve_column(m, columns)
+            resolved = _resolve_output_column_alias(str(m), columns)
             if resolved:
                 resolved_metrics.append(resolved)
             elif isinstance(m, str) and m.strip():

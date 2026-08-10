@@ -184,6 +184,16 @@ def run_case_deterministic(
     details["prior_pipeline_reason"] = meta.get("prior_pipeline_reason")
     details["validation_warnings"] = meta.get("validation_warnings") or []
     details["retry_log"] = meta.get("retry_log") or []
+    # Phase 11 recovery observability (from analysis_pipeline meta)
+    for _k in (
+        "repair_retry_success",
+        "regenerate_retry_success",
+        "semantic_ambiguity",
+        "last_retry_mode",
+        "retry_modes",
+    ):
+        if _k in meta:
+            details[_k] = meta[_k]
 
     interp_ok = None
     if case.expected.interpreter_grounding:
@@ -334,6 +344,15 @@ def run_case_live(
     details["prior_pipeline_reason"] = meta.get("prior_pipeline_reason")
     details["validation_warnings"] = meta.get("validation_warnings") or []
     details["retry_log"] = meta.get("retry_log") or []
+    for _k in (
+        "repair_retry_success",
+        "regenerate_retry_success",
+        "semantic_ambiguity",
+        "last_retry_mode",
+        "retry_modes",
+    ):
+        if _k in meta:
+            details[_k] = meta[_k]
     if isinstance(result_df, pd.DataFrame):
         details["result_preview"] = result_df.head(10).to_dict(orient="records")
 

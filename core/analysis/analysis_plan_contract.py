@@ -38,6 +38,8 @@ fn MUST be one of: sum | mean | median | min | max | count (avg→mean). NEVER o
 metrics MUST use shape [{ "column": "<existing>", "fn": "sum" }].
 Do NOT invent aliases like sales_sum / 매출액_합계 as column names.
 Do NOT use { "매출액_합계": "sum" } — that shape is invalid.
+IMPORTANT: after aggregate, the metric column KEEP its source name (e.g. 매출).
+Later sort/select/compare MUST use that same name — NEVER invent 매출_합계 / amount_sum / score_mean.
 
 ### ratio_of_aggregates
 required: name (explicit output id), numerator, denominator (existing columns after aggregate)
@@ -255,7 +257,86 @@ COMPOSITION_CATEGORIES = (
     "missing_required_field",
     "duplicate_plan",
     "empty_plan",
+    "missing_rate_vs_mean",
+    "column_vs_column_failure",
+    "aggregate_output_alias",
 )
+
+# Field-level fixes: keep composition, fix names/fields
+_REPAIR_ISSUE_CODES = frozenset(
+    {
+        "missing_sort_column",
+        "missing_select_column",
+        "missing_metric_before_sort",
+        "compare_before_metric",
+        "missing_ratio_name",
+        "missing_aggregation_fn",
+        "missing_vs_mean_column",
+        "missing_metric_before_filter_vs_mean",
+    }
+)
+
+# Composition family wrong: full regenerate
+_REGENERATE_ISSUE_CODES = frozenset(
+    {
+        "entity_ranking_missing_aggregate",
+        "misused_top_per_group",
+        "global_ranking_misclassified",
+        "global_ranking_missing_limit",
+        "column_vs_column_misclassified",
+        "missing_ratio_composition",
+        "missing_rate_vs_mean_composition",
+        "compare_groups_need_two_groups",
+        "empty_plan",
+    }
+)
+
+
+def choose_retry_mode(codes: list[str]) -> str:
+    """failure codes → repair | regenerate."""
+    code_set = {str(c) for c in codes}
+    if code_set & _REGENERATE_ISSUE_CODES:
+        return "regenerate"
+    if code_set & _REPAIR_ISSUE_CODES:
+        return "repair"
+    return "regenerate"
+
+
+def retry_invariant_message(codes: list[str], category: str | None = None) -> str:
+    """Planner에게 전달할 composition invariant (정답 plan 아님)."""
+    joined = " ".join(codes)
+    if any(c in joined for c in ("missing_sort_column", "missing_select_column", "missing_metric_before")):
+        return (
+            "After aggregate(metrics=[{column:X, fn:...}]), later steps must reference column X. "
+            "Do not invent X_합계 / X_sum / X_mean output names."
+        )
+    if "compare_before_metric" in joined or "compare_groups_need_two" in joined:
+        return (
+            "compare_groups needs an existing metric column name (same as aggregate metric) "
+            "and at least two explicit group values."
+        )
+    if "entity_ranking" in joined:
+        return (
+            "The ranking target appears in multiple rows. "
+            "Aggregate a metric for each entity before sorting and limiting."
+        )
+    if "column_vs_column" in joined or "missing_vs_mean" in joined:
+        return (
+            "Row-wise comparison of two numeric columns uses "
+            "filter_rows numeric_filters[{left_column, op, right_column}]."
+        )
+    if "rate_vs_mean" in joined or "missing_ratio" in joined:
+        return (
+            "Rate vs mean requires a derived rate column first, then filter_vs_mean on that name."
+        )
+    if "misused_top_per_group" in joined or "global_ranking" in joined:
+        return (
+            "Global ranking uses metric → sort → limit; "
+            "top_per_group is only for within-group ranking."
+        )
+    if category:
+        return f"Satisfy composition category constraints for {category}."
+    return "Fix the invalid fields while matching the user request."
 
 
 def composition_category_from_issues(codes: list[str]) -> str | None:
@@ -265,15 +346,17 @@ def composition_category_from_issues(codes: list[str]) -> str | None:
         return "misused_top_per_group"
     if "missing_rate_vs_mean" in joined:
         return "missing_rate_vs_mean"
-    if "column_vs_column" in joined:
+    if "column_vs_column" in joined or "missing_vs_mean" in joined:
         return "column_vs_column_failure"
     if "entity_ranking" in joined:
         return "global_ranking_misclassified"
+    if "missing_sort_column" in joined or "missing_select_column" in joined:
+        return "aggregate_output_alias"
     if "missing_ratio" in joined or "ratio_required" in joined:
         return "missing_ratio"
-    if "missing_sort_column" in joined or "missing_metric_before" in joined:
+    if "missing_metric_before" in joined:
         return "missing_metric_before_sort"
-    if "compare_metric" in joined or "compare_before_metric" in joined:
+    if "compare_metric" in joined or "compare_before_metric" in joined or "compare_groups_need" in joined:
         return "wrong_compare_shape"
     if "global_ranking" in joined:
         return "global_ranking_misclassified"

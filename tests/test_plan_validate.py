@@ -362,7 +362,7 @@ def test_plan_feedback_includes_candidates_not_orders() -> None:
         profile_name="generic",
     )
     text = "\n".join(feedback)
-    assert "Previous plan:" in text
+    assert "Previous invalid plan:" in text or "Previous plan:" in text
     assert "Validation errors:" in text
     assert "Use " not in text  # 강제 지시 금지
     assert "후보" in text or "candidates" in text.lower() or "Available" in text
