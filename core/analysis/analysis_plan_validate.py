@@ -696,17 +696,23 @@ def format_plan_validation_feedback(
     failure_stage: str = "plan_validation",
     retry_mode: str | None = None,
     failure_category: str | None = None,
+    operation_family: str | None = None,
+    repeated_operation_family: bool = False,
 ) -> list[str]:
     """Planner 재시도용 feedback 문자열. 답을 강제하지 않고 invariant만 제시."""
     from core.analysis.analysis_plan_contract import (
         composition_category_from_issues,
         choose_retry_mode,
+        operation_family_label,
+        operation_family_signature,
+        repeated_operation_family_feedback,
         retry_invariant_message,
     )
 
     codes = [i.code for i in report.errors]
     fail_cat = failure_category or composition_category_from_issues(codes) or "unsupported_composition"
     mode = retry_mode or choose_retry_mode(codes)
+    family = operation_family or operation_family_signature(previous_plan)
 
     lines: list[str] = []
     if attempt is not None:
@@ -714,6 +720,8 @@ def format_plan_validation_feedback(
     lines.append(f"Failure stage: {failure_stage}")
     lines.append(f"Failure category: {fail_cat}")
     lines.append(f"retry_mode: {mode}")
+    if family:
+        lines.append(f"operation_family: {operation_family_label(family)}")
     if failure_stage == "plan_validation":
         lines.append("The plan cannot be executed because:")
     else:
@@ -723,7 +731,11 @@ def format_plan_validation_feedback(
     if invariant:
         lines.append(f"Invariant: {invariant}")
 
-    if mode == "repair":
+    if repeated_operation_family and mode == "regenerate":
+        lines.extend(
+            repeated_operation_family_feedback(family, retry_mode=mode)
+        )
+    elif mode == "repair":
         lines.append(
             "Repair the previous plan: keep the same operation sequence and group_by/filters "
             "when possible; only fix the invalid fields below. Do not invent columns."
@@ -751,7 +763,7 @@ def format_plan_validation_feedback(
     for issue in report.warnings:
         lines.append(f"- [WARNING/{issue.code}] {issue.message}")
 
-    # Short composition hints (not a full answer plan)
+    # Short composition hints (not a full answer plan) — failure-related only
     code_set = set(codes)
     if code_set & {
         "misused_top_per_group",
@@ -784,9 +796,11 @@ def format_plan_validation_feedback(
             "then sort or filter_vs_mean on that name."
         )
     if code_set & {"column_vs_column_misclassified", "missing_vs_mean_column"}:
+        # Do NOT prescribe exact left_column/right_column fields here (retry diversity).
         lines.append(
-            "Hint: compare two numeric columns with filter_rows "
-            "{left_column, op, right_column} — not filter_vs_mean or expression column names."
+            "Hint: the rejected approach compared one column to a statistical summary. "
+            "If the request relates two numeric columns in the schema, choose an approach "
+            "that uses that column relationship instead."
         )
 
     if df is not None and not df.empty:

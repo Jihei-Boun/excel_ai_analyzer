@@ -25,8 +25,11 @@ from core.analysis.analysis_plan_contract import (
     choose_retry_mode,
     composition_category_from_issues,
     normalize_plan_signature,
+    operation_family_label,
+    operation_family_signature,
     plan_composition_category,
     planner_failure_reason,
+    repeated_operation_family_feedback,
 )
 from core.llm_client import chat_json, chat_text
 from core.pai.pandasai_config import prepare_dataframe_for_ai
@@ -95,8 +98,11 @@ def try_analysis_pipeline(
     semantic_soft_retried = False
     seen_signatures: list[str] = []
     seen_composition_categories: list[str] = []
+    rejected_operation_families: list[str] = []
     duplicate_plan_count = 0
+    same_operation_family_repeat = 0
     repeated_failure_category: str | None = None
+    last_rejected_family: str | None = None
     repair_retry_success = 0
     regenerate_retry_success = 0
     last_retry_mode: str | None = None
@@ -108,22 +114,30 @@ def try_analysis_pipeline(
     ) -> RetryAttempt[AnalysisPipelineResult]:
         nonlocal semantic_soft_retried, duplicate_plan_count, repeated_failure_category
         nonlocal repair_retry_success, regenerate_retry_success, last_retry_mode
-        nonlocal semantic_ambiguity
-        # 동일 plan 반복 방지 힌트
+        nonlocal semantic_ambiguity, same_operation_family_repeat, last_rejected_family
+        # 동일 plan / family 반복 방지 힌트 (정답 op 강제 금지)
         errors_for_planner = list(previous_errors or [])
         if attempt_index > 0 and seen_signatures:
             errors_for_planner = [
                 *errors_for_planner,
                 "Do not repeat the previous invalid plan unchanged. "
-                "Change operation shape and/or required fields.",
+                "Change the analytical approach and/or required fields.",
+            ]
+        if last_rejected_family and same_operation_family_repeat > 0:
+            # 동일 family가 이미 한 번 이상 반복된 뒤에만 diversity 강화
+            errors_for_planner = [
+                *errors_for_planner,
+                *repeated_operation_family_feedback(
+                    last_rejected_family,
+                    retry_mode="regenerate",
+                ),
             ]
         if repeated_failure_category:
             errors_for_planner = [
                 *errors_for_planner,
                 f"Repeated failure category: {repeated_failure_category}. "
-                "Switch to a different composition "
-                "(e.g. entity ranking = aggregate→sort→limit; "
-                "rate ranking = ratio→sort→limit; group-wise = top_per_group).",
+                "Switch to a materially different composition that still matches "
+                "the user request. Do not reuse the previously rejected approach.",
             ]
         try:
             plan = build_analysis_plan(
@@ -152,20 +166,36 @@ def try_analysis_pipeline(
 
         plan_dict = plan.to_dict()
         signature = normalize_plan_signature(plan_dict)
+        family = operation_family_signature(plan_dict)
         comp_cat = plan_composition_category(plan_dict)
+        family_repeated = bool(family and family in rejected_operation_families)
+
         if signature and signature in seen_signatures:
             duplicate_plan_count += 1
+            same_operation_family_repeat += 1
+            if family:
+                last_rejected_family = family
+                if family not in rejected_operation_families:
+                    rejected_operation_families.append(family)
             if comp_cat in seen_composition_categories:
                 repeated_failure_category = comp_cat
+            diversity = repeated_operation_family_feedback(
+                family or last_rejected_family,
+                retry_mode="regenerate",
+            )
             retry_log.append(
                 {
                     "attempt": attempt_index,
                     "failure_stage": "duplicate_plan",
                     "planner_failure_reason": "duplicate_plan",
                     "composition_category": comp_cat,
+                    "operation_family": family,
+                    "operation_family_label": operation_family_label(family),
+                    "same_operation_family_repeat": True,
                     "repeated_failure_category": repeated_failure_category,
                     "validation_errors": [
-                        "duplicate_plan: regenerated the same invalid plan signature"
+                        "duplicate_plan: regenerated the same invalid plan signature",
+                        f"same_operation_family_repeat: {operation_family_label(family)}",
                     ],
                     "validation_warnings": [],
                     "previous_plan": plan_dict,
@@ -176,9 +206,14 @@ def try_analysis_pipeline(
                 ok=False,
                 errors=[
                     *previous_errors,
+                    *diversity,
                     "Duplicate plan detected. Do not repeat the previous invalid plan unchanged.",
                 ],
             )
+
+        if family_repeated:
+            same_operation_family_repeat += 1
+
         if signature:
             seen_signatures.append(signature)
 
@@ -194,6 +229,10 @@ def try_analysis_pipeline(
             fail_cat = composition_category_from_issues(codes) or comp_cat
             mode = choose_retry_mode(codes)
             last_retry_mode = mode
+            if family:
+                last_rejected_family = family
+                if family not in rejected_operation_families:
+                    rejected_operation_families.append(family)
             feedback = format_plan_validation_feedback(
                 plan_report,
                 previous_plan=plan_dict,
@@ -203,6 +242,8 @@ def try_analysis_pipeline(
                 failure_stage="plan_validation",
                 retry_mode=mode,
                 failure_category=fail_cat,
+                operation_family=family,
+                repeated_operation_family=family_repeated,
             )
             if fail_cat in seen_composition_categories:
                 repeated_failure_category = fail_cat
@@ -212,6 +253,9 @@ def try_analysis_pipeline(
                     "attempt": attempt_index,
                     "failure_stage": "plan_validation",
                     "composition_category": fail_cat,
+                    "operation_family": family,
+                    "operation_family_label": operation_family_label(family),
+                    "same_operation_family_repeat": family_repeated,
                     "retry_mode": mode,
                     "repeated_failure_category": repeated_failure_category,
                     "validation_errors": [
@@ -358,6 +402,8 @@ def try_analysis_pipeline(
             regenerate_retry_success=regenerate_retry_success,
             last_retry_mode=last_retry_mode,
             semantic_ambiguity=semantic_ambiguity,
+            same_operation_family_repeat=same_operation_family_repeat,
+            rejected_operation_families=list(rejected_operation_families),
         )
         # Count recovery if a prior attempt failed and this one succeeded
         if attempt_index > 0 and last_retry_mode == "repair":
@@ -413,6 +459,8 @@ def try_analysis_pipeline(
                 regenerate_retry_success=regenerate_retry_success,
                 last_retry_mode=last_retry_mode,
                 semantic_ambiguity=semantic_ambiguity,
+                same_operation_family_repeat=same_operation_family_repeat,
+                rejected_operation_families=list(rejected_operation_families),
             )
         )
     return None
@@ -468,6 +516,8 @@ def _planner_observability(
     regenerate_retry_success: int = 0,
     last_retry_mode: str | None = None,
     semantic_ambiguity: bool = False,
+    same_operation_family_repeat: int = 0,
+    rejected_operation_families: list[str] | None = None,
 ) -> dict[str, Any]:
     selected_operations: list[str] = []
     selected_columns: list[str] = []
@@ -513,6 +563,11 @@ def _planner_observability(
         if r.get("composition_category")
     ]
     modes = [str(r.get("retry_mode") or "") for r in retry_log if r.get("retry_mode")]
+    families = [
+        str(r.get("operation_family") or "")
+        for r in retry_log
+        if r.get("operation_family")
+    ]
     return {
         "selected_operations": selected_operations,
         "selected_columns": uniq_cols,
@@ -523,6 +578,9 @@ def _planner_observability(
         "composition_categories": comp_cats,
         "repeated_failure_category": repeated_failure_category,
         "duplicate_plan_count": duplicate_plan_count,
+        "same_operation_family_repeat": same_operation_family_repeat,
+        "rejected_operation_families": list(rejected_operation_families or []),
+        "operation_families_seen": families,
         "final_path": final_path,
         "repair_retry_success": repair_retry_success,
         "regenerate_retry_success": regenerate_retry_success,

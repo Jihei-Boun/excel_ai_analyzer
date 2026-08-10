@@ -126,6 +126,40 @@ def summarize_results(
             "semantic_warning_rate": _rate(
                 sum(1 for i in items if i.semantic_warning), n
             ),
+            # Auxiliary only — does not change overall_ok / direct definitions.
+            "safe_ambiguity_count": sum(
+                1
+                for i in items
+                if (
+                    i.semantic_warning
+                    or bool((i.details or {}).get("semantic_ambiguity"))
+                    or any(
+                        "semantic_ambiguity" in str(x).lower()
+                        for x in ((i.details or {}).get("validation_warnings") or [])
+                    )
+                )
+                and i.analysis_plan_direct
+                and not i.ok
+                and i.failure_category == "wrong_operation"
+            ),
+            "safe_ambiguity_rate": _rate(
+                sum(
+                    1
+                    for i in items
+                    if (
+                        i.semantic_warning
+                        or bool((i.details or {}).get("semantic_ambiguity"))
+                        or any(
+                            "semantic_ambiguity" in str(x).lower()
+                            for x in ((i.details or {}).get("validation_warnings") or [])
+                        )
+                    )
+                    and i.analysis_plan_direct
+                    and not i.ok
+                    and i.failure_category == "wrong_operation"
+                ),
+                n,
+            ),
             "failure_categories": dict(
                 Counter(i.failure_category for i in items if not i.ok or i.failure_category not in {"none", "safe_failure_ok"})
             ),

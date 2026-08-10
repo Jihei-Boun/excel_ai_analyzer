@@ -322,8 +322,9 @@ def retry_invariant_message(codes: list[str], category: str | None = None) -> st
         )
     if "column_vs_column" in joined or "missing_vs_mean" in joined:
         return (
-            "Row-wise comparison of two numeric columns uses "
-            "filter_rows numeric_filters[{left_column, op, right_column}]."
+            "Row-wise comparison of two numeric columns must use a "
+            "column-to-column relationship from the schema, not a single-column "
+            "comparison against that column's own statistical mean."
         )
     if "rate_vs_mean" in joined or "missing_ratio" in joined:
         return (
@@ -455,3 +456,111 @@ def normalize_plan_signature(plan_dict: dict | None) -> str:
         "n": plan_dict.get("n") or plan_dict.get("limit"),
     }
     return json.dumps(_canon(slim), ensure_ascii=False, sort_keys=True)
+
+
+# Human-readable labels for rejected analytical families (retry diversity).
+OPERATION_FAMILY_LABELS: dict[str, str] = {
+    "mean_based_filter": "mean-based filtering",
+    "column_comparison_filter": "column-to-column comparison filtering",
+    "entity_or_global_ranking": "aggregate-then-rank",
+    "row_ranking": "row-level ranking",
+    "within_group_ranking": "within-group ranking",
+    "group_comparison": "group comparison",
+    "ratio_derivation": "ratio / rate derivation",
+    "rate_vs_mean": "rate-versus-mean filtering",
+    "scalar_filter": "scalar threshold filtering",
+    "other": "other analytical approach",
+}
+
+
+def _iter_plan_step_dicts(plan_dict: dict | None) -> list[dict]:
+    if not isinstance(plan_dict, dict):
+        return []
+    out: list[dict] = []
+    op_hl = plan_dict.get("operation")
+    if isinstance(op_hl, str) and op_hl.strip():
+        out.append({"op": op_hl.strip(), **{k: v for k, v in plan_dict.items() if k != "steps"}})
+    steps = plan_dict.get("steps") or []
+    if isinstance(steps, list):
+        for s in steps:
+            if isinstance(s, dict):
+                out.append(s)
+    return out
+
+
+def _has_column_pair_numeric_filter(step: dict) -> bool:
+    for nf in step.get("numeric_filters") or []:
+        if not isinstance(nf, dict):
+            continue
+        left = nf.get("left_column")
+        right = nf.get("right_column")
+        if left and right:
+            return True
+    return bool(step.get("left_column") and step.get("right_column"))
+
+
+def operation_family_signature(plan_dict: dict | None) -> str:
+    """JSON 서명과 별도로, 같은 reasoning pattern(operation family)을 식별.
+
+    예: filter_vs_mean → mean_based_filter
+        filter_rows(left/right) → column_comparison_filter
+    """
+    steps = _iter_plan_step_dicts(plan_dict)
+    if not steps:
+        return "other"
+    ops = [str(s.get("op") or s.get("operation") or "") for s in steps]
+    has = set(ops)
+
+    if any(_has_column_pair_numeric_filter(s) for s in steps):
+        return "column_comparison_filter"
+    if "filter_vs_mean" in has or str((plan_dict or {}).get("operation") or "") == "filter_vs_mean":
+        # rate then vs-mean is a different family from bare mean filter
+        if "ratio_of_aggregates" in has or "aggregate" in has:
+            return "rate_vs_mean"
+        return "mean_based_filter"
+    if "top_per_group" in has or "top_n_per_group" in has:
+        return "within_group_ranking"
+    if "compare_groups" in has or str((plan_dict or {}).get("operation") or "") in {
+        "group_comparison",
+        "compare_groups",
+    }:
+        return "group_comparison"
+    if "ratio_of_aggregates" in has or "derive_column" in has:
+        if "sort" in has or "limit" in has or "filter_vs_mean" in has:
+            return "ratio_derivation"
+        return "ratio_derivation"
+    if "aggregate" in has and ("sort" in has or "limit" in has):
+        return "entity_or_global_ranking"
+    if "sort" in has and "limit" in has and "aggregate" not in has:
+        return "row_ranking"
+    if "filter_rows" in has:
+        # scalar / column_filters without left/right pair
+        return "scalar_filter"
+    return "other"
+
+
+def operation_family_label(family: str | None) -> str:
+    if not family:
+        return OPERATION_FAMILY_LABELS["other"]
+    return OPERATION_FAMILY_LABELS.get(family, family)
+
+
+def repeated_operation_family_feedback(
+    family: str | None,
+    *,
+    retry_mode: str | None = None,
+) -> list[str]:
+    """동일 invalid family 반복 시 Planner에게 다른 접근을 강제 (정답 op 미지정)."""
+    label = operation_family_label(family)
+    lines = [
+        "The new plan repeats the same invalid analytical approach as the previous attempt.",
+        f"Previous rejected family: {label}",
+        "Reconsider the relationship between the available columns and use a "
+        "materially different analytical approach.",
+    ]
+    if retry_mode == "regenerate":
+        lines.append(
+            "Avoid repeating the previously rejected analytical family unchanged. "
+            "Explore another valid composition supported by the schema."
+        )
+    return lines

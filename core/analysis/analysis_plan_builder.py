@@ -20,12 +20,15 @@ _MAX_SAMPLE_VALUES = 6
 
 # 컬럼명에서 추정하는 범용 role hint (profile roles와 병합)
 _NAME_ROLE_PATTERNS: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("당년도", "당해", "current", "당기"), "current_period_actual"),
+    (("당년도", "당해", "current", "당기", "실적", "actual"), "actual"),
     (("누적", "ytd", "cumulative", "누계"), "cumulative_actual"),
-    (("목표", "target", "계획", "plan"), "target"),
+    (("목표", "target", "계획", "plan", "planned"), "target"),
     (("전년", "prior", "작년"), "prior_period"),
-    (("안전", "safety", "min", "최소", "reorder"), "threshold_or_min"),
-    (("재고수량", "stock", "qty", "수량"), "quantity"),
+    (("안전", "safety", "threshold", "허용", "limit"), "threshold"),
+    (("최소", "min", "minimum", "하한", "reorder"), "minimum"),
+    (("최대", "max", "maximum", "상한"), "maximum"),
+    (("기준", "baseline", "base"), "baseline"),
+    (("현재", "current_qty", "current_value", "재고수량", "stock", "qty", "수량"), "current"),
     (("평균", "mean", "avg"), "average_metric"),
 )
 
@@ -258,30 +261,20 @@ def _role_semantic_hint_text(
         if line not in seen:
             seen.add(line)
             unique.append(line)
-    # Generic relation hint when both quantity-like and threshold-like columns exist
-    qty_cols = [
-        str(c)
-        for c in df.columns
-        if any(
-            normalize_text(tok) in normalize_text(str(c))
-            for tok in ("재고수량", "수량", "qty", "stock", "quantity")
-        )
-        and not str(c).startswith("_")
-    ]
-    thr_cols = [
-        str(c)
-        for c in df.columns
-        if any(
-            normalize_text(tok) in normalize_text(str(c))
-            for tok in ("안전", "safety", "min", "최소", "reorder", "threshold")
-        )
-        and not str(c).startswith("_")
-    ]
-    if qty_cols and thr_cols:
+    # Generic relation candidates only — no operation prescription (avoids mention bias).
+    role_tokens = " ".join(unique).lower()
+    has_actualish = any(
+        tok in role_tokens
+        for tok in ("actual", "current", "numerator", "executed")
+    )
+    has_thresholdish = any(
+        tok in role_tokens
+        for tok in ("target", "threshold", "minimum", "maximum", "baseline", "planned", "denominator")
+    )
+    if has_actualish and has_thresholdish:
         unique.append(
-            f"- When comparing quantity vs threshold (e.g. risk/below-min), prefer "
-            f"filter_rows left/right columns such as `{qty_cols[0]}` vs `{thr_cols[0]}` "
-            f"(not filter_vs_mean)."
+            "- possible numeric relationships (hints only): "
+            "actual/current vs target/threshold/minimum/maximum/baseline/planned"
         )
     return (
         "Optional semantic role_hints (do NOT hardcode; use only if they fit the request "

@@ -189,6 +189,13 @@ def _run_analysis_impl(
 
     prior_reason = str(pipeline_exhaust.get("fallback_reason") or "")
 
+    # Expected-impossible requests: end as safe_failure without PandasAI (Phase 12G).
+    # Conservative: only when planner exhausted on clear missing-column / invent signals.
+    if prior_reason in {"plan_validation_exhausted", "planner_generation_failed"}:
+        safe = _maybe_safe_plan_failure(pipeline_exhaust, prompt)
+        if safe is not None:
+            return safe
+
     # ------------------------------------------------------------------
     # Lightweight deterministic retrieval (exact value / list)
     # ------------------------------------------------------------------
@@ -326,6 +333,47 @@ def _run_analysis_impl(
             summary = "차트 결과를 생성했습니다."
 
     return result, summary, meta
+
+
+def _maybe_safe_plan_failure(
+    pipeline_exhaust: dict,
+    prompt: str,
+) -> tuple[pd.DataFrame, str, dict] | None:
+    """명확히 불가능한 요청은 PandasAI로 넘기지 않고 safe_failure로 종료.
+
+    UX를 크게 바꾸지 않도록 missing/invented column 신호에만 보수적으로 적용.
+    """
+    retry_log = list(pipeline_exhaust.get("retry_log") or [])
+    if not retry_log:
+        return None
+    joined = " ".join(
+        " ".join(str(x) for x in (r.get("validation_errors") or [])) for r in retry_log
+    ).lower()
+    missing_signals = (
+        "missing_column",
+        "unknown_column",
+        "invent",
+        "존재하지 않는",
+        "not in",
+        "invalid_column",
+    )
+    if not any(sig in joined for sig in missing_signals):
+        return None
+    # Avoid treating recoverable composition errors as safe failure
+    if "column_vs_column" in joined or "entity_ranking" in joined or "missing_ratio" in joined:
+        return None
+    return (
+        pd.DataFrame(),
+        "요청하신 분석을 현재 데이터 스키마로는 수행할 수 없습니다. "
+        "컬럼명·조건을 확인한 뒤 다시 질문해 주세요.",
+        {
+            "aggregation": {"operation": "safe_failure"},
+            "fallback_reason": "safe_plan_failure",
+            "prior_pipeline_reason": pipeline_exhaust.get("fallback_reason"),
+            "retry_log": retry_log,
+            "source": "analysis_plan_safe_failure",
+        },
+    )
 
 
 def run_multi_analysis(
