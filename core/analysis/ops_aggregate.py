@@ -125,8 +125,9 @@ def aggregate_groups(
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """그룹별 지표 표를 만든다.
 
-    prefer_subtotals=True이면 소계 행을 우선하고, 없으면 detail 합산.
-    소계와 detail 합이 모두 있으면 차이를 검증해 warnings에 남긴다.
+    ``fn`` 지원: sum, mean/avg, median, min, max, count.
+    prefer_subtotals=True는 **sum** 지표에만 소계 행을 우선한다.
+    mean/count/min/max/median은 detail 행에서 직접 계산한다 (소계는 합계 전용).
     """
     if not group_by:
         raise ValueError("aggregate에 group_by가 필요합니다.")
@@ -145,7 +146,7 @@ def aggregate_groups(
         else None
     )
 
-    detail_sums, subtotal_vals, group_order = _collect_group_metrics(
+    detail_vals, subtotal_vals, group_order = _collect_group_metrics(
         work,
         group_col=group_col,
         metric_specs=metric_specs,
@@ -157,12 +158,10 @@ def aggregate_groups(
 
     ordered = list(group_order)
     if include_norm:
-        # include에만 있고 데이터에 없는 그룹은 건너뛴다
         ordered = [g for g in ordered if normalize_text(g) in include_norm]
         for wanted in include_groups or []:
             key = normalize_text(wanted)
             if key and not any(normalize_text(g) == key for g in ordered):
-                # detail/subtotal에 없던 라벨 — 원본 표기 유지 시도
                 match = next(
                     (g for g in group_order if normalize_text(g) == key),
                     None,
@@ -170,20 +169,31 @@ def aggregate_groups(
                 if match and match not in ordered:
                     ordered.append(match)
 
+    sum_only = all(fn in {"sum"} for _, fn in metric_specs)
+    use_subtotals = bool(prefer_subtotals) and sum_only
+    if prefer_subtotals and not sum_only:
+        warnings.append(
+            "prefer_subtotals ignored for non-sum aggregations "
+            f"({', '.join(sorted({fn for _, fn in metric_specs}))}); "
+            "computed from detail rows."
+        )
+
     for group in ordered:
-        detail = detail_sums.get(group)
+        detail = detail_vals.get(group)
         sub = subtotal_vals.get(group)
         row: dict[str, object] = {group_col: group}
-        source = "detail_sum"
+        source = "detail"
 
-        if prefer_subtotals and sub is not None:
+        if use_subtotals and sub is not None:
             for name, _fn in metric_specs:
                 row[name] = sub.get(name)
             source = "subtotal"
             if detail is not None:
-                for name, _fn in metric_specs:
+                for name, fn in metric_specs:
+                    if fn != "sum":
+                        continue
                     s_val = sub.get(name)
-                    d_val = detail.get(name)
+                    d_val = _reduce_values(detail.get(name) or [], "sum")
                     if s_val is None or d_val is None:
                         continue
                     if abs(float(s_val) - float(d_val)) > max(1.0, abs(float(d_val)) * 0.01):
@@ -192,10 +202,16 @@ def aggregate_groups(
                             f"상세합={d_val:,.0f} 차이"
                         )
         elif detail is not None:
-            for name, _fn in metric_specs:
-                row[name] = detail.get(name)
-            source = "detail_sum"
-        elif sub is not None:
+            for name, fn in metric_specs:
+                row[name] = _reduce_values(detail.get(name) or [], fn)
+            fns = {fn for _, fn in metric_specs}
+            if fns == {"sum"}:
+                source = "detail_sum"
+            elif len(fns) == 1:
+                source = f"detail_{next(iter(fns))}"
+            else:
+                source = "detail"
+        elif sub is not None and sum_only:
             for name, _fn in metric_specs:
                 row[name] = sub.get(name)
             source = "subtotal"
@@ -210,6 +226,7 @@ def aggregate_groups(
         "aggregate_sources": sources,
         "aggregate_warnings": warnings,
         "prefer_subtotals": prefer_subtotals,
+        "aggregations": {name: fn for name, fn in metric_specs},
     }
     return result, meta
 
@@ -231,25 +248,65 @@ def ratio_of_columns(
     return work
 
 
+def _canonical_agg_fn(fn: str) -> str:
+    raw = str(fn or "sum").lower().strip()
+    aliases = {
+        "avg": "mean",
+        "average": "mean",
+        "med": "median",
+        "n": "count",
+        "cnt": "count",
+        "total": "sum",
+    }
+    return aliases.get(raw, raw)
+
+
 def _normalize_metrics(
     metrics: list[dict[str, str]] | list[str],
     columns: pd.Index,
 ) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
+    unsupported: list[str] = []
     for item in metrics or []:
         if isinstance(item, str):
             col, fn = item, "sum"
         elif isinstance(item, dict):
             col = str(item.get("column") or item.get("name") or "")
-            fn = str(item.get("fn") or item.get("agg") or "sum").lower()
+            fn = _canonical_agg_fn(str(item.get("fn") or item.get("agg") or "sum"))
         else:
             continue
         if col not in columns:
             continue
         if fn not in AGGREGATE_FNS:
-            fn = "sum"
+            unsupported.append(fn)
+            continue
         out.append((col, fn))
+    if unsupported:
+        raise ValueError(
+            "unsupported aggregation fn: "
+            + ", ".join(sorted(set(unsupported)))
+            + f"; allowed={sorted(AGGREGATE_FNS)}"
+        )
     return out
+
+
+def _reduce_values(values: list[float], fn: str) -> float | None:
+    if fn == "count":
+        return float(len(values))
+    if not values:
+        return None
+    series = pd.Series(values, dtype="float64")
+    if fn == "sum":
+        return float(series.sum())
+    if fn in {"mean", "avg"}:
+        return float(series.mean())
+    if fn == "median":
+        return float(series.median())
+    if fn == "min":
+        return float(series.min())
+    if fn == "max":
+        return float(series.max())
+    raise ValueError(f"unsupported aggregation fn: {fn}")
 
 
 def _collect_group_metrics(
@@ -257,9 +314,14 @@ def _collect_group_metrics(
     *,
     group_col: str,
     metric_specs: list[tuple[str, str]],
-) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, float]], list[str]]:
-    detail_sums: dict[str, dict[str, float]] = {}
-    subtotal_vals: dict[str, dict[str, float]] = {}
+) -> tuple[
+    dict[str, dict[str, list[float]]],
+    dict[str, dict[str, float | None]],
+    list[str],
+]:
+    """detail은 값 리스트, subtotal은 표시된 합계값(dict)."""
+    detail_vals: dict[str, dict[str, list[float]]] = {}
+    subtotal_vals: dict[str, dict[str, float | None]] = {}
     group_order: list[str] = []
     seen: set[str] = set()
     last_group: str | None = None
@@ -274,28 +336,23 @@ def _collect_group_metrics(
             if raw_label not in seen:
                 seen.add(raw_label)
                 group_order.append(raw_label)
-            bucket = detail_sums.setdefault(raw_label, {m: 0.0 for m, _ in metric_specs})
+            bucket = detail_vals.setdefault(
+                raw_label, {m: [] for m, _ in metric_specs}
+            )
             for name, fn in metric_specs:
+                if fn == "count":
+                    # count: non-null cells (numeric or any present)
+                    cell = row.get(name)
+                    if cell_text(cell) or pd.notna(pd.to_numeric(cell, errors="coerce")):
+                        bucket[name].append(1.0)
+                    continue
                 val = pd.to_numeric(row.get(name), errors="coerce")
                 if pd.isna(val):
                     continue
-                if fn == "sum":
-                    bucket[name] = float(bucket.get(name, 0.0)) + float(val)
-                elif fn == "count":
-                    bucket[name] = float(bucket.get(name, 0.0)) + 1.0
-                elif fn == "mean":
-                    # 임시: sum 누적 후 나중에 count로 나누지 않음 — sum만 기본 지원 강화
-                    bucket[name] = float(bucket.get(name, 0.0)) + float(val)
-                elif fn == "min":
-                    prev = bucket.get(name)
-                    bucket[name] = float(val) if prev is None else min(float(prev), float(val))
-                elif fn == "max":
-                    prev = bucket.get(name)
-                    bucket[name] = float(val) if prev is None else max(float(prev), float(val))
+                bucket[name].append(float(val))
             continue
 
         if rtype in {"subtotal", "blank"} or is_summary_label:
-            # blank+금액(소계) 또는 명시적 subtotal
             has_amount = any(
                 pd.notna(pd.to_numeric(row.get(name), errors="coerce"))
                 for name, _ in metric_specs
@@ -304,17 +361,15 @@ def _collect_group_metrics(
                 continue
             if rtype not in {"subtotal", "blank"} and not is_summary_label:
                 continue
-            # 소계는 직전 그룹에 귀속
             target = last_group
             if target is None:
                 continue
-            vals = {}
+            vals: dict[str, float | None] = {}
             for name, _fn in metric_specs:
                 val = pd.to_numeric(row.get(name), errors="coerce")
                 vals[name] = None if pd.isna(val) else float(val)
-            # 이미 소계가 있으면 첫 소계 유지
             if target not in subtotal_vals:
                 subtotal_vals[target] = vals
             continue
 
-    return detail_sums, subtotal_vals, group_order
+    return detail_vals, subtotal_vals, group_order

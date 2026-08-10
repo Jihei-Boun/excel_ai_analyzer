@@ -28,8 +28,110 @@ def _compile_high_level(data: dict[str, Any], columns: set[str]) -> dict[str, An
         "budget_change_split",
     }:
         return _compile_split_by_difference(data, columns)
+    if operation in {"aggregate", "groupby", "group_aggregate"}:
+        return _compile_aggregate(data, columns)
     return {}
 
+
+def _compile_aggregate(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
+    """고수준 aggregate → annotate/filter/aggregate 원자 steps."""
+    from core.analysis.analysis_plan_sanitize import _resolve_column, _resolve_columns
+
+    group_by = data.get("group_by") or data.get("group_column") or data.get(
+        "dimension_columns"
+    ) or []
+    if isinstance(group_by, str):
+        group_by = [group_by]
+    group_by = _resolve_columns([str(c) for c in group_by], columns)
+    if not group_by:
+        return {}
+
+    metrics = data.get("metrics") or data.get("aggregations") or []
+    if isinstance(metrics, dict):
+        metrics = [
+            {"column": k, "fn": v} if not isinstance(v, dict) else {"column": k, **v}
+            for k, v in metrics.items()
+        ]
+    if not isinstance(metrics, list):
+        metrics = []
+
+    resolved_metrics: list[dict[str, Any]] = []
+    for metric in metrics:
+        if isinstance(metric, str):
+            col = _resolve_column(metric, columns)
+            if col:
+                resolved_metrics.append({"column": col, "fn": "sum"})
+            continue
+        if not isinstance(metric, dict):
+            continue
+        col = _resolve_column(metric.get("column") or metric.get("name") or "", columns)
+        if not col:
+            continue
+        fn = str(metric.get("fn") or metric.get("agg") or "sum").lower().strip() or "sum"
+        resolved_metrics.append({"column": col, "fn": fn})
+
+    # metrics가 비어 있으면 output_columns 중 group이 아닌 수치 후보 1개를 sum으로 추정하지 않는다.
+    # (환각 방지) — 단, value_column/metric 단일 필드가 있으면 사용.
+    if not resolved_metrics:
+        single = (
+            data.get("value_column")
+            or data.get("metric")
+            or data.get("metric_column")
+            or data.get("column")
+        )
+        col = _resolve_column(single or "", columns)
+        if col and col not in group_by:
+            fn = str(data.get("fn") or data.get("agg") or "sum").lower().strip() or "sum"
+            resolved_metrics.append({"column": col, "fn": fn})
+    if not resolved_metrics:
+        return {}
+
+    prefer = data.get("prefer_subtotals")
+    if prefer is None:
+        prefer = True
+    include_groups = data.get("include_groups") or data.get("groups") or []
+    if isinstance(include_groups, str):
+        include_groups = [include_groups]
+
+    metric_names = [m["column"] for m in resolved_metrics]
+    # output은 group + metric 실제 컬럼을 유지. LLM이 만든 `매출액_합계` 같은 별칭은 무시.
+    out_cols: list[str] = []
+    seen: set[str] = set()
+    for col in [*group_by, *metric_names]:
+        if col not in seen:
+            out_cols.append(col)
+            seen.add(col)
+    for col in data.get("output_columns") or []:
+        name = str(col)
+        if name in columns and name not in seen:
+            out_cols.append(name)
+            seen.add(name)
+
+    steps: list[dict[str, Any]] = [
+        {"op": "annotate_row_types"},
+        {
+            "op": "filter_rows",
+            "include_row_types": ["detail"],
+            "drop_blank_dimensions": True,
+        },
+        {
+            "op": "aggregate",
+            "group_by": group_by,
+            "metrics": resolved_metrics,
+            "prefer_subtotals": bool(prefer),
+            "include_groups": [str(g) for g in include_groups if str(g).strip()],
+        },
+        {"op": "select_columns", "columns": out_cols},
+    ]
+    note = str(data.get("criteria_note") or "").strip()
+    interpret = bool(data.get("interpret", False))
+    return {
+        "steps": steps,
+        "criteria_note": note,
+        "dimension_columns": group_by,
+        "output_columns": out_cols,
+        "interpret": interpret,
+    }
 
 def _compile_top_n_per_group(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
     """그룹마다 값 기준 상위/하위 n행 → 정렬 → 최소 열."""
@@ -363,7 +465,12 @@ def _compile_find_items(data: dict[str, Any], columns: set[str]) -> dict[str, An
         return {}
 
     label_prefs = preferred_columns_present(columns)
-    metric_cols = [str(f["column"]) for f in numeric_filters]
+    metric_cols: list[str] = []
+    for filt in numeric_filters:
+        for key in ("column", "left_column", "right_column"):
+            col = str(filt.get(key) or "")
+            if col and col not in metric_cols:
+                metric_cols.append(col)
 
     numerator = str(data.get("numerator") or "")
     denominator = str(data.get("denominator") or "")
@@ -432,10 +539,15 @@ def _compile_find_items(data: dict[str, Any], columns: set[str]) -> dict[str, An
         else:
             for filt in numeric_filters:
                 if str(filt.get("op")) in {"gt", "gte"}:
-                    sort_by = [str(filt["column"])]
+                    sort_by = [str(filt.get("column") or filt.get("left_column") or "")]
+                    sort_by = [c for c in sort_by if c]
                     break
             if not sort_by:
-                sort_by = [str(numeric_filters[0]["column"])]
+                first = numeric_filters[0]
+                sort_by = [
+                    str(first.get("column") or first.get("left_column") or "")
+                ]
+                sort_by = [c for c in sort_by if c]
 
     ascending = data.get("ascending", False)
     if isinstance(ascending, bool):
@@ -560,8 +672,67 @@ def _compile_correlation(data: dict[str, Any], columns: set[str]) -> dict[str, A
 
 
 def _compile_top_n_difference(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
-    dims = [str(c) for c in (data.get("dimension_columns") or []) if str(c) in columns]
-    values = [str(c) for c in (data.get("value_columns") or []) if str(c) in columns]
+    from core.analysis.analysis_plan_sanitize import _resolve_column, _resolve_columns
+    from core.profile_loader import preferred_columns_present
+
+    dims = _resolve_columns(
+        [str(c) for c in (data.get("dimension_columns") or [])],
+        columns,
+    )
+    values = _resolve_columns(
+        [str(c) for c in (data.get("value_columns") or [])],
+        columns,
+    )
+    if not values:
+        single = _resolve_column(
+            data.get("value_column")
+            or data.get("metric")
+            or data.get("metric_column")
+            or "",
+            columns,
+        )
+        if single:
+            values = [single]
+
+    # 단일 metric top-N: difference가 아니라 sort → limit
+    if len(values) == 1:
+        value_col = values[0]
+        sort_dir = str(data.get("sort") or data.get("order") or "descending").lower()
+        ascending = sort_dir in {"ascending", "asc", "오름차순"}
+        try:
+            limit_n = max(1, min(100, int(data.get("limit") or data.get("n") or 5)))
+        except (TypeError, ValueError):
+            limit_n = 5
+        label_prefs = preferred_columns_present(columns)
+        out_cols: list[str] = []
+        seen: set[str] = set()
+        for col in [*dims, *label_prefs, value_col]:
+            if col in columns and col not in seen:
+                out_cols.append(col)
+                seen.add(col)
+        note = str(
+            data.get("criteria_note")
+            or f"{value_col} 기준 {'하위' if ascending else '상위'} {limit_n}개"
+        )
+        return {
+            "steps": [
+                {"op": "annotate_row_types"},
+                {
+                    "op": "filter_rows",
+                    "include_row_types": ["detail"],
+                    "drop_blank_dimensions": True,
+                    "exclude_uncertain": False,
+                },
+                {"op": "sort", "by": [value_col], "ascending": [ascending]},
+                {"op": "limit", "n": limit_n},
+                {"op": "select_columns", "columns": out_cols},
+            ],
+            "criteria_note": note,
+            "dimension_columns": dims,
+            "output_columns": out_cols,
+            "interpret": bool(data.get("interpret", False)),
+        }
+
     if len(values) < 2:
         return {}
 

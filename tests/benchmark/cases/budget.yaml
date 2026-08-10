@@ -1,0 +1,159 @@
+# Budget domain — baseline (detail + subtotal + footer)
+cases:
+  - id: budget_summary_001
+    domain: budget
+    profile: budget
+    dataset: budget_basic.xlsx
+    question: "파일을 요약해줘"
+    tags: [system, routing]
+    expected:
+      route: system
+
+  - id: budget_group_sum_001
+    domain: budget
+    profile: budget
+    dataset: budget_basic.xlsx
+    question: "비목별 실행예산 합계를 알려줘"
+    tags: [aggregate, subtotal_safe]
+    fixed_plan:
+      steps:
+        - op: annotate_row_types
+        - op: filter_rows
+          include_row_types: [detail]
+        - op: aggregate
+          group_by: [비목분류]
+          metrics:
+            - column: 실행예산_합계
+              fn: sum
+        - op: sort
+          by: [실행예산_합계]
+          ascending: [false]
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [aggregate]
+      expected_columns:
+        group_by: 비목분류
+        metric: 실행예산_합계
+      expected_result:
+        내부인건비: 15000000
+        연구활동비: 4300000
+        연구수당: 3000000
+        간접비: 4000000
+
+  - id: budget_execution_rate_001
+    domain: budget
+    profile: budget
+    dataset: budget_basic.xlsx
+    question: "실행예산 대비 집행률을 계산해줘"
+    tags: [ratio]
+    fixed_plan:
+      operation: group_comparison
+      group_column: 비목분류
+      groups: [내부인건비, 연구활동비, 연구수당, 간접비]
+      numerator: 집행계_합계
+      denominator: 실행예산_합계
+      rate_name: 집행률
+      prefer_subtotals: false
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [ratio_of_aggregates]
+      expected_columns:
+        numerator: 집행계_합계
+        denominator: 실행예산_합계
+      expected_result:
+        min_rows: 1
+
+  - id: budget_top_rate_001
+    domain: budget
+    profile: budget
+    dataset: budget_basic.xlsx
+    question: "집행률 상위 3개 항목을 알려줘"
+    tags: [ranking, rate]
+    fixed_plan:
+      steps:
+        - op: annotate_row_types
+        - op: filter_rows
+          include_row_types: [detail]
+        - op: derive_column
+          name: 집행률
+          expr:
+            ratio: [집행계_합계, 실행예산_합계]
+        - op: sort
+          by: [집행률]
+          ascending: [false]
+        - op: limit
+          n: 3
+        - op: select_columns
+          columns: [비용명_2, 실행예산_합계, 집행계_합계, 집행률]
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [sort, limit]
+      expected_result:
+        row_count: 3
+
+  - id: budget_above_mean_rate_001
+    domain: budget
+    profile: budget
+    dataset: budget_basic.xlsx
+    question: "평균 집행률보다 높은 항목을 찾아줘"
+    tags: [vs_mean]
+    fixed_plan:
+      operation: rate_vs_mean
+      numerator: 집행계_합계
+      denominator: 실행예산_합계
+      relation: above
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [filter_vs_mean]
+      expected_result:
+        min_rows: 1
+
+  - id: budget_compare_groups_001
+    domain: budget
+    profile: budget
+    dataset: budget_basic.xlsx
+    question: "내부인건비와 연구활동비를 비교해줘"
+    tags: [compare]
+    fixed_plan:
+      operation: group_comparison
+      group_column: 비목분류
+      groups: [내부인건비, 연구활동비]
+      numerator: 집행계_합계
+      denominator: 실행예산_합계
+      rate_name: 집행률
+      prefer_subtotals: true
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [compare_groups]
+      expected_result:
+        row_count: 2
+
+  - id: budget_unexecuted_max_001
+    domain: budget
+    profile: budget
+    dataset: budget_basic.xlsx
+    question: "미집행 금액이 가장 큰 항목을 알려줘"
+    tags: [ranking]
+    fixed_plan:
+      steps:
+        - op: annotate_row_types
+        - op: filter_rows
+          include_row_types: [detail]
+        - op: sort
+          by: [미집행금액]
+          ascending: [false]
+        - op: limit
+          n: 1
+        - op: select_columns
+          columns: [비용명_2, 미집행금액]
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [sort, limit]
+      expected_result:
+        연구수당: 3000000

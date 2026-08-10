@@ -54,6 +54,8 @@ def execute_analysis_plan(
                 "correlation",
                 "vs_mean",
                 "top_per_group",
+                "zero_denominator_groups",
+                "denominator_zero",
             }:
                 meta[key] = value
             elif key == "aggregate_warnings" and isinstance(value, list):
@@ -137,15 +139,46 @@ def _run_step(
         return result, agg_meta
 
     if op == "ratio_of_aggregates":
-        return (
-            ratio_of_columns(
-                df,
-                name=str(step.payload.get("name") or "비율"),
-                numerator=str(step.payload.get("numerator") or ""),
-                denominator=str(step.payload.get("denominator") or ""),
-            ),
-            {},
+        name = str(step.payload.get("name") or "비율")
+        numerator = str(step.payload.get("numerator") or "")
+        denominator = str(step.payload.get("denominator") or "")
+        before = df
+        out = ratio_of_columns(
+            df,
+            name=name,
+            numerator=numerator,
+            denominator=denominator,
         )
+        # 분모 0 그룹 메타 (결과 검증·Interpreter용)
+        zero_groups: list[str] = []
+        warnings: list[str] = []
+        if denominator in before.columns:
+            den_vals = pd.to_numeric(before[denominator], errors="coerce")
+            zero_mask = den_vals.fillna(0).abs() == 0
+            if bool(zero_mask.any()):
+                # 가능하면 라벨 컬럼에서 그룹 식별
+                label_cols = [
+                    c
+                    for c in before.columns
+                    if c not in {numerator, denominator, name}
+                    and not str(c).startswith("_")
+                    and not pd.api.types.is_numeric_dtype(before[c])
+                ]
+                if label_cols:
+                    for val in before.loc[zero_mask, label_cols[0]].tolist():
+                        text = str(val).strip()
+                        if text and text not in zero_groups:
+                            zero_groups.append(text)
+                else:
+                    zero_groups.append(f"rows:{int(zero_mask.sum())}")
+                warnings.append(
+                    f"denominator `{denominator}` is zero for {int(zero_mask.sum())} row(s)"
+                )
+        return out, {
+            "zero_denominator_groups": zero_groups,
+            "warnings": warnings,
+            "denominator_zero": bool(zero_groups),
+        }
 
     if op == "compare_groups":
         result, cmp_meta = compare_groups(

@@ -1,4 +1,9 @@
-"""조건형 행 필터 (A가 0인데 B가 있는 등)."""
+"""조건형 행 필터 (A가 0인데 B가 있는 등).
+
+Classification (Phase 5): **A — single-file analytical path에서 제거**.
+AnalysisPlan ``find_items`` / ``filter_rows``로 대체.
+모듈은 multi-file·단위 테스트·차트 helper 호환용으로만 잔존.
+"""
 from __future__ import annotations
 
 import re

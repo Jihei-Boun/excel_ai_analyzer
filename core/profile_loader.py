@@ -313,6 +313,8 @@ def profile_display_label(name: str) -> str:
         "generic_en": "General EN (generic_en)",
         "budget": "예산 표 (budget)",
         "sales": "매출 (sales)",
+        "inventory": "재고 (inventory)",
+        "custom": "커스텀 템플릿 (custom)",
     }
     try:
         profile = load_profile(name)

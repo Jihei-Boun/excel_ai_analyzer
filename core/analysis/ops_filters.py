@@ -15,8 +15,8 @@ from core.schema.row_classify import (
 from core.summary.summary_utils import cell_text
 from core.io.text_normalize import normalize_text
 
-AGGREGATE_FNS = frozenset({"sum", "mean", "min", "max", "count"})
-NUMERIC_FILTER_OPS = frozenset({"eq", "ne", "gt", "gte", "lt", "lte"})
+AGGREGATE_FNS = frozenset({"sum", "mean", "median", "min", "max", "count"})
+NUMERIC_FILTER_OPS = frozenset({"eq", "ne", "gt", "gte", "lt", "lte", "==", "!=", ">", ">=", "<", "<="})
 
 
 def ensure_row_types(
@@ -66,36 +66,74 @@ def apply_numeric_filters(
     df: pd.DataFrame,
     numeric_filters: list[dict[str, Any]] | None,
 ) -> pd.DataFrame:
-    """``[{column, op, value}]`` 수치 비교 필터. op: eq/ne/gt/gte/lt/lte."""
+    """수치 비교 필터.
+
+    Scalar: ``[{column, op, value}]``
+    Column-vs-column: ``[{left_column|column, op, right_column|other_column}]``
+
+    op: eq/ne/gt/gte/lt/lte (및 == != > >= < <= 별칭).
+    """
     if not numeric_filters:
         return df
     work = df
+    op_aliases = {
+        "==": "eq",
+        "!=": "ne",
+        ">": "gt",
+        ">=": "gte",
+        "<": "lt",
+        "<=": "lte",
+    }
     for spec in numeric_filters:
         if not isinstance(spec, dict):
             continue
-        column = str(spec.get("column") or "")
         op = str(spec.get("op") or spec.get("operator") or "").lower().strip()
-        if column not in work.columns or op not in NUMERIC_FILTER_OPS:
+        op = op_aliases.get(op, op)
+        if op not in {"eq", "ne", "gt", "gte", "lt", "lte"}:
             continue
-        try:
-            threshold = float(spec.get("value"))
-        except (TypeError, ValueError):
+
+        left_col = str(
+            spec.get("left_column")
+            or spec.get("column")
+            or spec.get("left")
+            or ""
+        )
+        right_col = str(
+            spec.get("right_column")
+            or spec.get("other_column")
+            or spec.get("right")
+            or ""
+        )
+        if not left_col or left_col not in work.columns:
             continue
-        series = pd.to_numeric(work[column], errors="coerce")
-        if op == "eq":
-            mask = series.fillna(threshold + 1) == threshold
-        elif op == "ne":
-            mask = series.fillna(threshold) != threshold
-        elif op == "gt":
-            mask = series.fillna(threshold) > threshold
-        elif op == "gte":
-            mask = series.fillna(threshold - 1) >= threshold
-        elif op == "lt":
-            mask = series.fillna(threshold) < threshold
-        else:  # lte
-            mask = series.fillna(threshold + 1) <= threshold
-        work = work.loc[mask]
+
+        left = pd.to_numeric(work[left_col], errors="coerce")
+        if right_col and right_col in work.columns:
+            right = pd.to_numeric(work[right_col], errors="coerce")
+            mask = _compare_series(left, op, right)
+        else:
+            try:
+                threshold = float(spec.get("value"))
+            except (TypeError, ValueError):
+                continue
+            right = pd.Series(threshold, index=work.index, dtype="float64")
+            mask = _compare_series(left, op, right)
+        work = work.loc[mask.fillna(False)]
     return work
+
+
+def _compare_series(left: pd.Series, op: str, right: pd.Series) -> pd.Series:
+    if op == "eq":
+        return left == right
+    if op == "ne":
+        return left != right
+    if op == "gt":
+        return left > right
+    if op == "gte":
+        return left >= right
+    if op == "lt":
+        return left < right
+    return left <= right
 
 
 def project_readable_columns(

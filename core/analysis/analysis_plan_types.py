@@ -214,7 +214,19 @@ def _analysis_plan_from_dict_inner(
                     known_columns.add(derived)
 
     if not steps:
-        raise ValueError("실행 가능한 분석 step이 없습니다.")
+        op = str(data.get("operation") or compiled.get("operation") or "").strip()
+        hint = ""
+        if op in {"aggregate", "groupby", "group_aggregate"}:
+            hint = (
+                " For operation=aggregate include group_by and "
+                "metrics:[{column, fn}] with fn in sum|mean|median|min|max|count."
+            )
+        elif op in {"find_items", "item_filter", "condition_select"}:
+            hint = (
+                " For operation=find_items provide numeric_filters as "
+                "[{column,op,value}] or [{left_column,op,right_column}]."
+            )
+        raise ValueError("실행 가능한 분석 step이 없습니다." + hint)
 
     dim_cols = [
         str(c)

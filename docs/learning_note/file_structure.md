@@ -33,9 +33,12 @@ Excel AI Analyzer의 도메인 로직이 모인 패키지입니다. UI(Streamlit
 | `analysis_plan_builder.py` | LLM으로 채팅 분석 JSON 계획 생성 |
 | `analysis_plan_compile.py` | 고수준 operation(예: `top_n_difference`) → 원자 steps 컴파일 |
 | `analysis_plan_sanitize.py` | LLM이 낸 step을 허용 op·실제 컬럼으로 sanitize |
-| `analysis_column_prefs.py` | 프로필 `column_prefs` 기반 분석 계획 컬럼 선호·보정 |
+| `analysis_column_prefs.py` | 컬럼명 safety 정규화만 (의미 rewrite 제거, Phase 5) |
+| `legacy_fallback.py` | Legacy fallback 분류 · `legacy_simple_groupby_fallback` |
 | `analysis_executor.py` | 원자 step만 수행하는 결정론적 실행기 (질문 해석 없음) |
-| `analysis_validate.py` | 실행 결과 가드레일 (limit 초과, 이중 집계 등) |
+| `analysis_plan_validate.py` | 실행 전 Plan Validator |
+| `analysis_result_validate.py` | 실행 후 Result Validator |
+| `analysis_validate.py` | plan/result validate facade |
 | `analysis_interpret.py` | 계산 수치만 근거로 자연어 해석 문장 생성 |
 | `analysis_ops.py` | 범용 분석 연산 facade — filters / aggregate / stats 재수출 |
 | `ops_filters.py` | 행/열 필터·프로젝션 (`filter_rows`, numeric filter 등) |

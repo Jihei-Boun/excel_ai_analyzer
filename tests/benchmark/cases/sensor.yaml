@@ -1,0 +1,81 @@
+cases:
+  - id: sensor_device_avg_temp_001
+    domain: sensor
+    profile: generic
+    dataset: sensor_basic.xlsx
+    question: "장치별 평균 온도를 알려줘"
+    tags: [aggregate]
+    fixed_plan:
+      steps:
+        - op: aggregate
+          group_by: [device_id]
+          metrics:
+            - column: temperature
+              fn: mean
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [aggregate]
+      expected_columns:
+        group_by: device_id
+        metric: temperature
+      expected_result:
+        min_rows: 3
+
+  - id: sensor_max_temp_time_001
+    domain: sensor
+    profile: generic
+    dataset: sensor_basic.xlsx
+    question: "온도가 가장 높은 시점을 알려줘"
+    tags: [ranking]
+    fixed_plan:
+      steps:
+        - op: sort
+          by: [temperature]
+          ascending: [false]
+        - op: limit
+          n: 1
+        - op: select_columns
+          columns: [timestamp, device_id, temperature]
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [sort, limit]
+      expected_result:
+        contains: ["45"]
+
+  - id: sensor_corr_001
+    domain: sensor
+    profile: generic
+    dataset: sensor_basic.xlsx
+    question: "전압과 전류의 상관관계를 알려줘"
+    tags: [correlation]
+    fixed_plan:
+      operation: correlation
+      x_column: voltage
+      y_column: current
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [correlation]
+      expected_columns:
+        x: voltage
+        y: current
+
+  - id: sensor_above_mean_temp_001
+    domain: sensor
+    profile: generic
+    dataset: sensor_basic.xlsx
+    question: "평균 온도보다 높은 측정값을 알려줘"
+    tags: [vs_mean]
+    fixed_plan:
+      steps:
+        - op: filter_vs_mean
+          column: temperature
+          relation: above
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [filter_vs_mean]
+      expected_result:
+        min_rows: 1

@@ -418,64 +418,59 @@ def test_filter_rows_column_values() -> None:
     assert set(result["비목분류"]) == {"내부인건비", "연구활동비"}
 
 
-def test_execution_rate_prefs_override_wrong_llm_columns() -> None:
-    from core.analysis.analysis_column_prefs import apply_execution_rate_column_prefs
-    from core.analysis.analysis_plan_builder import build_analysis_plan
+def test_suspicious_denominator_semantic_warning_then_planner_retry() -> None:
+    """LLM이 의미상 의심스러운 분자 선택 → semantic warning → soft retry → 교정 plan."""
+    from core.analysis.analysis_pipeline import try_analysis_pipeline
 
-    cols = [
-        "비목분류",
-        "계획예산",
-        "당년도집행",
-        "실행예산_합계",
-        "집행계_합계",
-    ]
-    wrong = {
-        "operation": "group_comparison",
-        "group_column": "비목분류",
-        "groups": ["내부인건비", "연구활동비"],
-        "numerator": "당년도집행",
-        "denominator": "계획예산",
-        "rate_name": "집행률",
-        "criteria_note": "당년도 집행액과 계획 예산의 비율",
-    }
-    fixed = apply_execution_rate_column_prefs(
-        "내부인건비와 연구활동비의 집행 효율을 비교해서 해석해줘",
-        wrong,
-        cols,
-        profile_name="budget",
+    df = pd.DataFrame(
+        {
+            "비목분류": ["내부인건비", "연구활동비", "내부인건비", "연구활동비"],
+            "계획예산": [1000, 2000, 500, 800],
+            "당년도집행": [100, 50, 80, 40],
+            "실행예산_합계": [1000, 2000, 500, 800],
+            "집행계_합계": [800, 500, 400, 200],
+        }
     )
-    assert fixed["numerator"] == "집행계_합계"
-    assert fixed["denominator"] == "실행예산_합계"
-    assert "합계" in fixed["criteria_note"]
-
-    # 당년 명시 시에는 당년 컬럼 유지
-    current = apply_execution_rate_column_prefs(
-        "당년 기준 집행률을 비교해줘",
-        dict(wrong),
-        cols,
-        profile_name="budget",
-    )
-    assert current["numerator"] == "당년도집행"
-    assert current["denominator"] in {"당년도예산", "계획예산"}
-
-    df = pd.DataFrame({c: [1, 2] for c in cols})
-    df["비목분류"] = ["내부인건비", "연구활동비"]
+    calls: list[dict] = []
 
     def fake_chat_json(prompt: str, **kwargs):
-        return dict(wrong)
+        calls.append({"prompt": prompt})
+        if len(calls) == 1:
+            return {
+                "operation": "group_comparison",
+                "group_column": "비목분류",
+                "groups": ["내부인건비", "연구활동비"],
+                "numerator": "당년도집행",
+                "denominator": "실행예산_합계",
+                "rate_name": "집행률",
+                "prefer_subtotals": True,
+                "interpret": False,
+            }
+        return {
+            "operation": "group_comparison",
+            "group_column": "비목분류",
+            "groups": ["내부인건비", "연구활동비"],
+            "numerator": "집행계_합계",
+            "denominator": "실행예산_합계",
+            "rate_name": "집행률",
+            "prefer_subtotals": True,
+            "interpret": False,
+        }
 
-    plan = build_analysis_plan(
+    result = try_analysis_pipeline(
         "내부인건비와 연구활동비의 집행 효율을 비교해서 해석해줘",
         df,
         base_url="http://localhost:11434",
         model="dummy",
         profile_name="budget",
         chat_json_fn=fake_chat_json,
+        chat_text_fn=lambda *_a, **_k: "",
     )
-    ratio_steps = [s for s in plan.steps if s.op == "ratio_of_aggregates"]
-    assert ratio_steps
-    assert ratio_steps[0].payload["numerator"] == "집행계_합계"
-    assert ratio_steps[0].payload["denominator"] == "실행예산_합계"
+    assert result is not None
+    assert len(calls) >= 2
+    retry_log = result.meta.get("retry_log") or []
+    assert any(r.get("failure_stage") == "semantic_soft_retry" for r in retry_log)
+    assert "집행계_합계" in str(result.meta.get("analysis_plan") or {})
 
 
 def _sample_corr_budget_df() -> pd.DataFrame:
@@ -707,38 +702,34 @@ def test_find_items_selects_minimal_columns_and_excludes_meeting() -> None:
     assert len(result) == 7
 
 
-def test_find_items_prefs_override_wide_llm_plan() -> None:
-    from core.analysis.analysis_plan_builder import build_analysis_plan
-
+def test_find_items_plan_without_prefs_rewrite() -> None:
+    """find_items는 Planner가 올바른 plan을 내면 prefs rewrite 없이 실행된다."""
     df = _sample_carryover_df()
-
-    def fake_chat_json(prompt: str, **kwargs):
-        # LLM이 전체 열을 고르려 해도 prefs가 축소해야 함
-        return {
-            "steps": [
-                {"op": "annotate_row_types"},
-                {"op": "filter_rows", "include_row_types": ["detail"]},
-                {"op": "select_columns", "columns": list(df.columns)},
+    plan = analysis_plan_from_dict(
+        {
+            "operation": "find_items",
+            "numeric_filters": [
+                {"column": "실행예산_이월예산", "op": ">", "value": 0},
+                {"column": "집행계_당해집행", "op": "==", "value": 0},
             ],
-            "interpret": False,
-        }
-
-    plan = build_analysis_plan(
-        "이월예산은 많은데 당해집행이 없는 항목을 찾고 그 의미를 설명해줘",
-        df,
-        base_url="http://localhost:11434",
-        model="dummy",
+            "output_columns": [
+                "비목분류",
+                "비용명",
+                "비용명_2",
+                "실행예산_이월예산",
+                "집행계_당해집행",
+            ],
+            "interpret": True,
+        },
+        available_columns=list(df.columns),
         profile_name="budget",
-        chat_json_fn=fake_chat_json,
     )
     assert plan.interpret
     assert any(s.op == "filter_rows" and s.payload.get("numeric_filters") for s in plan.steps)
-    select = next(s for s in plan.steps if s.op == "select_columns")
-    cols = select.payload["columns"]
-    assert "기타열A" not in cols
-    assert "실행예산_이월예산" in cols
-    assert "집행계_당해집행" in cols
-    assert len(cols) <= 8
+    classified = classify_rows(df, dimension_columns=["비용명", "비용명_2"])
+    result, _ = execute_analysis_plan(classified, plan)
+    assert "실행예산_이월예산" in result.columns
+    assert "집행계_당해집행" in result.columns
 
 
 def test_condition_filter_projects_columns() -> None:
@@ -818,41 +809,51 @@ def test_rate_vs_mean_below_average_on_twin() -> None:
     assert float(result["집행률"].max()) < mean
 
 
-def test_rate_vs_mean_prefs_override_wrong_plan() -> None:
-    from core.analysis.analysis_plan_builder import build_analysis_plan
+def test_rate_vs_mean_plan_error_triggers_planner_retry() -> None:
+    """분자=분모 hard error → Planner retry → corrected rate_vs_mean plan."""
+    from core.analysis.analysis_pipeline import try_analysis_pipeline
 
     df = pd.DataFrame(
         {
-            "비용명": [1, 2],
-            "비용명_2": ["A", "B"],
-            "실행예산_합계": [100, 200],
-            "집행계_합계": [10, 20],
-            "계획예산": [100, 200],
+            "비용명": [1, 2, 3],
+            "비용명_2": ["A", "B", "C"],
+            "실행예산_합계": [100, 200, 300],
+            "집행계_합계": [10, 150, 50],
+            "계획예산": [100, 200, 300],
         }
     )
+    calls: list[int] = []
 
     def fake_chat_json(prompt: str, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            return {
+                "operation": "group_comparison",
+                "group_column": "비용명_2",
+                "numerator": "계획예산",
+                "denominator": "계획예산",
+                "interpret": True,
+            }
         return {
-            "operation": "group_comparison",
-            "group_column": "비용명_2",
-            "numerator": "계획예산",
-            "denominator": "계획예산",
-            "interpret": True,
+            "operation": "rate_vs_mean",
+            "numerator": "집행계_합계",
+            "denominator": "실행예산_합계",
+            "relation": "below",
+            "interpret": False,
         }
 
-    plan = build_analysis_plan(
+    result = try_analysis_pipeline(
         "비용명별 집행률을 구한 뒤 평균보다 낮은 항목만 표로 보여줘",
         df,
         base_url="http://localhost:11434",
         model="dummy",
         profile_name="budget",
         chat_json_fn=fake_chat_json,
+        chat_text_fn=lambda *_a, **_k: "",
     )
-    assert any(s.op == "filter_vs_mean" for s in plan.steps)
-    derive = next(s for s in plan.steps if s.op == "derive_column")
-    assert derive.payload["expr"]["ratio"] == ["집행계_합계", "실행예산_합계"]
-    assert not plan.interpret
-
+    assert result is not None
+    assert len(calls) >= 2
+    assert len(result.dataframe) >= 1
 
 
 def test_provisional_share_includes_ratio_column() -> None:
@@ -860,7 +861,6 @@ def test_provisional_share_includes_ratio_column() -> None:
 
     from core.io.excel_loader import load_excel
     from core.pai.pandasai_config import prepare_dataframe_for_ai
-    from core.analysis.analysis_plan_builder import build_analysis_plan
     from core.routing.prompt_intent import wants_structured_analysis
 
     prompt = "가집행금액이 있는 항목만 골라 당해누계에서 차지하는 비중을 계산해줘"
@@ -870,17 +870,35 @@ def test_provisional_share_includes_ratio_column() -> None:
     if not path.is_file():
         return
     df = prepare_dataframe_for_ai(load_excel(path))
-
-    def fake_chat_json(prompt: str, **kwargs):
-        return {"steps": []}
-
-    plan = build_analysis_plan(
-        prompt,
-        df,
-        base_url="http://localhost:11434",
-        model="dummy",
+    # prefs rewrite 없이 올바른 find_items(+비중) plan을 직접 실행
+    den_col = "당해누계" if "당해누계" in df.columns else "집행계_당해집행"
+    if den_col not in df.columns:
+        den_col = "집행계_합계"
+    plan = analysis_plan_from_dict(
+        {
+            "steps": [
+                {"op": "annotate_row_types"},
+                {
+                    "op": "filter_rows",
+                    "include_row_types": ["detail"],
+                    "numeric_filters": [
+                        {"column": "가집행금액", "op": ">", "value": 0},
+                    ],
+                },
+                {
+                    "op": "derive_column",
+                    "name": "비중",
+                    "expr": {"percent_ratio": ["가집행금액", den_col]},
+                },
+                {
+                    "op": "select_columns",
+                    "columns": ["비용명_2", "가집행금액", den_col, "비중"],
+                },
+            ],
+            "interpret": False,
+        },
+        available_columns=list(df.columns),
         profile_name="budget",
-        chat_json_fn=fake_chat_json,
     )
     assert any(s.op == "derive_column" for s in plan.steps)
     classified = classify_rows(df, dimension_columns=["비용명", "비용명_2"])
@@ -957,9 +975,7 @@ def test_top_n_per_group_balance_on_twin() -> None:
     assert (meta.get("top_per_group") or {}).get("kept") == 7
 
 
-def test_top_n_per_group_prefs_override_wrong_plan() -> None:
-    from core.analysis.analysis_plan_builder import build_analysis_plan
-
+def test_top_n_per_group_correct_plan_without_prefs() -> None:
     df = pd.DataFrame(
         {
             "비목분류": ["A", "A", "B"],
@@ -969,24 +985,18 @@ def test_top_n_per_group_prefs_override_wrong_plan() -> None:
             "계획예산": [1, 1, 1],
         }
     )
-    prompt = "비목분류별로 가장 잔액이 큰 비용명 하나씩 뽑아줘"
-
-    def fake_chat_json(*_a, **_k):
-        return {
-            "operation": "group_comparison",
+    plan = analysis_plan_from_dict(
+        {
+            "operation": "top_n_per_group",
             "group_column": "비목분류",
-            "numerator": "계획예산",
-            "denominator": "계획예산",
-            "interpret": True,
-        }
-
-    plan = build_analysis_plan(
-        prompt,
-        df,
-        base_url="http://localhost:11434",
-        model="dummy",
+            "value_column": "예산잔액_합계",
+            "n": 1,
+            "ascending": False,
+            "output_columns": ["비목분류", "비용명_2", "예산잔액_합계"],
+            "interpret": False,
+        },
+        available_columns=list(df.columns),
         profile_name="budget",
-        chat_json_fn=fake_chat_json,
     )
     assert any(s.op == "top_per_group" for s in plan.steps)
     classified = classify_rows(df, dimension_columns=["비용명", "비용명_2"])
@@ -1050,7 +1060,7 @@ def test_split_by_difference_plan_vs_exec_on_twin() -> None:
     assert str(result.iloc[0]["구분"]) == "증가"
 
 
-def test_split_by_difference_prefs_override_top_n() -> None:
+def test_split_by_difference_correct_plan_without_prefs() -> None:
     from core.analysis.analysis_plan_builder import build_analysis_plan
 
     df = pd.DataFrame(
@@ -1066,11 +1076,10 @@ def test_split_by_difference_prefs_override_top_n() -> None:
 
     def fake_chat_json(*_a, **_k):
         return {
-            "operation": "top_n_difference",
-            "value_columns": ["실행예산_합계", "계획예산"],
-            "difference_mode": "absolute",
-            "limit": 5,
-            "interpret": False,
+            "operation": "split_by_difference",
+            "left": "실행예산_합계",
+            "right": "계획예산",
+            "interpret": True,
         }
 
     plan = build_analysis_plan(
@@ -1091,14 +1100,8 @@ def test_split_by_difference_prefs_override_top_n() -> None:
     assert (result["구분"] == "동일").sum() == 1
 
 
-def test_split_by_difference_increase_only_prompt() -> None:
-    """'늘어난 항목만' 요청도 계획/실행 열로 보정하고 증가 행만 남긴다."""
-    from core.analysis.analysis_column_prefs import (
-        is_split_by_difference_prompt,
-        split_by_difference_direction,
-    )
-    from core.analysis.analysis_plan_builder import build_analysis_plan
-
+def test_split_by_difference_increase_only_correct_plan() -> None:
+    """늘어난 항목만 요청은 Planner가 direction=up plan을 내면 실행된다."""
     df = pd.DataFrame(
         {
             "비목분류": ["A", "A", "B", "B"],
@@ -1109,38 +1112,21 @@ def test_split_by_difference_increase_only_prompt() -> None:
             "예산잔액_합계": [10, 20, 30, 40],
         }
     )
-    prompt = "계획예산 대비 실행예산이 늘어난 항목을 보여줘"
-    assert is_split_by_difference_prompt(prompt, profile_name="budget")
-    assert split_by_difference_direction(prompt) == "up"
-
-    def fake_chat_json(*_a, **_k):
-        # LLM이 Q1 축소 스키마처럼 잘못된 열을 골라도 prefs가 덮어쓴다.
-        return {
+    plan = analysis_plan_from_dict(
+        {
             "operation": "split_by_difference",
-            "left": "비용명",
-            "right": "예산잔액_합계",
-            "label_name": "비용명_2",
+            "left": "실행예산_합계",
+            "right": "계획예산",
+            "direction": "up",
             "interpret": True,
-        }
-
-    plan = build_analysis_plan(
-        prompt,
-        df,
-        base_url="http://localhost:11434",
-        model="dummy",
+        },
+        available_columns=list(df.columns),
         profile_name="budget",
-        chat_json_fn=fake_chat_json,
     )
     assert any(
         s.op == "derive_column"
         and s.payload.get("name") == "차이"
         and s.payload.get("expr") == {"diff": ["실행예산_합계", "계획예산"]}
-        for s in plan.steps
-    )
-    assert any(
-        s.op == "filter_rows"
-        and {"column": "구분", "values": ["증가"]}
-        in (s.payload.get("column_filters") or [])
         for s in plan.steps
     )
     classified = classify_rows(df, dimension_columns=["비용명", "비용명_2"])
@@ -1152,9 +1138,19 @@ def test_split_by_difference_increase_only_prompt() -> None:
     assert "실행예산_합계" in result.columns
 
 
-def test_top_n_result_does_not_poison_next_split_source_columns() -> None:
-    """Q1 top_n 투영 열만 있어도, 원본 df로 계획하면 계획/실행 열이 잡힌다."""
-    from core.analysis.analysis_column_prefs import apply_split_by_difference_prefs
+def test_safety_normalization_does_not_invent_missing_columns() -> None:
+    """축소 스키마에 없는 컬럼을 safety normalization이 발명하지 않는다."""
+    from core.analysis.analysis_column_prefs import apply_safety_column_normalization
+
+    projected_cols = ["비목분류", "비용명_2", "비용명", "예산잔액_합계"]
+    data = {
+        "operation": "split_by_difference",
+        "left": "비용명",
+        "right": "예산잔액_합계",
+    }
+    fixed = apply_safety_column_normalization(data, projected_cols)
+    assert fixed.get("left") == "비용명"
+    assert fixed.get("right") == "예산잔액_합계"
 
     full_cols = [
         "비목분류",
@@ -1164,34 +1160,18 @@ def test_top_n_result_does_not_poison_next_split_source_columns() -> None:
         "실행예산_합계",
         "예산잔액_합계",
     ]
-    projected_cols = ["비목분류", "비용명_2", "비용명", "예산잔액_합계"]
-    prompt = "계획예산 대비 실행예산이 늘어난 항목을 보여줘"
-
-    bad = apply_split_by_difference_prefs(
-        prompt,
-        {"operation": "split_by_difference", "left": "비용명", "right": "예산잔액_합계"},
-        projected_cols,
-        profile_name="budget",
-    )
-    # 축소 스키마에는 계획/실행이 없어 prefs가 left/right를 못 고친다
-    assert bad.get("left") == "비용명"
-
-    good = apply_split_by_difference_prefs(
-        prompt,
-        {"operation": "split_by_difference", "left": "비용명", "right": "예산잔액_합계"},
+    spaced = apply_safety_column_normalization(
+        {"left": "실행예산 합계", "right": "계획 예산"},
         full_cols,
-        profile_name="budget",
     )
-    assert good.get("left") == "실행예산_합계"
-    assert good.get("right") == "계획예산"
-    assert good.get("direction") == "up"
+    assert spaced.get("left") == "실행예산_합계"
+    assert spaced.get("right") == "계획예산"
 
 
 def test_group_efficiency_compare_indirect_vs_allowance_on_twin() -> None:
     from core.io.excel_loader import load_excel
     from core.pai.pandasai_config import prepare_dataframe_for_ai
     from core.routing.prompt_intent import is_complex_analysis, wants_structured_analysis
-    from core.analysis.analysis_plan_builder import build_analysis_plan
 
     prompt = "간접비와 연구수당의 집행률 차이를 기준으로 어느 쪽이 더 효율적인지 설명해줘"
     assert wants_structured_analysis(prompt)
@@ -1201,22 +1181,18 @@ def test_group_efficiency_compare_indirect_vs_allowance_on_twin() -> None:
     if not path.is_file():
         return
     df = prepare_dataframe_for_ai(load_excel(path))
-
-    def fake_chat_json(*_a, **_k):
-        # Wrong plan that would previously lead nowhere useful
-        return {
-            "operation": "top_n_difference",
-            "value_columns": ["집행계_합계", "실행예산_합계"],
-            "limit": 5,
-            "interpret": False,
-        }
-
-    plan = build_analysis_plan(
-        prompt,
-        df,
-        base_url="http://localhost:11434",
-        model="dummy",
-        chat_json_fn=fake_chat_json,
+    plan = analysis_plan_from_dict(
+        {
+            "operation": "group_comparison",
+            "group_column": "비목분류",
+            "groups": ["간접비", "연구수당"],
+            "numerator": "집행계_합계",
+            "denominator": "실행예산_합계",
+            "rate_name": "집행률",
+            "prefer_subtotals": True,
+            "interpret": True,
+        },
+        available_columns=list(df.columns),
         profile_name="budget",
     )
     assert any(s.op == "compare_groups" or s.op == "aggregate" for s in plan.steps)

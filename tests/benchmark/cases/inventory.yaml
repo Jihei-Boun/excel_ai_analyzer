@@ -1,0 +1,114 @@
+cases:
+  - id: inventory_below_safety_001
+    domain: inventory
+    profile: inventory
+    dataset: inventory_basic.xlsx
+    question: "재고가 안전재고보다 적은 상품을 알려줘"
+    tags: [filter]
+    fixed_plan:
+      steps:
+        - op: annotate_row_types
+        - op: filter_rows
+          include_row_types: [detail]
+          numeric_filters:
+            - left_column: 재고수량
+              op: lt
+              right_column: 안전재고
+        - op: select_columns
+          columns: [상품코드, 재고수량, 안전재고]
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [filter_rows]
+      expected_result:
+        contains: [P001, P002, P004, P006, P008]
+        min_rows: 4
+
+  - id: inventory_max_value_001
+    domain: inventory
+    profile: inventory
+    dataset: inventory_basic.xlsx
+    question: "재고금액이 가장 큰 상품을 알려줘"
+    tags: [ranking]
+    fixed_plan:
+      steps:
+        - op: sort
+          by: [재고금액]
+          ascending: [false]
+        - op: limit
+          n: 1
+        - op: select_columns
+          columns: [상품코드, 재고금액]
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [sort, limit]
+      expected_result:
+        P003: 4000000
+
+  - id: inventory_warehouse_sum_001
+    domain: inventory
+    profile: inventory
+    dataset: inventory_basic.xlsx
+    question: "창고별 재고 합계를 알려줘"
+    tags: [aggregate]
+    fixed_plan:
+      steps:
+        - op: aggregate
+          group_by: [창고]
+          metrics:
+            - column: 재고수량
+              fn: sum
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [aggregate]
+      expected_columns:
+        group_by: 창고
+        metric: 재고수량
+      expected_result:
+        min_rows: 2
+
+  - id: inventory_category_avg_001
+    domain: inventory
+    profile: inventory
+    dataset: inventory_basic.xlsx
+    question: "카테고리별 평균 재고를 알려줘"
+    tags: [aggregate]
+    fixed_plan:
+      steps:
+        - op: aggregate
+          group_by: [카테고리]
+          metrics:
+            - column: 재고수량
+              fn: mean
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [aggregate]
+      expected_result:
+        min_rows: 2
+
+  - id: inventory_stockout_risk_001
+    domain: inventory
+    profile: inventory
+    dataset: inventory_basic.xlsx
+    question: "품절 위험 상품을 알려줘"
+    tags: [semantic, live_interesting]
+    # Deterministic: treat as stock < safety (semantic interpretation left to live Planner)
+    fixed_plan:
+      steps:
+        - op: filter_rows
+          numeric_filters:
+            - column: 재고수량
+              op: "<="
+              value: 0
+        - op: select_columns
+          columns: [상품코드, 재고수량, 안전재고]
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [filter_rows]
+      notes: "live에서는 안전재고 대비 부족으로 해석될 수 있음"
+      expected_result:
+        contains: [P004]

@@ -1,4 +1,18 @@
-"""프롬프트 의도·출력 타입·집계 연산 판별."""
+"""프롬프트 의도·출력 타입·집계 연산 판별.
+
+Phase 2 라우팅 계층
+-------------------
+Router는 분석 *방법*(비교/비율/순위 등)을 결정하지 않는다.
+의도 판별은 다음 두 계층만 구분한다.
+
+1. **System/Data Command** (`is_system_data_command`)
+   요약·스키마·품질·결측·메타데이터 등 deterministic handler.
+2. **Analytical Request** (`is_analytical_request`)
+   그 외 데이터 분석 질문 → Analysis Pipeline(Planner) 우선.
+
+Profile `structured_analysis_keywords`는 semantic hint용이며,
+Planner 진입 게이트로 쓰지 않는다.
+"""
 
 from __future__ import annotations
 
@@ -93,22 +107,7 @@ _AGGREGATE_OPS = (
     ("total", "sum"),
 )
 
-
-def expects_plot(prompt: str) -> bool:
-    """차트·그래프 시각화 요청인지 판별한다."""
-    return any_keyword_in_text(prompt, _CHART_KEYWORDS)
-
-
-def is_pivot_request(prompt: str) -> bool:
-    """피벗·교차 집계 요청인지 판별한다."""
-    if not prompt:
-        return False
-    keywords = ("피벗", "pivot", "교차", "크로스탭", "crosstab")
-    return any_keyword_in_text(prompt, keywords)
-
-
-# 도메인 전용 키워드(집행률·미집행 등)는 profiles/*.yaml 의
-# structured_analysis_keywords 로 주입한다.
+# Profile structured_analysis_keywords 병합용(레거시/힌트). 라우팅 게이트 아님.
 _STRUCTURED_ANALYSIS_KEYWORDS = (
     "비교",
     "해석",
@@ -137,6 +136,19 @@ _STRUCTURED_ANALYSIS_KEYWORDS = (
 )
 
 
+def expects_plot(prompt: str) -> bool:
+    """차트·그래프 시각화 요청인지 판별한다."""
+    return any_keyword_in_text(prompt, _CHART_KEYWORDS)
+
+
+def is_pivot_request(prompt: str) -> bool:
+    """피벗·교차 집계 요청인지 판별한다."""
+    if not prompt:
+        return False
+    keywords = ("피벗", "pivot", "교차", "크로스탭", "crosstab")
+    return any_keyword_in_text(prompt, keywords)
+
+
 def resolve_output_type(prompt: str) -> str | None:
     """요청에 맞는 PandasAI output_type을 고른다. 차트는 plot을 우선한다."""
     if expects_plot(prompt):
@@ -150,6 +162,7 @@ def _merged_structured_keywords(
     *,
     profile_name: str | None = None,
 ) -> tuple[str, ...]:
+    """레거시/힌트용 키워드 병합. Planner 진입 게이트로 사용하지 말 것."""
     from core.profile_loader import (
         locale_intent_keywords_for,
         structured_analysis_keywords_for,
@@ -187,25 +200,64 @@ def _merged_complex_keywords(
             seen.add(key)
     return tuple(out)
 
+
+def is_system_data_command(prompt: str) -> bool:
+    """LLM이 분석 방법을 정할 필요 없는 deterministic system/data command.
+
+    예: 파일 요약, 스키마/컬럼/dtype, 결측, 품질, 컬럼 의미(메타).
+    비교·비율·순위 등 의미 분석은 포함하지 않는다.
+    """
+    if not prompt or not str(prompt).strip():
+        return False
+
+    from core.summary.file_summary import is_summary_request
+    from core.filter.value_filter import is_missing_rows_request
+    from core.schema.quality import is_quality_request
+    from core.schema.schema_compare import (
+        is_column_meaning_request,
+        is_schema_request,
+    )
+
+    return (
+        is_summary_request(prompt)
+        or is_missing_rows_request(prompt)
+        or is_quality_request(prompt)
+        or is_schema_request(prompt)
+        or is_column_meaning_request(prompt)
+    )
+
+
+def is_analytical_request(
+    prompt: str,
+    *,
+    profile_name: str | None = None,
+) -> bool:
+    """의미 분석 질문이면 True — Analysis Pipeline(Planner) 우선 대상.
+
+    Router는 비교/비율/순위/효율 등 *방법*을 여기서 고르지 않는다.
+    System/Data Command만 제외하고, 나머지는 Planner가 계획을 세운다.
+
+    ``profile_name``은 API 호환용이며 진입 게이트에 쓰지 않는다.
+    """
+    del profile_name  # routing gate에 profile keyword를 쓰지 않음
+    if not prompt or not str(prompt).strip():
+        return False
+    if is_system_data_command(prompt):
+        return False
+    return True
+
+
 def wants_structured_analysis(
     prompt: str,
     *,
     profile_name: str | None = None,
 ) -> bool:
-    """분석 계획 파이프라인(집계·비율·비교·해석) 후보인지."""
-    if not prompt or not str(prompt).strip():
-        return False
-    if expects_dataframe(prompt):
-        return True
-    keywords = _merged_structured_keywords(profile_name=profile_name)
-    if any_keyword_in_text(prompt, keywords):
-        return True
-    # 그룹별 가장 큰/작은 항목 — '뽑아'만 있어도 구조화 후보
-    if any_keyword_in_text(prompt, ("별", "그룹")) and any_keyword_in_text(
-        prompt, ("가장", "하나씩", "상위", "하위", "최대", "최소")
-    ):
-        return True
-    return False
+    """Analysis Pipeline 후보인지 (Phase 2: ``is_analytical_request``와 동일).
+
+    과거에는 profile ``structured_analysis_keywords``가 진입 게이트였다.
+    지금은 system/data command가 아니면 분석 후보로 본다.
+    """
+    return is_analytical_request(prompt, profile_name=profile_name)
 
 
 def expects_dataframe(prompt: str) -> bool:
@@ -297,6 +349,7 @@ def wants_full_dataset(prompt: str) -> bool:
 def is_condition_filter_request(prompt: str) -> bool:
     """컬럼 조건 비교(==0, 있는/없는, 이상/이하 등) 요청인지.
 
+    Legacy analytical shortcut 판별용(Phase 5 이관 후보).
     '연구활동비 보여줘'·'비용명이 121인 것만' 같은 라벨/코드 조회와 구분해
     단순 셀 값 일치 필터가 가로채지 않게 한다.
     """
@@ -330,7 +383,10 @@ def is_complex_analysis(
     *,
     profile_name: str | None = None,
 ) -> bool:
-    """집계·순위·시각화처럼 단순 값 필터로 해결할 수 없는 요청인지 판별한다."""
+    """집계·순위·시각화처럼 단순 값 필터로 해결할 수 없는 요청인지 판별한다.
+
+    Legacy value-match 가드용. 분석 방법 라우팅에는 쓰지 않는다.
+    """
     if detect_aggregate_op(prompt) is not None:
         return True
     if is_pivot_request(prompt):
@@ -368,6 +424,7 @@ def detect_aggregate_op(prompt: str) -> str | None:
     """프롬프트에서 집계 연산 종류를 찾는다. 없으면 None.
 
     차트 요청은 집계 단축 경로가 아닌 시각화 경로로 보내기 위해 None을 반환한다.
+    Legacy analytical shortcut(groupby/context) 판별용.
     """
     if expects_plot(prompt):
         return None
@@ -380,6 +437,8 @@ _expects_plot = expects_plot
 _resolve_output_type = resolve_output_type
 _expects_dataframe = expects_dataframe
 _wants_structured_analysis = wants_structured_analysis
+_is_analytical_request = is_analytical_request
+_is_system_data_command = is_system_data_command
 _wants_full_dataset = wants_full_dataset
 _is_list_request = is_list_request
 _is_complex_analysis = is_complex_analysis

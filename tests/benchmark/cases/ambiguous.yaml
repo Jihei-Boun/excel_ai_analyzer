@@ -1,0 +1,38 @@
+cases:
+  - id: ambiguous_sales_compare_001
+    domain: ambiguous
+    profile: generic
+    dataset: ambiguous_sales.xlsx
+    question: "매출 실적을 비교해줘"
+    tags: [ambiguous, semantic]
+    # Intentionally pick one candidate; live Planner may choose differently.
+    # Evaluation focuses on no rewrite + optional semantic warning, not golden column.
+    fixed_plan:
+      operation: group_comparison
+      group_column: 지역
+      groups: [서울, 부산]
+      numerator: 당년도매출
+      denominator: 목표매출
+      rate_name: 달성률
+      prefer_subtotals: true
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [compare_groups]
+      allow_semantic_warning: true
+      expected_result:
+        row_count: 2
+      notes: "여러 매출 후보 — rewrite 없이 선택된 컬럼으로 실행"
+
+  - id: ambiguous_sales_live_001
+    domain: ambiguous
+    profile: generic
+    dataset: ambiguous_sales.xlsx
+    question: "매출 실적을 상품별로 합계해줘"
+    tags: [ambiguous, live_interesting]
+    live_only: true
+    expected:
+      route: analysis_plan
+      required_operations: [aggregate]
+      allow_semantic_warning: true
+      notes: "live: which revenue column is chosen?"

@@ -1,0 +1,88 @@
+cases:
+  - id: hr_dept_avg_salary_001
+    domain: hr
+    profile: generic
+    dataset: hr_basic.xlsx
+    question: "부서별 평균 연봉을 알려줘"
+    tags: [aggregate]
+    fixed_plan:
+      steps:
+        - op: aggregate
+          group_by: [부서]
+          metrics:
+            - column: 연봉
+              fn: mean
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [aggregate]
+      expected_columns:
+        group_by: 부서
+        metric: 연봉
+      expected_result:
+        A부서: 5466.666666666667
+        B부서: 4766.666666666667
+        C부서: 4550
+      result_tolerance: 0.01
+
+  - id: hr_high_perf_001
+    domain: hr
+    profile: generic
+    dataset: hr_basic.xlsx
+    question: "성과점수가 높은 직원을 알려줘"
+    tags: [ranking]
+    fixed_plan:
+      steps:
+        - op: sort
+          by: [성과점수]
+          ascending: [false]
+        - op: limit
+          n: 3
+        - op: select_columns
+          columns: [직원ID, 부서, 성과점수]
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [sort, limit]
+      expected_result:
+        row_count: 3
+        contains: [E06]
+
+  - id: hr_corr_001
+    domain: hr
+    profile: generic
+    dataset: hr_basic.xlsx
+    question: "근속연수와 연봉의 상관관계를 알려줘"
+    tags: [correlation]
+    fixed_plan:
+      operation: correlation
+      x_column: 근속연수
+      y_column: 연봉
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [correlation]
+      expected_columns:
+        x: 근속연수
+        y: 연봉
+
+  - id: hr_compare_depts_001
+    domain: hr
+    profile: generic
+    dataset: hr_basic.xlsx
+    question: "A부서와 B부서 평균 성과를 비교해줘"
+    tags: [compare]
+    fixed_plan:
+      operation: group_comparison
+      group_column: 부서
+      groups: [A부서, B부서]
+      numerator: 성과점수
+      denominator: 근속연수
+      rate_name: 성과지표
+      prefer_subtotals: true
+      interpret: false
+    expected:
+      route: analysis_plan
+      required_operations: [compare_groups]
+      expected_result:
+        row_count: 2

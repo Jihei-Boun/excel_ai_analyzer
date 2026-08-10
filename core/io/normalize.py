@@ -157,19 +157,30 @@ def _unique_names(names: list[str]) -> list[str]:
 
 
 def _try_numeric(series: pd.Series) -> pd.Series | None:
-    cleaned = (
-        series.map(_clean_cell_text)
-        .str.replace(",", "", regex=False)
-        .str.strip()
-        .replace({"": pd.NA})
-    )
+    """콤마·% 제거 후 수치화. 비수치 잔여가 있어도 과반이면 수치 열로 채택."""
+    cleaned = series.map(_clean_numeric_text).replace({"": pd.NA})
     non_empty = int(cleaned.notna().sum())
     if non_empty == 0:
         return None
     numeric = pd.to_numeric(cleaned, errors="coerce")
-    if int(numeric.notna().sum()) == non_empty:
+    ok = int(numeric.notna().sum())
+    # 전부 수치이거나, 비어있지 않은 값의 80% 이상이 수치면 채택
+    if ok == non_empty or (ok >= max(3, int(non_empty * 0.8))):
         return numeric
     return None
+
+
+def _clean_numeric_text(value: object) -> str:
+    text = _clean_cell_text(value)
+    if not text:
+        return ""
+    # 통화/퍼센트/천단위 구분 기호 제거 (범용)
+    text = text.replace(",", "").replace("，", "")
+    text = text.replace("₩", "").replace("￦", "").replace("$", "").replace("€", "")
+    text = text.strip()
+    if text.endswith("%"):
+        text = text[:-1].strip()
+    return text
 
 
 def _clean_cell_text(value: object) -> str:

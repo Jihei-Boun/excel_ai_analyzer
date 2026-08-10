@@ -11,7 +11,16 @@ from core.analysis.analysis_executor import execute_analysis_plan
 from core.analysis.analysis_interpret import interpret_analysis_result
 from core.analysis.analysis_plan_builder import build_analysis_plan
 from core.analysis.analysis_plan_types import AnalysisPlan
-from core.analysis.analysis_validate import validate_analysis_result, validation_error_messages
+from core.analysis.analysis_plan_validate import (
+    format_plan_validation_feedback,
+    validate_analysis_plan,
+)
+from core.analysis.analysis_result_validate import (
+    format_result_validation_feedback,
+    validate_analysis_result,
+    validation_info_messages,
+    validation_warning_messages,
+)
 from core.llm_client import chat_json, chat_text
 from core.pai.pandasai_config import prepare_dataframe_for_ai
 from core.common.plan_retry import RetryAttempt, run_plan_retries
@@ -53,8 +62,16 @@ def try_analysis_pipeline(
     max_retries: int = 2,
     chat_json_fn: Callable[..., dict[str, Any]] | None = None,
     chat_text_fn: Callable[..., str] | None = None,
+    exhaust_meta: dict[str, Any] | None = None,
 ) -> AnalysisPipelineResult | None:
-    """성공 시 결과, 적용 불가/소진 시 None(폴백)."""
+    """성공 시 결과, 적용 불가/소진 시 None(폴백).
+
+    흐름: Planner → Plan Validator → Executor → Result Validator → Interpreter
+    max_retries=2 이면 최초 1회 + 재시도 2회 (총 3회).
+
+    semantic_role_mismatch WARNING은 최초 attempt에서 soft retry 1회를 유발한다
+    (자동 rewrite 금지 — Planner가 수정).
+    """
     if not should_try_analysis_pipeline(df, wants_dataframe=True):
         return None
 
@@ -67,11 +84,14 @@ def try_analysis_pipeline(
         dimension_columns=dims,
         footer_labels=footer_labels_for(profile_name=profile_name),
     )
+    retry_log: list[dict[str, Any]] = []
+    semantic_soft_retried = False
 
     def _attempt(
-        _attempt_index: int,
+        attempt_index: int,
         previous_errors: list[str],
     ) -> RetryAttempt[AnalysisPipelineResult]:
+        nonlocal semantic_soft_retried
         try:
             plan = build_analysis_plan(
                 prompt,
@@ -84,17 +104,130 @@ def try_analysis_pipeline(
                 chat_json_fn=json_fn,
             )
         except Exception as exc:  # noqa: BLE001 — LLM/sanitize 실패 시 폴백
+            retry_log.append(
+                {
+                    "attempt": attempt_index,
+                    "failure_stage": "plan_build",
+                    "validation_errors": [f"plan_build: {exc}"],
+                    "validation_warnings": [],
+                    "previous_plan": None,
+                }
+            )
             return RetryAttempt(ok=False, errors=[f"plan_build: {exc}"])
+
+        # --- Plan-time validation (실행 전) ---
+        plan_report = validate_analysis_plan(
+            plan,
+            classified,
+            profile_name=profile_name,
+        )
+        if not plan_report.ok:
+            feedback = format_plan_validation_feedback(
+                plan_report,
+                previous_plan=plan.to_dict(),
+                df=prepared,
+                profile_name=profile_name,
+                attempt=attempt_index,
+                failure_stage="plan_validation",
+            )
+            retry_log.append(
+                {
+                    "attempt": attempt_index,
+                    "failure_stage": "plan_validation",
+                    "validation_errors": [
+                        f"{i.code}: {i.message}" for i in plan_report.errors
+                    ],
+                    "validation_warnings": [
+                        f"{i.code}: {i.message}" for i in plan_report.warnings
+                    ],
+                    "previous_plan": plan.to_dict(),
+                }
+            )
+            return RetryAttempt(ok=False, errors=feedback)
 
         try:
             result_df, exec_meta = execute_analysis_plan(classified, plan)
         except Exception as exc:  # noqa: BLE001
+            retry_log.append(
+                {
+                    "attempt": attempt_index,
+                    "failure_stage": "execute",
+                    "validation_errors": [f"execute: {exc}"],
+                    "validation_warnings": [],
+                    "previous_plan": plan.to_dict(),
+                }
+            )
             return RetryAttempt(ok=False, errors=[f"execute: {exc}"])
 
-        report = validate_analysis_result(result_df, plan, source_df=prepared)
+        # --- Result-time validation (실행 후) ---
+        report = validate_analysis_result(
+            result_df,
+            plan,
+            source_df=prepared,
+            exec_meta=exec_meta,
+            profile_name=profile_name,
+            user_prompt=prompt,
+        )
         if not report.ok:
-            return RetryAttempt(ok=False, errors=validation_error_messages(report))
+            feedback = format_result_validation_feedback(
+                report,
+                previous_plan=plan.to_dict(),
+                attempt=attempt_index,
+            )
+            retry_log.append(
+                {
+                    "attempt": attempt_index,
+                    "failure_stage": "result_validation",
+                    "validation_errors": [
+                        f"{i.code}: {i.message}" for i in report.errors
+                    ],
+                    "validation_warnings": [
+                        f"{i.code}: {i.message}" for i in report.warnings
+                    ],
+                    "previous_plan": plan.to_dict(),
+                }
+            )
+            return RetryAttempt(ok=False, errors=feedback)
 
+        # Semantic mismatch: rewrite 없이 Planner soft retry 1회
+        # (재시도 여유 있을 때만 — 소진 시 warning을 붙인 채 결과 수용)
+        semantic_warnings = [
+            i
+            for i in report.warnings
+            if i.code == "semantic_role_mismatch"
+        ]
+        if (
+            semantic_warnings
+            and not semantic_soft_retried
+            and attempt_index < max_retries
+        ):
+            semantic_soft_retried = True
+            feedback = format_result_validation_feedback(
+                report,
+                previous_plan=plan.to_dict(),
+                attempt=attempt_index,
+            )
+            soft_msgs = [
+                f"WARNING {i.code}: {i.message}" for i in semantic_warnings
+            ]
+            soft_msgs.append(
+                "Semantic role mismatch detected. Do NOT invent columns. "
+                "Prefer profile role candidates when they better match the request, "
+                "then regenerate a corrected AnalysisPlan."
+            )
+            retry_log.append(
+                {
+                    "attempt": attempt_index,
+                    "failure_stage": "semantic_soft_retry",
+                    "validation_errors": [],
+                    "validation_warnings": soft_msgs,
+                    "previous_plan": plan.to_dict(),
+                }
+            )
+            return RetryAttempt(ok=False, errors=feedback + soft_msgs)
+
+        warn_msgs = validation_warning_messages(report)
+        info_msgs = validation_info_messages(report)
         reply = _build_reply(result_df, plan, exec_meta)
         if plan.interpret:
             try:
@@ -103,6 +236,8 @@ def try_analysis_pipeline(
                     result_df,
                     plan,
                     exec_meta=exec_meta,
+                    validation_warnings=warn_msgs,
+                    validation_infos=info_msgs,
                     base_url=base_url,
                     model=model,
                     chat_text_fn=text_fn,
@@ -126,14 +261,53 @@ def try_analysis_pipeline(
                 meta={
                     "analysis_plan": plan.to_dict(),
                     "analysis_validation": report.summary_text(),
+                    "plan_validation": plan_report.summary_text(),
                     "aggregation": {"operation": "analysis_plan"},
+                    "validation_warnings": warn_msgs,
+                    "validation_infos": info_msgs,
+                    "retry_log": list(retry_log),
                     **exec_meta,
                 },
             ),
         )
 
     outcome = run_plan_retries(max_retries=max_retries, attempt=_attempt)
-    return outcome.value
+    if outcome.value is not None:
+        # 실패 이력도 성공 결과에 남김
+        outcome.value.meta.setdefault("retry_log", retry_log)
+        return outcome.value
+    if exhaust_meta is not None:
+        exhaust_meta.update(_classify_pipeline_exhaust(retry_log))
+        exhaust_meta["retry_log"] = list(retry_log)
+    # 소진 시에도 테스트/디버그가 retry_log를 볼 수 있게 None만 반환
+    # (Analyzer는 None → legacy fallback)
+    return None
+
+
+def _classify_pipeline_exhaust(retry_log: list[dict[str, Any]]) -> dict[str, Any]:
+    """Planner/validator 소진 원인을 fallback_reason으로 요약."""
+    if not retry_log:
+        return {"fallback_reason": "planner_generation_failed"}
+    stages = [str(r.get("failure_stage") or "") for r in retry_log]
+    if any(s == "plan_build" for s in stages) and all(
+        s in {"plan_build", ""} for s in stages
+    ):
+        return {"fallback_reason": "planner_generation_failed"}
+    if any(s == "execute" for s in stages):
+        return {"fallback_reason": "execution_error"}
+    if any(s == "result_validation" for s in stages):
+        return {"fallback_reason": "result_validation_exhausted"}
+    if any(s == "plan_validation" for s in stages):
+        # unsupported aggregation 등
+        joined = " ".join(
+            " ".join(r.get("validation_errors") or []) for r in retry_log
+        )
+        if "unsupported_aggregation" in joined or "unsupported" in joined.lower():
+            return {"fallback_reason": "unsupported_operation"}
+        return {"fallback_reason": "plan_validation_exhausted"}
+    if any(s == "semantic_soft_retry" for s in stages):
+        return {"fallback_reason": "plan_validation_exhausted"}
+    return {"fallback_reason": "plan_validation_exhausted"}
 
 
 def run_analysis_pipeline(

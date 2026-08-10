@@ -1,0 +1,116 @@
+# 커스텀 도메인 템플릿 프로필
+# 이 파일을 복사해 컬럼·역할·추천 질문을 채우면 새 도메인 프로필이 됩니다.
+# 자동 추천 오탐을 막기 위해 detect_min_hits를 높게 두었고,
+# column_hints는 실제 표에 거의 없는 플레이스홀더만 넣었습니다.
+
+summary: custom
+currency: none
+domain: custom
+summary_builder: generic
+locale: ko
+
+# 자동 프로필 추천에 잘 잡히지 않도록 높은 임계값
+detect_min_hits: 99
+enable_column_prefs: false
+
+# 실제 데이터에 맞추어 바꾸세요 (예: 계약번호, 프로젝트명 …)
+column_hints:
+  - __CUSTOM_DOMAIN__
+
+preferred_labels:
+  - 항목명
+  - 항목
+  - 이름
+  - name
+  - label
+  - category
+  - 분류
+  - 구분
+
+roles:
+  label_columns:
+    - 항목명
+    - 항목
+    - 이름
+  group_columns:
+    - 분류
+    - 구분
+    - 카테고리
+  metric_numerator:
+    - 금액
+    - 수량
+  metric_denominator: []
+  metric_remaining: []
+  metric_remaining_current: []
+  key_metrics:
+    - 금액
+    - 수량
+
+column_prefs: {}
+
+# 공유 column_hints.yaml 위에 덧붙일 도메인 전용 힌트
+column_hint_extras:
+  item_column_hints: []
+  amount_column_hints: []
+  group_column_hints: []
+  code_column_hints: []
+
+footer_labels: []
+
+structured_analysis_keywords: []
+complex_analysis_keywords: []
+
+display_labels: {}
+
+interpret_guidance: ""
+
+guardrail_hints:
+  code_col: 코드
+  name_col: 명칭
+  group_col: 분류
+  fill_example: 상위분류
+
+plan_guidance: >-
+  Prefer label/group columns from preferred_labels when present.
+  Sum amount and quantity metrics; do not sum rates, percentages, or unit prices.
+
+semantic_hints:
+  likely_identifier_concepts:
+    - id
+    - code
+    - key
+    - 코드
+    - 번호
+  likely_summary_labels:
+    - 소계
+    - 합계
+    - 총계
+    - subtotal
+    - total
+  likely_additive_concepts:
+    - amount
+    - qty
+    - quantity
+    - 금액
+    - 수량
+  cautions:
+    - summary rows should not be mixed with detail rows during aggregation
+    - percentage and date columns should not normally be summed
+
+suggested_prompts:
+  - 파일을 요약해줘
+  - 각 컬럼의 데이터 타입과 결측치 개수를 알려줘
+  - 범주형 컬럼별 행 개수를 표로 보여줘
+  - 첫 번째 숫자형 컬럼의 합계를 구해줘
+
+suggested_prompts_multi_file:
+  - 선택한 파일들을 통합해줘
+  - 각 파일의 행 수와 컬럼 목록을 비교해줘
+  - 두 파일에서 공통으로 있는 컬럼을 알려줘
+
+suggested_prompts_multi_sheet:
+  - 각 시트의 행 수와 컬럼 목록을 비교해줘
+  - 시트별로 숫자형 컬럼 합계를 표로 비교해줘
+  - 파일을 요약해줘
+
+meanings: []

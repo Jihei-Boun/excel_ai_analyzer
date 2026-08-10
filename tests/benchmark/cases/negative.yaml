@@ -1,0 +1,57 @@
+cases:
+  - id: negative_missing_column_001
+    domain: negative
+    profile: generic
+    dataset: sales_basic.xlsx
+    question: "존재하지 않는 컬럼 이익률의 평균을 알려줘"
+    tags: [negative, adversarial]
+    fixed_plan:
+      steps:
+        - op: aggregate
+          group_by: []
+          metrics:
+            - column: 이익률
+              fn: mean
+      interpret: false
+    expected:
+      route: failure_safe
+      expect_plan_validation_error: true
+      expect_safe_failure: true
+      notes: "validator should reject missing column; no crash"
+
+  - id: negative_missing_product_001
+    domain: negative
+    profile: sales
+    dataset: sales_basic.xlsx
+    question: "존재하지 않는 상품 A999를 비교해줘"
+    tags: [negative]
+    fixed_plan:
+      operation: group_comparison
+      group_column: 상품
+      groups: [A999, 상품A]
+      numerator: 매출
+      denominator: 수량
+      rate_name: 비율
+      prefer_subtotals: true
+      interpret: false
+    expected:
+      route: failure_safe
+      expect_safe_failure: true
+      notes: "empty/missing group should be safe"
+
+  - id: negative_string_corr_001
+    domain: negative
+    profile: generic
+    dataset: sales_basic.xlsx
+    question: "상품과 지역의 상관관계를 계산해줘"
+    tags: [negative]
+    fixed_plan:
+      operation: correlation
+      x_column: 상품
+      y_column: 지역
+      interpret: false
+    expected:
+      route: failure_safe
+      expect_plan_validation_error: true
+      expect_safe_failure: true
+      notes: "non-numeric correlation must fail validation safely"

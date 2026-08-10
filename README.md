@@ -112,6 +112,8 @@ excel_ai_analyzer/
 │   ├── generic_en.yaml
 │   ├── budget.yaml
 │   ├── sales.yaml
+│   ├── inventory.yaml
+│   ├── custom.yaml
 │   ├── column_hints.yaml
 │   └── column_meanings.yaml
 ├── docs/images/
@@ -211,10 +213,10 @@ streamlit run app.py
 - [x] 일반·예산 모드 UX 분리 (추천 질문·프로필)
 - [x] CSV 업로드 지원
 - [x] 사이드바 도메인 프로필 선택 (`profiles/*.yaml`)
+- [x] 도메인 프로필 YAML 확장 샘플 (`inventory` / `custom`)
 
 ### 🚀 Planned
 
-- [ ] 도메인 프로필 YAML 확장 샘플 추가 (`inventory` / `custom`)
 - [ ] PDF 데이터 입력 지원
 - [ ] 여러 파일 간 자동 비교 리포트 강화 (수치·품질 요약 포함)
 - [ ] 차트 유형 확장 (라인/파이 등)

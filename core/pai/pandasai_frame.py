@@ -21,8 +21,13 @@ def prepare_dataframe_for_ai(
 
     hierarchical 분류(그룹 → 빈 상세 → 소계)가 감지된 열만 forward-fill한다.
     stringify_codes=True이면 코드성 수치 열(비용명 121 등)을 문자열로 바꾼다.
+
+    Phase 7: 컬럼명 canonicalize + 숫자 문자열(``1,000``, ``12%``) 등
+    범용 normalization을 적용한다. 특정 dataset 컬럼명 hardcoding 없음.
     """
-    out = df.copy().reset_index(drop=True)
+    from core.io.normalize import normalize_dataframe
+
+    out = normalize_dataframe(df.copy().reset_index(drop=True), drop_empty_cols=True)
     for col in out.columns:
         if _is_hierarchical_column(out[col]):
             out[col] = _fill_hierarchical_labels(out[col])

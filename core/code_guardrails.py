@@ -198,7 +198,8 @@ def is_near_diagonal_sparse_pivot(df: pd.DataFrame) -> bool:
 
 def _value_columns_for_sparsity(df: pd.DataFrame) -> list[str]:
     """라벨 후보 첫 열을 제외하고 값 열을 고른다."""
-    cols = [str(c) for c in df.columns]
+    # 원본 컬럼 객체를 유지한다. str(c)로 변환하면 int 컬럼명(0,1,2…)에서 KeyError가 난다.
+    cols = list(df.columns)
     if not cols:
         return []
 

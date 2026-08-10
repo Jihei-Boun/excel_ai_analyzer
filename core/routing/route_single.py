@@ -1,14 +1,19 @@
-"""단일 파일/시트 프롬프트 라우팅."""
+"""단일 파일/시트 프롬프트 라우팅.
+
+Phase 5 우선순위
+----------------
+1. System/Data Command → deterministic handler
+2. Chart-only display (분석 우회 없음; 표+차트는 아래)
+3. Analysis Pipeline (run_analysis: Planner → retrieval → simple groupby → PandasAI)
+
+Router는 비교/비율/순위 등 분석 *방법*을 고르지 않는다.
+"""
 
 from __future__ import annotations
 
 import pandas as pd
 
-from core.aggregates import (
-    build_context_aggregate_table,
-    build_groupby_aggregate_table,
-    scalar_to_context_table,
-)
+from core.aggregates import scalar_to_context_table
 from core.analysis.analyzer import run_analysis
 from core.display.chart_utils import generate_fallback_chart
 from core.summary.file_summary import (
@@ -51,6 +56,9 @@ def route_single_prompt(
     last_assistant_df: pd.DataFrame | None = None,
     summary_text: str | None = None,
 ) -> SingleRouteOutcome:
+    # ------------------------------------------------------------------
+    # A. System/Data Command — deterministic (Planner 불필요)
+    # ------------------------------------------------------------------
     if is_summary_request(prompt):
         reply = summary_text
         if reply is None:
@@ -110,52 +118,10 @@ def route_single_prompt(
     wants_plot = _expects_plot(prompt)
     wants_table = wants_table_and_chart(prompt)
 
-    grouped = build_groupby_aggregate_table(
-        source_df,
-        prompt,
-        profile_name=profile_name,
-    )
-    if grouped is not None:
-        table, summary = grouped
-        meta: dict = {}
-        if wants_plot:
-            chart_path = generate_fallback_chart(table, prompt)
-            if chart_path:
-                meta["chart_path"] = chart_path
-        return SingleRouteOutcome(
-            reply=summary,
-            dataframe=table,
-            meta=meta,
-            keep_as_filter=False,
-            replace_selection=False,
-            remember_aggregate=True,
-            aggregate_prompt=prompt,
-        )
-
-    if not wants_plot or wants_table:
-        contextual = build_context_aggregate_table(
-            source_df,
-            prompt,
-            context_label=context_label,
-            profile_name=profile_name,
-        )
-        if contextual is not None:
-            table, summary = contextual
-            meta = {}
-            if wants_plot:
-                chart_path = generate_fallback_chart(table, prompt)
-                if chart_path:
-                    meta["chart_path"] = chart_path
-            return SingleRouteOutcome(
-                reply=summary,
-                dataframe=table,
-                meta=meta,
-                keep_as_filter=False,
-                replace_selection=False,
-                remember_aggregate=True,
-                aggregate_prompt=prompt,
-            )
-
+    # ------------------------------------------------------------------
+    # C. Chart-only display fallback (분석 방법 결정 아님)
+    #    표+차트 요청은 아래 Analysis Pipeline으로 보낸다.
+    # ------------------------------------------------------------------
     if wants_plot and not wants_table:
         chart_table, chart_prompt = resolve_chart_table(
             source_df,
@@ -176,13 +142,17 @@ def route_single_prompt(
                     meta={"chart_path": chart_path},
                 )
 
+    # ------------------------------------------------------------------
+    # Analytical request → Analysis Pipeline
+    #   내부: Planner → retrieval → legacy_simple_groupby → PandasAI
+    # ------------------------------------------------------------------
     result, summary, analysis_meta = run_analysis(
         source_df,
         prompt,
         base_url=base_url,
         model=model,
         profile_name=profile_name,
-        skip_aggregate_shortcuts=True,
+        skip_aggregate_shortcuts=False,
     )
 
     reset_filter = False
@@ -198,7 +168,7 @@ def route_single_prompt(
             base_url=base_url,
             model=model,
             profile_name=profile_name,
-            skip_aggregate_shortcuts=True,
+            skip_aggregate_shortcuts=False,
         )
         if isinstance(result, pd.DataFrame) and not result.empty:
             reset_filter = True
@@ -209,6 +179,16 @@ def route_single_prompt(
             dataframe=None,
             meta=_merge_analysis_meta({}, analysis_meta),
         )
+
+    aggregation = analysis_meta.get("aggregation") or {}
+    agg_op = aggregation.get("operation")
+    is_legacy_aggregate = agg_op in {
+        "groupby",
+        "legacy_simple_groupby_fallback",
+        "context_aggregate",
+        "context",
+    }
+    is_analysis_plan = agg_op == "analysis_plan"
 
     if isinstance(result, pd.DataFrame):
         result = result.reset_index(drop=True)
@@ -221,15 +201,14 @@ def route_single_prompt(
         )
         meta = _merge_analysis_meta(meta, analysis_meta)
         is_filter = detect_aggregate_op(prompt) is None
-        # 구조화 분석 계획 결과는 필터 잠금/비목 일치 배지 대상이 아니다.
-        aggregation = analysis_meta.get("aggregation") or {}
-        is_analysis_plan = aggregation.get("operation") == "analysis_plan"
+        # 구조화 분석·레거시 집계 결과는 필터 잠금/비목 일치 배지 대상이 아니다.
         if (
             analysis_meta.get("comparison")
             or analysis_meta.get("aggregate_sources")
             or analysis_meta.get("correlation")
             or analysis_meta.get("vs_mean")
             or is_analysis_plan
+            or is_legacy_aggregate
         ):
             is_filter = False
             ctx_label = None
@@ -254,6 +233,8 @@ def route_single_prompt(
             update_filter_summary=filter_summary if is_filter else None,
             reset_filter=reset_filter,
             filter_auto_reset=reset_filter,
+            remember_aggregate=is_legacy_aggregate,
+            aggregate_prompt=prompt if is_legacy_aggregate else None,
         )
 
     meta = _merge_analysis_meta({}, analysis_meta)

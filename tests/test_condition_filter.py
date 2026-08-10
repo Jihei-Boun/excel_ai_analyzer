@@ -55,26 +55,15 @@ def test_try_condition_zero_and_exists() -> None:
     assert set(result["비용명_2"]) == {"사무용소모품비", "연구수당"}
 
 
-def test_twin_file_zero_exec_with_budget(monkeypatch) -> None:
+def test_twin_file_condition_filter_helper_still_works() -> None:
+    """헬퍼 자체는 유지(단위/multi 호환). single-file production path에서는 미사용."""
     path = Path(__file__).resolve().parents[1] / "data/uploads/03_트윈_예실대비표.xlsx"
     if not path.is_file():
         return
     df = load_excel(path)
     prompt = "집행계가 0인데 실행예산이 있는 행만 골라줘"
-
-    def _fail_chat(*_a, **_k):
-        raise AssertionError("조건 필터로 충분하면 LLM을 호출하면 안 됨")
-
-    monkeypatch.setattr("core.analysis.analyzer.chat", _fail_chat)
-    result, summary, _meta = run_analysis(
-        df,
-        prompt,
-        base_url="http://localhost",
-        model="dummy",
-        profile_name="budget",
-    )
-    assert isinstance(result, pd.DataFrame)
-    assert "조건 필터" in summary
+    result = try_condition_row_filter(df, prompt, profile_name="budget")
+    assert result is not None
     assert len(result) == 6
     names = set(result["비용명_2"].astype(str).str.strip())
     assert names == {
@@ -85,3 +74,36 @@ def test_twin_file_zero_exec_with_budget(monkeypatch) -> None:
         "세미나비",
         "연구수당",
     }
+
+
+def test_single_file_skips_condition_filter_after_planner_exhausted(monkeypatch) -> None:
+    """Phase 5: Planner 소진 후 condition_filter를 analytical fallback으로 쓰지 않는다."""
+    path = Path(__file__).resolve().parents[1] / "data/uploads/03_트윈_예실대비표.xlsx"
+    if not path.is_file():
+        return
+    df = load_excel(path)
+    prompt = "집행계가 0인데 실행예산이 있는 행만 골라줘"
+
+    monkeypatch.setattr(
+        "core.analysis.analyzer.try_analysis_pipeline",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        "core.analysis.analyzer.try_legacy_simple_groupby_fallback",
+        lambda *_a, **_k: None,
+    )
+
+    def _fake_chat(*_a, **_k):
+        return pd.DataFrame({"x": [1]}), "pandasai fallback", {"source": "pandasai"}
+
+    monkeypatch.setattr("core.analysis.analyzer.chat", _fake_chat)
+    result, summary, meta = run_analysis(
+        df,
+        prompt,
+        base_url="http://localhost",
+        model="dummy",
+        profile_name="budget",
+    )
+    assert summary == "pandasai fallback"
+    assert meta.get("source") == "pandasai"
+    assert "조건 필터" not in summary

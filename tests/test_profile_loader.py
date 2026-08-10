@@ -26,6 +26,26 @@ def test_sales_profile_in_list() -> None:
     assert "상품명" in sales["preferred_labels"]
 
 
+def test_inventory_and_custom_profiles() -> None:
+    clear_profile_cache()
+    assert "inventory" in list_profile_names()
+    assert "custom" in list_profile_names()
+
+    inventory = load_profile("inventory")
+    assert inventory["domain"] == "inventory"
+    assert inventory["enable_column_prefs"] is False
+    assert inventory["detect_min_hits"] == 2
+    assert "재고수량" in inventory["column_hints"]
+    assert "품목명" in inventory["preferred_labels"]
+    assert "창고" in inventory["roles"]["group_columns"]
+
+    custom = load_profile("custom")
+    assert custom["domain"] == "custom"
+    assert custom["detect_min_hits"] >= 99
+    assert custom["enable_column_prefs"] is False
+    assert "__CUSTOM_DOMAIN__" in custom["column_hints"]
+
+
 def test_use_profile_context() -> None:
     from core.profile_loader import preferred_labels_for, use_profile
 
@@ -103,6 +123,31 @@ def test_suggest_profile_name_budget_and_sales() -> None:
     name, score = suggest_profile_name(sales_df)
     assert name == "sales"
     assert score >= 2
+
+    inventory_df = pd.DataFrame(
+        {
+            "품목명": ["A"],
+            "SKU": ["S1"],
+            "창고": ["W1"],
+            "재고수량": [10],
+            "입고수량": [3],
+        }
+    )
+    name, score = suggest_profile_name(inventory_df)
+    assert name == "inventory"
+    assert score >= 2
+
+    # custom은 임계값이 높아 자동 추천되지 않아야 한다
+    customish_df = pd.DataFrame(
+        {
+            "항목명": ["A"],
+            "분류": ["B"],
+            "금액": [1],
+            "수량": [2],
+        }
+    )
+    name, score = suggest_profile_name(customish_df)
+    assert name != "custom"
 
     generic_df = pd.DataFrame({"col_a": [1], "col_b": [2]})
     name, score = suggest_profile_name(generic_df)
@@ -231,8 +276,21 @@ def test_profile_column_helpers() -> None:
 
 
 def test_structured_keywords_profile_scoped() -> None:
-    from core.routing.prompt_intent import expects_dataframe, wants_structured_analysis
-    from core.profile_loader import use_profile
+    """Phase 2: profile keyword는 Planner 진입 게이트가 아니다.
+
+    system/data command만 제외하면 분석 후보이다.
+    structured_analysis_keywords는 semantic hint용으로만 남는다.
+    """
+    from core.routing.prompt_intent import (
+        expects_dataframe,
+        is_analytical_request,
+        is_system_data_command,
+        wants_structured_analysis,
+    )
+    from core.profile_loader import (
+        structured_analysis_keywords_for,
+        use_profile,
+    )
     from core.io.text_normalize import keyword_in_text
 
     clear_profile_cache()
@@ -242,15 +300,20 @@ def test_structured_keywords_profile_scoped() -> None:
     assert keyword_in_text("표로 보여줘", "표") is True
     assert keyword_in_text("비용명별 합계", "별") is True
 
+    # System vs analytical 계층
+    assert is_system_data_command("파일 요약해줘") is True
+    assert is_analytical_request("파일 요약해줘") is False
+    assert is_system_data_command("부서별 매출을 비교해줘") is False
+    assert is_analytical_request("부서별 매출을 비교해줘") is True
+
+    # domain keyword 단독도 프로필과 무관하게 분석 후보 (게이트 아님)
     with use_profile("generic"):
-        assert wants_structured_analysis("잔액") is False
-        assert wants_structured_analysis("비중") is False
-        assert wants_structured_analysis("집행률") is False
-    with use_profile("budget"):
         assert wants_structured_analysis("잔액") is True
         assert wants_structured_analysis("비중") is True
         assert wants_structured_analysis("집행률") is True
-    # 범용 키워드는 프로필과 무관
+    with use_profile("budget"):
+        assert wants_structured_analysis("잔액") is True
+        assert "집행률" in structured_analysis_keywords_for()
     assert wants_structured_analysis("상관관계를 분석해줘", profile_name="generic") is True
 
 

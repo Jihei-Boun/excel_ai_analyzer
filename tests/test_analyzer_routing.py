@@ -183,7 +183,10 @@ def test_filter_numeric_code_value() -> None:
 
 
 def test_run_analysis_filters_before_list_seed(monkeypatch) -> None:
-    """리스트 요청이라도 값 필터가 리스트 시드보다 먼저 적용된다."""
+    """리스트 요청이라도 값 필터가 리스트 시드보다 먼저 적용된다.
+
+    Phase 2: Planner가 실패(None)한 뒤 legacy value_match fallback.
+    """
     from core.analysis import analyzer as analyzer_mod
 
     df = pd.DataFrame(
@@ -198,6 +201,7 @@ def test_run_analysis_filters_before_list_seed(monkeypatch) -> None:
         raise AssertionError("값 필터로 충분하면 LLM chat을 호출하면 안 됨")
 
     monkeypatch.setattr(analyzer_mod, "chat", _fail_chat)
+    monkeypatch.setattr(analyzer_mod, "try_analysis_pipeline", lambda *_a, **_k: None)
     result, summary, _meta = analyzer_mod.run_analysis(
         df,
         prompt,
@@ -645,6 +649,7 @@ def test_pivot_request_does_not_use_shortcut(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(analyzer_mod, "chat", _fake_chat)
+    monkeypatch.setattr(analyzer_mod, "try_analysis_pipeline", lambda *_a, **_k: None)
     result, _summary, _meta = analyzer_mod.run_analysis(
         df,
         "비목분류와 비용명을 교차해서 집행계를 피벗해줘",

@@ -1,4 +1,9 @@
-"""다중 파일/시트 프롬프트 라우팅."""
+"""다중 파일/시트 프롬프트 라우팅.
+
+Phase 2 범위: multi-file AnalysisPlan은 추가하지 않는다.
+System/Data Command는 single과 동일하게 deterministic 유지.
+집계·integrate·PandasAI는 기존 흐름 유지 (향후 Planner 확장 지점).
+"""
 
 from __future__ import annotations
 
@@ -47,6 +52,7 @@ def route_multi_prompt(
 ) -> SingleRouteOutcome:
     prepared = named_frames
 
+    # A. System/Data Command (single과 동일 — Planner 불필요)
     if is_summary_request(prompt):
         reply = build_multi_file_summary(
             prepared,
@@ -109,6 +115,7 @@ def route_multi_prompt(
             replace_selection=False,
         )
 
+    # B. Legacy multi aggregate (Phase 2: multi Planner 미구현 — 기존 유지)
     if detect_aggregate_op(prompt) is not None:
         source_named, agg_context, new_filter, new_label = resolve_multi_aggregate_source(
             prepared,

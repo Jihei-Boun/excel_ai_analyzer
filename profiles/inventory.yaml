@@ -1,0 +1,162 @@
+# 재고/입고·출고 표용 샘플 도메인 프로필
+# profiles/ 에 YAML만 추가하면 사이드바 목록에 나타납니다.
+
+summary: inventory
+currency: none
+domain: inventory
+summary_builder: generic
+locale: ko
+
+detect_min_hits: 2
+enable_column_prefs: false
+
+column_hints:
+  - 재고
+  - 재고수량
+  - 입고
+  - 출고
+  - 창고
+  - SKU
+  - 품번
+
+preferred_labels:
+  - 품목명
+  - 상품명
+  - 제품명
+  - SKU
+  - 품번
+  - 창고
+  - 로케이션
+  - 카테고리
+
+roles:
+  label_columns:
+    - 품목명
+    - 상품명
+    - 제품명
+    - SKU
+    - 품번
+  group_columns:
+    - 창고
+    - 로케이션
+    - 카테고리
+    - 공급처
+  metric_numerator:
+    - 재고수량
+    - 현재고
+    - 수량
+    - 입고수량
+    - 출고수량
+  metric_denominator: []
+  metric_remaining:
+    - 가용재고
+    - 가용수량
+  metric_remaining_current: []
+  key_metrics:
+    - 재고수량
+    - 현재고
+    - 입고수량
+    - 출고수량
+    - 수량
+
+column_prefs: {}
+
+column_hint_extras:
+  item_column_hints:
+    - 품목명
+    - 상품명
+    - SKU
+    - 품번
+  amount_column_hints:
+    - 재고
+    - 재고수량
+    - 입고
+    - 출고
+  group_column_hints:
+    - 창고
+    - 로케이션
+  code_column_hints:
+    - SKU
+    - 품번
+    - 바코드
+
+footer_labels: []
+
+structured_analysis_keywords:
+  - 재고
+  - 입고
+  - 출고
+complex_analysis_keywords: []
+
+display_labels:
+  rate: 비율
+  item: 품목
+  denominator: 기준수량
+
+interpret_guidance: >-
+  재고·입고·출고 수량을 중심으로 해석하세요.
+  단가·비율 컬럼은 합계하지 마세요.
+
+guardrail_hints:
+  code_col: SKU
+  name_col: 품목명
+  group_col: 창고
+  fill_example: 카테고리값
+
+plan_guidance: >-
+  Prefer SKU/품목명/창고 columns as labels when present.
+  Sum inventory and inbound/outbound quantity columns; do not sum unit cost or rate columns.
+  For ranking low-stock items use sort+limit or top_n_per_group on remaining/available qty.
+
+semantic_hints:
+  likely_identifier_concepts:
+    - SKU
+    - 품번
+    - 바코드
+    - lot
+    - 로트
+  likely_label_concepts:
+    - 품목명
+    - 상품명
+    - 창고
+    - 로케이션
+  likely_additive_concepts:
+    - 재고수량
+    - 현재고
+    - 입고수량
+    - 출고수량
+    - 수량
+  cautions:
+    - do not sum unit costs or rates
+    - summary rows should not be mixed with detail rows during aggregation
+    - available qty may already be derived from on-hand minus reserved
+
+suggested_prompts:
+  - 파일을 요약해줘
+  - 창고별 재고수량 합계를 표로 보여줘
+  - 품목별 현재고를 비교해줘
+  - 재고가 가장 적은 상위 10개 품목을 보여줘
+
+suggested_prompts_multi_file:
+  - 선택한 파일들을 통합해줘
+  - 파일별 재고수량 합계를 표로 비교해줘
+  - 두 파일에서 공통 SKU를 알려줘
+
+suggested_prompts_multi_sheet:
+  - 시트별 재고수량 합계를 표로 비교해줘
+  - 시트 간 공통 컬럼을 알려줘
+  - 파일을 요약해줘
+
+meanings:
+  - hints: [재고수량, 현재고, on_hand, stock]
+    meaning: 현재 보유 재고 수량
+  - hints: [입고, 입고수량, inbound, receipt]
+    meaning: 입고된 수량
+  - hints: [출고, 출고수량, outbound, issue]
+    meaning: 출고된 수량
+  - hints: [가용재고, 가용수량, available]
+    meaning: 예약 등을 제외한 가용 수량
+  - hints: [SKU, 품번, sku]
+    meaning: 품목 식별 코드
+  - hints: [창고, warehouse, 로케이션]
+    meaning: 보관 위치

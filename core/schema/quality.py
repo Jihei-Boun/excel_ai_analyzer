@@ -62,12 +62,28 @@ _QUALITY_SIGNAL_COMBOS = (
     ("고치", "분석"),
     ("결측", "처리"),
     ("결측", "채우"),
+    ("결측", "문제"),
+    ("결측", "확인"),
+    ("중복", "문제"),
+    ("중복", "확인"),
     ("누락", "처리"),
     ("누락", "채우"),
+    ("누락", "문제"),
     ("clean", "data"),
     ("fix", "before"),
-    ("문제", "부분"),
-    ("문제", "알려"),
+    # "문제"+"알려" 같은 짧은 토큰 조합은 '주문제외' 오탐을 만든다 → 제거.
+    # 명시적 품질 문구(_QUALITY_SIGNAL_PHRASES / 경계 매칭)만 사용.
+)
+
+# 단독 토큰처럼 쓰일 때만 quality로 본다 (부분문자열 금지).
+_QUALITY_BOUNDED_TOKENS = (
+    "문제점",
+    "이상치",
+    "outlier",
+    "품질",
+    "전처리",
+    "클렌징",
+    "클리닝",
 )
 
 _FIX_INTENT_PHRASES = (
@@ -140,7 +156,11 @@ class QualityReport:
 
 
 def is_quality_request(prompt: str) -> bool:
-    """데이터 품질 진단·분석 전 수정 요청인지 판별한다."""
+    """데이터 품질 진단·분석 전 수정 요청인지 판별한다.
+
+    짧은 토큰(예: '문제')의 부분문자열 매칭으로 도메인 값(주문제외)을
+    system command로 오탐하지 않도록, 명시 phrase / 경계 토큰 위주로 판정한다.
+    """
     compact = _compact_prompt(prompt)
     if not compact:
         return False
@@ -154,7 +174,27 @@ def is_quality_request(prompt: str) -> bool:
         return True
     if any(phrase in compact for phrase in _QUALITY_SIGNAL_PHRASES):
         return True
-    return any(all(token in compact for token in combo) for combo in _QUALITY_SIGNAL_COMBOS)
+    if any(all(token in compact for token in combo) for combo in _QUALITY_SIGNAL_COMBOS):
+        return True
+    # 경계 토큰: 앞뒤가 한글/영문/숫자가 아닐 때만 (또는 문자열 끝)
+    for token in _QUALITY_BOUNDED_TOKENS:
+        if _has_bounded_token(compact, token):
+            return True
+    # '데이터에 문제가' / '문제가 있는지' 등 명시 패턴
+    if re.search(r"(데이터)?(에|의)?문제가(있|있나|있는지|있는지)", compact):
+        return True
+    if re.search(r"이상한데이터|데이터이상|이상한다|이상해요", compact):
+        return True
+    return False
+
+
+def _has_bounded_token(compact: str, token: str) -> bool:
+    """compact 문자열에서 token이 '단어 경계'에 가깝게 등장하는지."""
+    if not token or token not in compact:
+        return False
+    # 한글/영문/숫자 연속 글자 안쪽이면 오탐 후보
+    pattern = rf"(?<![0-9A-Za-z가-힣]){re.escape(token)}(?![0-9A-Za-z가-힣])"
+    return re.search(pattern, compact) is not None
 
 
 def detect_quality_intent(prompt: str) -> QualityIntent:

@@ -11,6 +11,45 @@ from core.analysis.analysis_plan_types import (
     AnalysisStep,
 )
 
+
+def _resolve_column(name: object, columns: set[str]) -> str | None:
+    """정확한 컬럼명 또는 canonicalize/match-key로 실제 스키마 컬럼에 매핑.
+
+    dirty Excel의 ``' 상품 명 '`` ↔ ``상품_명`` 같은 범용 정규화 차이를 흡수한다.
+    특정 dataset 컬럼명 hardcoding 없음.
+    """
+    raw = str(name or "").strip()
+    if not raw:
+        return None
+    if raw in columns:
+        return raw
+    from core.io.normalize import canonicalize_column_name, column_match_key
+
+    canon = canonicalize_column_name(raw)
+    if canon in columns:
+        return canon
+    key = column_match_key(raw)
+    matches = [c for c in columns if column_match_key(c) == key]
+    if len(matches) == 1:
+        return matches[0]
+    # underscore/space-insensitive exact canon among columns
+    matches = [c for c in columns if canonicalize_column_name(c) == canon]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _resolve_columns(names: list[str], columns: set[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        resolved = _resolve_column(name, columns)
+        if resolved and resolved not in seen:
+            out.append(resolved)
+            seen.add(resolved)
+    return out
+
+
 def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | None:
     op = str(item.get("op") or item.get("operation") or "").strip()
     if op not in SUPPORTED_ANALYSIS_OPS:
@@ -26,11 +65,10 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
         include = [str(x) for x in include if str(x) in ROW_TYPES]
         if not include:
             include = ["detail"]
-        dim_cols = [
-            str(c)
-            for c in (item.get("dimension_columns") or [])
-            if str(c) in columns
-        ]
+        dim_cols = _resolve_columns(
+            [str(c) for c in (item.get("dimension_columns") or [])],
+            columns,
+        )
         column_filters = _sanitize_column_filters(item, columns)
         # 단일 column/values 단축형
         if not column_filters and item.get("column") and item.get("values") is not None:
@@ -61,14 +99,17 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
             cols = list(item["column_renames"].keys())
         if isinstance(cols, str):
             cols = [cols]
-        cols = [str(c) for c in (cols or [])]
+        resolved_cols: list[str] = []
+        for c in cols or []:
+            resolved = _resolve_column(c, columns)
+            resolved_cols.append(resolved or str(c))
         renames = item.get("renames") or item.get("column_renames") or {}
         if not isinstance(renames, dict):
             renames = {}
         return AnalysisStep(
             op,
             {
-                "columns": cols,
+                "columns": resolved_cols,
                 "renames": {str(k): str(v) for k, v in renames.items() if str(k)},
             },
         )
@@ -111,9 +152,13 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
         # sign_label 1피연산자는 직전 파생열(차이)일 수 있어 columns 소속을 강제하지 않는다.
         if kind == "sign_label" and len(operands) == 1:
             return AnalysisStep(op, {"name": name, "expr": {kind: operands}})
-        if any(opnd not in columns for opnd in operands):
-            return None
-        return AnalysisStep(op, {"name": name, "expr": {kind: operands}})
+        resolved_ops: list[str] = []
+        for opnd in operands:
+            resolved = _resolve_column(opnd, columns)
+            if resolved is None:
+                return None
+            resolved_ops.append(resolved)
+        return AnalysisStep(op, {"name": name, "expr": {kind: resolved_ops}})
 
     if op == "sort":
         by = item.get("by") or item.get("columns") or []
@@ -151,11 +196,29 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
         group_by = item.get("group_by") or item.get("group_column") or []
         if isinstance(group_by, str):
             group_by = [group_by]
-        group_by = [str(c) for c in group_by if str(c) in columns]
+        group_by = _resolve_columns([str(c) for c in group_by], columns)
         if not group_by:
             return None
         metrics = item.get("metrics") or []
         if not isinstance(metrics, list) or not metrics:
+            return None
+        resolved_metrics: list[Any] = []
+        for metric in metrics:
+            if isinstance(metric, str):
+                col = _resolve_column(metric, columns)
+                if col:
+                    resolved_metrics.append({"column": col, "fn": "sum"})
+            elif isinstance(metric, dict):
+                col = _resolve_column(
+                    metric.get("column") or metric.get("name") or "",
+                    columns,
+                )
+                if not col:
+                    continue
+                entry = dict(metric)
+                entry["column"] = col
+                resolved_metrics.append(entry)
+        if not resolved_metrics:
             return None
         include_groups = item.get("include_groups") or item.get("groups") or []
         if isinstance(include_groups, str):
@@ -167,7 +230,7 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
             op,
             {
                 "group_by": group_by,
-                "metrics": metrics,
+                "metrics": resolved_metrics,
                 "prefer_subtotals": bool(prefer),
                 "include_groups": [str(g) for g in include_groups if str(g).strip()],
             },
@@ -176,12 +239,14 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
     if op == "ratio_of_aggregates":
         name = str(item.get("name") or "비율").strip() or "비율"
         formula = item.get("formula") if isinstance(item.get("formula"), dict) else {}
-        numerator = str(
-            item.get("numerator") or formula.get("numerator") or ""
-        )
-        denominator = str(
-            item.get("denominator") or formula.get("denominator") or ""
-        )
+        numerator = _resolve_column(
+            item.get("numerator") or formula.get("numerator") or "",
+            columns,
+        ) or str(item.get("numerator") or formula.get("numerator") or "")
+        denominator = _resolve_column(
+            item.get("denominator") or formula.get("denominator") or "",
+            columns,
+        ) or str(item.get("denominator") or formula.get("denominator") or "")
         if not numerator or not denominator:
             return None
         # 피연산자는 원본 또는 이전 aggregate 결과 컬럼일 수 있음 — 이름은 유지
@@ -191,7 +256,9 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
         )
 
     if op == "compare_groups":
-        group_column = str(item.get("group_column") or "")
+        group_column = _resolve_column(item.get("group_column") or "", columns) or str(
+            item.get("group_column") or ""
+        )
         if not group_column:
             return None
         metrics = item.get("metrics") or []
@@ -203,30 +270,43 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
         rate_columns = item.get("rate_columns") or []
         if isinstance(rate_columns, str):
             rate_columns = [rate_columns]
+        resolved_metrics = []
+        for m in metrics:
+            resolved = _resolve_column(m, columns)
+            resolved_metrics.append(resolved or str(m))
+        resolved_rates = []
+        for c in rate_columns:
+            resolved = _resolve_column(c, columns)
+            if resolved:
+                resolved_rates.append(resolved)
         return AnalysisStep(
             op,
             {
                 "group_column": group_column,
-                "metrics": [str(m) for m in metrics],
+                "metrics": resolved_metrics,
                 "groups": [str(g) for g in groups if str(g).strip()],
-                "rate_columns": [str(c) for c in rate_columns],
+                "rate_columns": resolved_rates,
             },
         )
 
     if op == "distribution_summary":
-        denominator = str(
-            item.get("denominator_column") or item.get("budget_column") or ""
-        )
-        numerator = str(
-            item.get("numerator_column") or item.get("executed_column") or ""
-        )
+        denominator = _resolve_column(
+            item.get("denominator_column") or item.get("budget_column") or "",
+            columns,
+        ) or str(item.get("denominator_column") or item.get("budget_column") or "")
+        numerator = _resolve_column(
+            item.get("numerator_column") or item.get("executed_column") or "",
+            columns,
+        ) or str(item.get("numerator_column") or item.get("executed_column") or "")
         if not denominator or not numerator:
             return None
+        group_column = _resolve_column(item.get("group_column") or "", columns)
+        item_column = _resolve_column(item.get("item_column") or "", columns)
         return AnalysisStep(
             op,
             {
-                "group_column": str(item.get("group_column") or "") or None,
-                "item_column": str(item.get("item_column") or "") or None,
+                "group_column": group_column,
+                "item_column": item_column,
                 "denominator_column": denominator,
                 "numerator_column": numerator,
                 # 하위 호환 별칭
@@ -238,18 +318,24 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
         )
 
     if op == "correlation":
-        x_col = str(item.get("x_column") or item.get("column_x") or "")
-        y_col = str(item.get("y_column") or item.get("column_y") or "")
+        x_col = _resolve_column(
+            item.get("x_column") or item.get("column_x") or "", columns
+        ) or ""
+        y_col = _resolve_column(
+            item.get("y_column") or item.get("column_y") or "", columns
+        ) or ""
         value_cols = item.get("value_columns") or item.get("columns") or []
         if isinstance(value_cols, str):
             value_cols = [value_cols]
-        if (not x_col or x_col not in columns) and isinstance(value_cols, list):
-            valid = [str(c) for c in value_cols if str(c) in columns]
+        if (not x_col or not y_col) and isinstance(value_cols, list):
+            valid = _resolve_columns([str(c) for c in value_cols], columns)
             if len(valid) >= 2:
                 x_col, y_col = valid[0], valid[1]
-        if x_col not in columns or y_col not in columns:
+        if not x_col or not y_col or x_col not in columns or y_col not in columns:
             return None
-        label_col = str(item.get("label_column") or item.get("item_column") or "")
+        label_col = _resolve_column(
+            item.get("label_column") or item.get("item_column") or "", columns
+        )
         methods = item.get("methods") or ["pearson", "spearman"]
         if isinstance(methods, str):
             methods = [methods]
@@ -258,7 +344,7 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
             {
                 "x_column": x_col,
                 "y_column": y_col,
-                "label_column": label_col if label_col in columns else None,
+                "label_column": label_col,
                 "methods": [str(m) for m in methods if str(m).strip()]
                 or ["pearson", "spearman"],
             },
@@ -267,22 +353,25 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
     if op == "filter_vs_mean":
         # 파생열(집행률 등)일 수 있어 원본 columns 소속은 강제하지 않는다.
         column = str(item.get("column") or item.get("name") or "").strip()
+        column = _resolve_column(column, columns) or column
         if not column:
             return None
         relation = str(item.get("relation") or item.get("compare") or "below")
         return AnalysisStep(op, {"column": column, "relation": relation})
 
     if op == "top_per_group":
-        group_col = str(
-            item.get("group_column") or item.get("group_by") or item.get("by") or ""
-        ).strip()
-        value_col = str(
+        group_col = _resolve_column(
+            item.get("group_column") or item.get("group_by") or item.get("by") or "",
+            columns,
+        )
+        value_col = _resolve_column(
             item.get("value_column")
             or item.get("metric")
             or item.get("metric_column")
-            or ""
-        ).strip()
-        if group_col not in columns or value_col not in columns:
+            or "",
+            columns,
+        )
+        if not group_col or not value_col:
             return None
         try:
             n = int(item.get("n") or item.get("top_n") or item.get("limit") or 1)
@@ -317,8 +406,8 @@ def _sanitize_column_filters(
     for spec in raw:
         if not isinstance(spec, dict):
             continue
-        col = str(spec.get("column") or "")
-        if col not in columns:
+        col = _resolve_column(spec.get("column") or "", columns)
+        if not col:
             continue
         values = spec.get("values") or []
         if isinstance(values, str):
@@ -361,16 +450,55 @@ def _sanitize_numeric_filters(
     for spec in raw:
         if not isinstance(spec, dict):
             continue
-        col = str(spec.get("column") or "")
-        if col not in columns:
+        left = _resolve_column(
+            spec.get("left_column")
+            or spec.get("column")
+            or spec.get("left")
+            or "",
+            columns,
+        )
+        right = _resolve_column(
+            spec.get("right_column")
+            or spec.get("other_column")
+            or spec.get("right")
+            or "",
+            columns,
+        )
+        if not left:
             continue
         raw_op = str(spec.get("op") or spec.get("operator") or "").strip().lower()
         op = op_aliases.get(raw_op, raw_op)
-        if op not in NUMERIC_FILTER_OPS:
+        if op in {"==", "!=", ">", ">=", "<", "<="}:
+            op = op_aliases.get(op, op)
+        if op not in {"eq", "ne", "gt", "gte", "lt", "lte"} and op not in NUMERIC_FILTER_OPS:
             continue
+        if right:
+            out.append(
+                {
+                    "left_column": left,
+                    "column": left,
+                    "op": op,
+                    "right_column": right,
+                }
+            )
+            continue
+        raw_value = spec.get("value")
+        # LLM이 종종 column-vs-column을 value에 컬럼명 문자열로 넣는다.
+        if isinstance(raw_value, str) and raw_value.strip():
+            as_col = _resolve_column(raw_value, columns)
+            if as_col and as_col != left:
+                out.append(
+                    {
+                        "left_column": left,
+                        "column": left,
+                        "op": op,
+                        "right_column": as_col,
+                    }
+                )
+                continue
         try:
-            value = float(spec.get("value"))
+            value = float(raw_value)
         except (TypeError, ValueError):
             continue
-        out.append({"column": col, "op": op, "value": value})
+        out.append({"column": left, "op": op, "value": value})
     return out
