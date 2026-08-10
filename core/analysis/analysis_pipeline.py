@@ -180,6 +180,7 @@ def try_analysis_pipeline(
             plan,
             classified,
             profile_name=profile_name,
+            user_prompt=prompt,
         )
         if not plan_report.ok:
             feedback = format_plan_validation_feedback(
@@ -283,7 +284,10 @@ def try_analysis_pipeline(
                 "Semantic role mismatch / ambiguous sibling columns detected. "
                 "Do NOT invent columns. Re-select the metric that best matches the "
                 "user request using role_hints and criteria_note. "
-                "Do not repeat the previous plan unchanged."
+                "Preserve the same operation composition "
+                "(especially compare_groups / aggregate / ratio / filter_vs_mean steps); "
+                "only change column choices if needed. "
+                "Do not replace compare_groups with sort→limit."
             )
             retry_log.append(
                 {

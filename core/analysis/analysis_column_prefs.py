@@ -81,8 +81,15 @@ def apply_safety_column_normalization(
         for item in filters:
             if isinstance(item, dict):
                 row = dict(item)
-                if "column" in row:
-                    row["column"] = _canon(row["column"])
+                for key in ("column", "left_column", "right_column", "other_column"):
+                    if key in row:
+                        row[key] = _canon(row[key])
+                # value that is actually a column name
+                if isinstance(row.get("value"), str):
+                    as_col = _canon(row["value"])
+                    if as_col in colset and as_col != row.get("column") and as_col != row.get("left_column"):
+                        row["right_column"] = as_col
+                        row.pop("value", None)
                 fixed.append(row)
             else:
                 fixed.append(item)
@@ -109,10 +116,13 @@ def _normalize_step_columns(step: Any, canon) -> Any:  # noqa: ANN001
         "value_column",
         "denominator_column",
         "numerator_column",
+        "left_column",
+        "right_column",
+        "other_column",
     ):
         if key in item:
             item[key] = canon(item[key])
-    for key in ("group_by", "columns", "by", "metrics", "rate_columns"):
+    for key in ("group_by", "columns", "by", "metrics", "rate_columns", "numeric_filters"):
         val = item.get(key)
         if isinstance(val, list):
             new_list = []
@@ -121,8 +131,12 @@ def _normalize_step_columns(step: Any, canon) -> Any:  # noqa: ANN001
                     new_list.append(canon(entry))
                 elif isinstance(entry, dict):
                     row = dict(entry)
-                    if "column" in row:
-                        row["column"] = canon(row["column"])
+                    for ck in ("column", "left_column", "right_column", "other_column", "name"):
+                        if ck in row:
+                            row[ck] = canon(row[ck])
+                    if isinstance(row.get("value"), str):
+                        # only rewrite when value is an existing column (handled by caller set)
+                        row["value"] = canon(row["value"])
                     new_list.append(row)
                 else:
                     new_list.append(entry)

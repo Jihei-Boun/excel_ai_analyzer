@@ -43,6 +43,7 @@ def validate_analysis_plan(
     df: pd.DataFrame,
     *,
     profile_name: str | None = None,
+    user_prompt: str | None = None,
 ) -> ValidationReport:
     """실행 전 AnalysisPlan이 스키마·의존성에 맞는지 검사한다."""
     issues: list[ValidationIssue] = []
@@ -204,7 +205,14 @@ def validate_analysis_plan(
         )
     )
     # Phase 9: operation composition / dependency rules
-    issues.extend(_validate_plan_composition(plan, known_final=known, available=available))
+    issues.extend(
+        _validate_plan_composition(
+            plan,
+            known_final=known,
+            available=available,
+            user_prompt=user_prompt,
+        )
+    )
 
     errors = [i for i in issues if i.level == "error"]
     return ValidationReport(ok=not errors, issues=issues)
@@ -215,6 +223,7 @@ def _validate_plan_composition(
     *,
     known_final: set[str],
     available: set[str],
+    user_prompt: str | None = None,
 ) -> list[ValidationIssue]:
     """원자 op 조합·의존성 오류. 정답 plan을 만들지 않고 feedback만 낸다."""
     del known_final
@@ -300,9 +309,12 @@ def _validate_plan_composition(
         elif op == "compare_groups":
             saw_compare = True
             for metric in payload.get("metrics") or []:
-                col = str(metric)
+                col = _metric_column(metric) if isinstance(metric, dict) else str(metric)
                 if not col:
                     continue
+                # dict mistakenly stringified earlier still extract if possible
+                if col.startswith("{") and "column" in col:
+                    continue  # unusable; sanitize should have normalized
                 if col not in produced:
                     issues.append(
                         ValidationIssue(
@@ -327,6 +339,47 @@ def _validate_plan_composition(
                             ),
                         )
                     )
+        elif op == "filter_vs_mean":
+            col = str(payload.get("column") or "")
+            if col and col not in produced:
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "missing_metric_before_filter_vs_mean",
+                        (
+                            f"filter_vs_mean column `{col}` is not available yet. "
+                            "Create it with aggregate / ratio_of_aggregates / derive_column first."
+                        ),
+                    )
+                )
+            # rate request but filtering a non-rate source column
+            if (
+                col
+                and _looks_like_rate_request(
+                    " ".join(
+                        [
+                            str(plan.criteria_note or ""),
+                            str((plan.raw or {}).get("criteria_note") or ""),
+                            str((plan.raw or {}).get("rate_name") or ""),
+                            str((plan.raw or {}).get("operation") or ""),
+                        ]
+                    )
+                )
+                and not _looks_like_rate_name(col)
+                and not saw_ratio
+                and col in available
+            ):
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "missing_rate_vs_mean_composition",
+                        (
+                            "The request compares a rate/ratio to its mean, but filter_vs_mean "
+                            f"targets source column `{col}` instead of a derived rate. "
+                            "Use rate_vs_mean or: derive/ratio → filter_vs_mean(column=rate_name)."
+                        ),
+                    )
+                )
 
     # top_per_group misuse for global ranking
     if saw_top_per_group and saw_limit:
@@ -342,13 +395,14 @@ def _validate_plan_composition(
             )
         )
 
-    # Intent signals from planner criteria / high-level fields (not auto-filled note alone)
+    # Intent signals from planner criteria / high-level fields / user prompt
     note = str(plan.criteria_note or "")
     raw = plan.raw or {}
     op_field = str(raw.get("operation") or "")
     rate_name_field = str(raw.get("rate_name") or "")
     intent_blob = " ".join(
         [
+            str(user_prompt or ""),
             note,
             str(raw.get("criteria_note") or ""),
             rate_name_field,
@@ -430,8 +484,147 @@ def _validate_plan_composition(
             )
         )
 
+    # rate above/below mean without filter_vs_mean / rate_vs_mean composition
+    if (
+        _looks_like_rate_vs_mean_request(intent_blob)
+        and "filter_vs_mean" not in has
+        and op_field not in {"rate_vs_mean", "execution_rate_vs_mean"}
+    ):
+        issues.append(
+            ValidationIssue(
+                "error",
+                "missing_rate_vs_mean_composition",
+                (
+                    "The request compares a rate to its mean. Use rate_vs_mean or: "
+                    "derive/ratio_of_aggregates → filter_vs_mean(column=<rate name>). "
+                    "Aggregate alone is not enough."
+                ),
+            )
+        )
+
+    # entity ranking: top-N without aggregate when request looks entity-level
+    if (
+        saw_sort
+        and saw_limit
+        and not saw_aggregate
+        and not saw_top_per_group
+        and _looks_like_entity_ranking(intent_blob)
+        and not _looks_like_row_ranking(intent_blob)
+    ):
+        issues.append(
+            ValidationIssue(
+                "error",
+                "entity_ranking_missing_aggregate",
+                (
+                    "Entity ranking (top-N products/customers/items that may span many rows) "
+                    "needs aggregate → sort → limit. Row ranking (already one row per item) "
+                    "uses sort → limit only. Use unique_ratio / grain_hint as context."
+                ),
+            )
+        )
+
+    # filter_vs_mean used where column-vs-column threshold compare is needed
+    if (
+        "filter_vs_mean" in has
+        and not _plan_has_column_vs_column(plan)
+        and _looks_like_threshold_compare(intent_blob)
+    ):
+        issues.append(
+            ValidationIssue(
+                "error",
+                "column_vs_column_misclassified",
+                (
+                    "Comparing two numeric columns row-wise requires filter_rows with "
+                    "{left_column, op, right_column}. Do not use filter_vs_mean to compare "
+                    "two different columns."
+                ),
+            )
+        )
+
     del saw_aggregate
     return issues
+
+
+def _looks_like_rate_vs_mean_request(blob: str) -> bool:
+    text = str(blob or "").lower()
+    has_mean = any(tok in text for tok in ("평균", "mean", "average"))
+    has_rate = _looks_like_rate_request(text)
+    has_relation = any(tok in text for tok in ("높은", "낮은", "above", "below", "보다"))
+    return has_mean and has_rate and has_relation
+
+
+def _looks_like_entity_ranking(blob: str) -> bool:
+    text = str(blob or "").lower()
+    if not any(tok in text for tok in ("상위", "하위", "top", "bottom")):
+        return False
+    return any(
+        tok in text
+        for tok in (
+            "개",
+            "명",
+            "상품",
+            "고객",
+            "항목",
+            "비목",
+            "제품",
+            "customer",
+            "product",
+            "item",
+        )
+    )
+
+
+def _looks_like_row_ranking(blob: str) -> bool:
+    text = str(blob or "").lower()
+    return any(
+        tok in text
+        for tok in (
+            "건",
+            "행",
+            "시점",
+            "측정",
+            "주문 ",
+            "order",
+            "row",
+            "reading",
+            "timestamp",
+        )
+    )
+
+
+def _looks_like_threshold_compare(blob: str) -> bool:
+    text = str(blob or "").lower()
+    return any(
+        tok in text
+        for tok in (
+            "보다 적",
+            "보다 작",
+            "미만",
+            "이하",
+            "미달",
+            "부족",
+            "위험",
+            "below",
+            "less than",
+            "under ",
+            "안전",
+            "threshold",
+            "safety",
+            "품절",
+        )
+    )
+
+
+def _plan_has_column_vs_column(plan: AnalysisPlan) -> bool:
+    for step in plan.steps:
+        if step.op != "filter_rows":
+            continue
+        for filt in step.payload.get("numeric_filters") or []:
+            if isinstance(filt, dict) and (
+                filt.get("right_column") or filt.get("other_column")
+            ):
+                return True
+    return False
 
 
 def _looks_like_groupwise_ranking(blob: str) -> bool:
@@ -537,10 +730,12 @@ def format_plan_validation_feedback(
         "missing_group_column",
         "global_ranking_missing_limit",
         "global_ranking_misclassified",
+        "entity_ranking_missing_aggregate",
     }:
         lines.append(
-            "Composition hint: global ranking = metric → sort → limit; "
-            "group-wise ranking = metric → top_per_group(group, value, n)."
+            "Composition hint: row ranking = sort → limit; "
+            "entity ranking = aggregate → sort → limit; "
+            "group-wise = top_per_group(group, value, n)."
         )
     if codes & {
         "missing_ratio_composition",
@@ -548,15 +743,21 @@ def format_plan_validation_feedback(
         "missing_ratio_name",
         "missing_numerator",
         "missing_denominator",
+        "missing_rate_vs_mean_composition",
     }:
         lines.append(
-            "Composition hint: rate/ratio needs ratio_of_aggregates with an explicit "
-            "`name`, then sort/compare may reference that same name."
+            "Composition hint: rate/ratio needs ratio_of_aggregates or derive with an explicit "
+            "`name`; rate vs mean needs filter_vs_mean on that rate name (or rate_vs_mean)."
         )
     if codes & {"missing_metric_before_sort", "compare_before_metric"}:
         lines.append(
             "Composition hint: create the metric (aggregate and/or ratio_of_aggregates) "
-            "before sort or compare_groups."
+            "before sort or compare_groups. Named group compare keeps compare_groups."
+        )
+    if codes & {"column_vs_column_misclassified"}:
+        lines.append(
+            "Composition hint: row-wise column comparison uses "
+            "filter_rows numeric_filters: {left_column, op, right_column}."
         )
 
     # 컬럼 후보 힌트 (강제 지시 금지)
@@ -1171,20 +1372,25 @@ def _validate_compare_groups(
         issues.append(_missing_column_issue("missing_group_column", group_col, available))
 
     groups = payload.get("groups") or []
-    if group_col and groups and group_col in df.columns:
-        # 사용자가 명시한 그룹이 plan에 있으면 전부 모두 존재해야 함
-        issues.extend(_validate_group_values(df, group_col, groups, required_all=True))
-    elif not groups:
+    if isinstance(groups, str):
+        groups = [groups]
+    groups = [str(g) for g in groups if str(g).strip()]
+    if len(groups) < 2:
         issues.append(
             ValidationIssue(
-                "warning",
-                "compare_groups_empty",
-                "compare_groups has no explicit groups list.",
+                "error",
+                "compare_groups_need_two_groups",
+                (
+                    "compare_groups requires group_column and at least two explicit group values. "
+                    "Do not use compare_groups to compare two metric columns."
+                ),
             )
         )
+    elif group_col and group_col in df.columns:
+        issues.extend(_validate_group_values(df, group_col, groups, required_all=True))
 
     for metric in payload.get("metrics") or []:
-        col = str(metric)
+        col = _metric_column(metric) if isinstance(metric, dict) else str(metric)
         if col and col not in known and col not in available:
             issues.append(
                 ValidationIssue(

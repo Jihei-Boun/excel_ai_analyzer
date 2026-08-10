@@ -43,6 +43,63 @@ def _compile_high_level(data: dict[str, Any], columns: set[str]) -> dict[str, An
     return {}
 
 
+# High-level forms that are NOT atomic ops — must be expanded when nested in steps[].
+_NESTED_HIGH_LEVEL_OPS = frozenset(
+    {
+        "top_n_difference",
+        "rank_difference",
+        "difference_topn",
+        "group_comparison",
+        "execution_rate_compare",
+        "correlation",
+        "correlation_analysis",
+        "find_items",
+        "item_filter",
+        "condition_select",
+        "rate_vs_mean",
+        "execution_rate_vs_mean",
+        "above_mean",
+        "below_mean",
+        "top_n_per_group",
+        "rank_per_group",
+        "split_by_difference",
+        "increase_decrease_split",
+        "budget_change_split",
+    }
+)
+
+
+def expand_steps_high_level_ops(
+    raw_steps: list[Any],
+    columns: set[str],
+) -> list[dict[str, Any]]:
+    """steps[] 안의 high-level `operation`을 원자 step으로 펼친다.
+
+    Planner가 종종 ``{"steps":[{"operation":"find_items", ...}]}`` 형태로내며
+    이때 top-level compile이 비어 sanitize가 high-level을 버려 empty_plan이 된다.
+    """
+    out: list[dict[str, Any]] = []
+    for item in raw_steps:
+        if not isinstance(item, dict):
+            continue
+        op = str(item.get("op") or item.get("operation") or "").strip()
+        if op in _NESTED_HIGH_LEVEL_OPS:
+            frag = _compile_high_level({**item, "operation": op}, columns)
+            frag_steps = frag.get("steps") or []
+            if frag_steps:
+                out.extend(dict(s) for s in frag_steps if isinstance(s, dict))
+                # carry criteria/output from fragment if present on item
+                continue
+            # compile failed — skip rather than keep unusable high-level
+            continue
+        # atomic (or compare_groups / filter_vs_mean / aggregate): normalize key
+        normalized = dict(item)
+        if "op" not in normalized and normalized.get("operation"):
+            normalized["op"] = normalized["operation"]
+        out.append(normalized)
+    return out
+
+
 def _metric_alias_candidates(name: str) -> list[str]:
     """매출액_합계 / amount_sum 같은 별칭에서 원 컬럼 후보를 만든다."""
     import re

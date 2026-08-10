@@ -187,7 +187,7 @@ def _analysis_plan_from_dict_inner(
     *,
     available_columns: list[str],
 ) -> AnalysisPlan:
-    from core.analysis.analysis_plan_compile import _compile_high_level
+    from core.analysis.analysis_plan_compile import _compile_high_level, expand_steps_high_level_ops
     from core.analysis.analysis_plan_sanitize import _sanitize_step
 
     columns = {str(c) for c in available_columns}
@@ -195,6 +195,10 @@ def _analysis_plan_from_dict_inner(
     raw_steps = compiled.get("steps") or data.get("steps") or []
     if not isinstance(raw_steps, list):
         raise ValueError("steps는 배열이어야 합니다.")
+
+    # LLM often nests high-level forms inside steps[] with key `operation`
+    # (e.g. steps:[{operation:find_items,...}]). Expand those generically.
+    raw_steps = expand_steps_high_level_ops(raw_steps, columns)
 
     steps: list[AnalysisStep] = []
     known_columns = set(columns)

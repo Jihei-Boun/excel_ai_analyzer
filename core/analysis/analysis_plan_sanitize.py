@@ -81,6 +81,35 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
                 columns,
             )
         numeric_filters = _sanitize_numeric_filters(item, columns)
+        # column_filters values like ">0" / "<안전재고" → numeric_filters
+        kept_cf: list[dict[str, Any]] = []
+        for cf in column_filters:
+            vals = cf.get("values") or []
+            if len(vals) == 1:
+                embedded = _parse_embedded_numeric_compare(str(vals[0]), columns)
+                if embedded is not None:
+                    emb_op, emb_right, emb_value = embedded
+                    if emb_right and emb_right != cf["column"]:
+                        numeric_filters.append(
+                            {
+                                "left_column": cf["column"],
+                                "column": cf["column"],
+                                "op": emb_op,
+                                "right_column": emb_right,
+                            }
+                        )
+                        continue
+                    if emb_value is not None:
+                        numeric_filters.append(
+                            {
+                                "column": cf["column"],
+                                "op": emb_op,
+                                "value": emb_value,
+                            }
+                        )
+                        continue
+            kept_cf.append(cf)
+        column_filters = kept_cf
         return AnalysisStep(
             op,
             {
@@ -286,8 +315,19 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
             rate_columns = [rate_columns]
         resolved_metrics = []
         for m in metrics:
+            if isinstance(m, dict):
+                col = str(m.get("column") or m.get("name") or "").strip()
+                resolved = _resolve_column(col, columns) if col else None
+                if resolved:
+                    resolved_metrics.append(resolved)
+                elif col:
+                    resolved_metrics.append(col)
+                continue
             resolved = _resolve_column(m, columns)
-            resolved_metrics.append(resolved or str(m))
+            if resolved:
+                resolved_metrics.append(resolved)
+            elif isinstance(m, str) and m.strip():
+                resolved_metrics.append(m.strip())
         resolved_rates = []
         for c in rate_columns:
             resolved = _resolve_column(c, columns)
@@ -484,6 +524,27 @@ def _sanitize_numeric_filters(
         op = op_aliases.get(raw_op, raw_op)
         if op in {"==", "!=", ">", ">=", "<", "<="}:
             op = op_aliases.get(op, op)
+        raw_value = spec.get("value")
+        # LLM often encodes comparison inside value: ">0", ">= 10", "<안전재고"
+        if isinstance(raw_value, str) and raw_value.strip():
+            embedded = _parse_embedded_numeric_compare(raw_value.strip(), columns)
+            if embedded is not None:
+                emb_op, emb_right_col, emb_value = embedded
+                if not op or op not in {"eq", "ne", "gt", "gte", "lt", "lte"}:
+                    op = emb_op
+                if emb_right_col and emb_right_col != left:
+                    out.append(
+                        {
+                            "left_column": left,
+                            "column": left,
+                            "op": op,
+                            "right_column": emb_right_col,
+                        }
+                    )
+                    continue
+                if emb_value is not None and op in {"eq", "ne", "gt", "gte", "lt", "lte"}:
+                    out.append({"column": left, "op": op, "value": emb_value})
+                    continue
         if op not in {"eq", "ne", "gt", "gte", "lt", "lte"} and op not in NUMERIC_FILTER_OPS:
             continue
         if right:
@@ -496,7 +557,6 @@ def _sanitize_numeric_filters(
                 }
             )
             continue
-        raw_value = spec.get("value")
         # LLM이 종종 column-vs-column을 value에 컬럼명 문자열로 넣는다.
         if isinstance(raw_value, str) and raw_value.strip():
             as_col = _resolve_column(raw_value, columns)
@@ -516,3 +576,36 @@ def _sanitize_numeric_filters(
             continue
         out.append({"column": left, "op": op, "value": value})
     return out
+
+
+def _parse_embedded_numeric_compare(
+    text: str,
+    columns: set[str],
+) -> tuple[str, str | None, float | None] | None:
+    """Parse strings like '>0', '>= 10', '<안전재고' into (op, right_col|None, value|None)."""
+    import re
+
+    m = re.match(r"^(>=|<=|!=|<>|>|<|=|==)\s*(.+)$", text.strip())
+    if not m:
+        return None
+    op_aliases = {
+        ">": "gt",
+        ">=": "gte",
+        "<": "lt",
+        "<=": "lte",
+        "=": "eq",
+        "==": "eq",
+        "!=": "ne",
+        "<>": "ne",
+    }
+    op = op_aliases.get(m.group(1), "")
+    rhs = m.group(2).strip().strip("'\"")
+    if not op or not rhs:
+        return None
+    as_col = _resolve_column(rhs, columns)
+    if as_col:
+        return op, as_col, None
+    try:
+        return op, None, float(rhs.replace(",", ""))
+    except ValueError:
+        return None

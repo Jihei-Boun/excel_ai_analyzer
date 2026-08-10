@@ -88,13 +88,22 @@ def build_planner_column_inventory(
             dtype = "categorical"
 
         sample = [_jsonable(v) for v in non_null.head(max_samples).tolist()]
+        n_non_null = int(len(non_null))
+        unique_count = int(non_null.nunique())
+        unique_ratio = round(unique_count / n_non_null, 4) if n_non_null else 0.0
         entry: dict[str, Any] = {
             "name": name,
             "dtype": dtype,
             "null_ratio": round(null_ratio, 4),
-            "unique_count": int(non_null.nunique()),
+            "unique_count": unique_count,
+            "unique_ratio": unique_ratio,
             "sample_values": sample,
         }
+        # Grain hint for ranking: repeated values → entity; nearly unique → row-like
+        if unique_ratio >= 0.95 and n_non_null >= 4:
+            entry["grain_hint"] = "row_id_like"
+        elif unique_ratio <= 0.35 and n_non_null >= 4:
+            entry["grain_hint"] = "repeated_entity_candidate"
         hints = list(role_index.get(name) or [])
         for tokens, hint in _NAME_ROLE_PATTERNS:
             norm = normalize_text(name)

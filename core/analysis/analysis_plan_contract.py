@@ -94,18 +94,23 @@ required: value_columns with 2 columns for differences; OR 1 column for plain to
 
 Ask: does the user need ONE global ranking, or a ranking INSIDE EACH group?
 
-#### Global top-N / largest / smallest (single overall ranking)
-Examples of shape (not phrases): "top N items by metric", "the largest value", "highest N".
-If the metric ALREADY exists on detail rows:
+Also ask: is the ranking target a **row** or an **entity** that may span many rows?
+
+#### Row ranking (sort the raw rows)
+When each ranking item is already one row (order line, sensor reading, invoice id with unique_ratio≈1):
   annotate → filter detail → sort(by=metric) → limit(n)
-Do NOT aggregate first when the row already has the metric and the user wants the top rows.
+Do NOT aggregate first.
 Do NOT use top_per_group for a single global ranking.
 Do NOT use filter_vs_mean to find a max/min.
 Do NOT use find_items with op=max/min — use sort → limit.
 
-If the metric must be totaled per category first (category totals ranking):
-  aggregate(group_by=category, metrics=[{column, fn}]) → sort → limit
+#### Entity ranking (aggregate then rank)
+When the ranked entity can appear on many rows (product/customer/item with low unique_ratio / grain_hint=repeated_entity_candidate):
+  aggregate(group_by=entity, metrics=[{column, fn}]) → sort → limit
+Examples of shape: "top N products by sales", "top N customers by order amount".
+Inventory unique_ratio / grain_hint are hints only — not hard rules.
 
+#### Global top-N / largest / smallest (single overall ranking)
 If ranking a RATE/RATIO:
   aggregate → ratio_of_aggregates(name=rate) → sort(by=rate) → limit
 Never rank a rate with top_per_group alone. Never omit ratio_of_aggregates.
@@ -115,7 +120,7 @@ Only when EACH group needs its own top-N members:
   (optional aggregate if totals needed) → top_per_group(group_column, value_column, n)
 Examples of shape: "top N products in EACH region", "top 2 people in EACH department".
 The presence of a category word alone does NOT imply group-wise ranking.
-If the request is one overall ranking, use sort → limit.
+If the request is one overall ranking, use sort → limit (row) or aggregate→sort→limit (entity).
 
 ### Ratio / Rate decision guide
 When the analysis needs a relationship between two quantities
@@ -134,11 +139,26 @@ Named groups + rate:
 Do not start with compare_groups before the metric exists.
 Do not replace compare_groups with aggregate → sort → limit when named groups are compared.
 
+#### Group value comparison
+When the user names two+ category values on one dimension (e.g. region A vs B):
+  use group_column + groups + metric → compare_groups
+
+#### Metric / column comparison
+When comparing two numeric measures (sales vs target) for the same rows/entities:
+  derive_column or dual metrics — NOT compare_groups with groups=[metric names].
+
+#### Ambiguous semantic comparison
+If the request only says "compare performance/results" without naming groups or metrics,
+do NOT invent group values. Prefer aggregate by a natural group dimension with interpret=true,
+or ask via criteria_note which groups/metrics were chosen. Use role_hints / sibling metrics.
+Keep compare_groups only when groups are explicit or clearly implied by schema categories.
+
 ### Above / below mean
 Row-level metric vs its mean: filter_vs_mean(column, above|below).
 Group totals vs mean of totals: aggregate first → filter_vs_mean on the aggregated metric.
-Ratio vs its mean: rate_vs_mean.
+Ratio vs its mean: rate_vs_mean (or derive/ratio → filter_vs_mean on the rate name).
 Do NOT use filter_vs_mean to compare two different columns (use column-vs-column filters).
+Do NOT answer a "rate above/below mean" request with aggregate alone.
 
 ### Column-vs-column condition
 filter_rows numeric_filters: {left_column, op, right_column}.
@@ -166,8 +186,10 @@ required: name (explicit output name), numerator, denominator
 Subsequent sort/compare MUST use that same name. Prefer short names like `rate` / `집행률`.
 
 ### compare_groups
-required: group_column, groups, metrics that already exist in the plan
+required: group_column, groups (explicit category values, typically >= 2),
+  and metrics that already exist in the plan
 If comparing a rate, ratio_of_aggregates must precede compare_groups.
+Do NOT use compare_groups to compare two metric columns; that is not a group dimension.
 
 ## Ambiguous similarly-named metrics
 If several numeric columns share a stem (current/ytd/target/actual), pick the best
@@ -241,6 +263,12 @@ def composition_category_from_issues(codes: list[str]) -> str | None:
     joined = " ".join(codes)
     if "misused_top_per_group" in joined or "conflicting_ranking" in joined:
         return "misused_top_per_group"
+    if "missing_rate_vs_mean" in joined:
+        return "missing_rate_vs_mean"
+    if "column_vs_column" in joined:
+        return "column_vs_column_failure"
+    if "entity_ranking" in joined:
+        return "global_ranking_misclassified"
     if "missing_ratio" in joined or "ratio_required" in joined:
         return "missing_ratio"
     if "missing_sort_column" in joined or "missing_metric_before" in joined:
