@@ -79,3 +79,7 @@ tests/benchmark/datasets/*
 .streamlit/cache/
 
 # Runtime cleanup helper: ./scripts/clean_artifacts.sh
+
+
+docs/learning_note/시연_대본.md
+docs/learning_note/시연_복붙_질문.txt

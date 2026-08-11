@@ -1,0 +1,44 @@
+# 시연 복붙 질문 — 이 파일만 열고 그대로 복사
+
+## 본선 (이 3개만)
+
+비목별 실행예산 합계를 알려줘
+
+집행률 상위 3개 항목을 알려줘
+
+매출 상위 5개 상품을 알려줘
+
+---
+
+## 예비 (본선 실패·Plan 흔들릴 때만)
+
+실행예산 대비 집행률을 계산해줘
+
+평균 집행률보다 높은 항목을 찾아줘
+
+상품별 매출 합계를 알려줘
+
+---
+
+## 파일
+
+budget: tests/benchmark/datasets/budget_basic.xlsx
+sales:  tests/benchmark/datasets/sales_basic.xlsx
+
+## 이미지
+
+docs/images/report/report-02-architecture-before-after.png
+docs/images/report/report-03-benchmark-composition.png
+docs/images/report/report-04-phase6-vs-phase12.png
+
+## 말할 숫자 (latest live)
+
+전체 성공률 약 87~88%
+Planner 직접 약 90%
+fallback 약 4~5%
+
+## 기댓값 한 줄
+
+Q1: 내부인건비 15M / 연구활동비 4.3M / 간접비 4M / 연구수당 3M
+Q2: 내부인건비 ~83% → 간접비 50% → 연구활동비 ~49%
+Q3: 상품A → D → F → C → E
