@@ -83,6 +83,18 @@ def summarize_results(
         lambda c: c.get("scenario") == "many_to_many"
         and (c.get("levels") or {}).get("L3_plan_safety", {}).get("blocked_unsafe")
     )
+    # Validator false positive: expected-success cases blocked by plan validator
+    # without unsafe intent (proxy — success expected but blocked and not unsafe scenario)
+    def _vfp(c: dict[str, Any]) -> bool:
+        if c.get("scenario") in {"many_to_many", "unrelated", "ambiguous_key"}:
+            return False
+        if "success" not in _expected_statuses(c):
+            return False
+        if c.get("status") == "success":
+            return False
+        return bool((c.get("levels") or {}).get("L3_plan_safety", {}).get("blocked_unsafe"))
+
+    validator_fp = rate(_vfp)
 
     # failure taxonomy
     cat_counts: dict[str, int] = {}
@@ -141,6 +153,7 @@ def summarize_results(
             "result_validation_failure_rate": result_val_fail,
             "unsafe_join_block_rate": blocked,
             "many_to_many_block_rate": many_block,
+            "validator_false_positive_rate": validator_fp,
         },
         "planner_quality": planner_quality,
         "failure_categories": cat_counts,

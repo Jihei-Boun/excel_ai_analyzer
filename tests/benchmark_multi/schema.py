@@ -54,6 +54,8 @@ class MultiBenchmarkCase:
     fixed_plan: dict[str, Any] | None = None
     fixed_plan_retry: dict[str, Any] | None = None
     live_only: bool = False
+    # Phase 20: fixed-plan retry-diversity cases are meaningless under live LLM.
+    deterministic_only: bool = False
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -134,6 +136,7 @@ def load_case_dict(data: dict[str, Any]) -> MultiBenchmarkCase:
         fixed_plan=data.get("fixed_plan"),
         fixed_plan_retry=data.get("fixed_plan_retry"),
         live_only=bool(data.get("live_only") or False),
+        deterministic_only=bool(data.get("deterministic_only") or False),
         raw=data,
     )
 

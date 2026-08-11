@@ -116,7 +116,49 @@ def evaluate_case(
             "attempt_count": meta.get("attempt_count"),
             "retry_count": meta.get("retry_count"),
             "duplicate_plan_count": meta.get("duplicate_plan_count"),
+            "same_family_repeat_count": meta.get("same_family_repeat_count"),
+            "operation_family": meta.get("operation_family"),
+            "first_plan_operations": meta.get("first_plan_operations"),
+            "first_plan_family": meta.get("first_plan_family"),
+            "validator_blocked_unsafe_plan": meta.get("validator_blocked_unsafe_plan"),
             "final_shape": meta.get("final_shape"),
+        },
+        "observability": {
+            "relationship_labels": _rel_labels(understanding),
+            "first_plan_operations": meta.get("first_plan_operations") or _ops(plan_dict),
+            "retry_plan_operations": [
+                e.get("selected_ops")
+                for e in retry_log
+                if e.get("selected_ops")
+            ],
+            "operation_family": meta.get("operation_family"),
+            "plan_validation_codes": _codes_from_val(plan_val)
+            + [
+                c
+                for e in retry_log
+                if e.get("failure_stage") == "integration_plan_validation"
+                for c in (e.get("failure_codes") or [])
+            ],
+            "execution_failure_codes": [
+                c
+                for e in retry_log
+                if e.get("failure_stage") == "integration_execution"
+                for c in (e.get("failure_codes") or [])
+            ],
+            "result_validation_codes": _codes_from_val(result_val)
+            + [
+                c
+                for e in retry_log
+                if e.get("failure_stage") == "integration_result_validation"
+                for c in (e.get("failure_codes") or [])
+            ],
+            "final_status": status,
+            "cannot_plan_reason": (plan_dict or {}).get("reason") if status == "cannot_plan" else None,
+            "unsafe_execution": unsafe,
+            "validator_blocked_unsafe_plan": bool(
+                meta.get("validator_blocked_unsafe_plan")
+                or (levels.get("L3_plan_safety") or {}).get("blocked_unsafe")
+            ),
         },
     }
 
@@ -125,6 +167,22 @@ def _ops(plan_dict: dict[str, Any] | None) -> list[str]:
     if not plan_dict:
         return []
     return [str(s.get("op")) for s in (plan_dict.get("steps") or []) if isinstance(s, dict)]
+
+
+def _rel_labels(understanding: dict[str, Any] | None) -> list[str]:
+    if not understanding:
+        return []
+    out: list[str] = []
+    for r in understanding.get("relationships") or []:
+        if isinstance(r, dict) and r.get("relationship"):
+            out.append(str(r.get("relationship")))
+    return out
+
+
+def _codes_from_val(val: Any) -> list[str]:
+    if val is None:
+        return []
+    return [e.code for e in getattr(val, "errors", []) or []]
 
 
 def _plan_validation_blocked(plan_val: Any, retry_log: list[dict[str, Any]]) -> bool:
@@ -388,11 +446,17 @@ def _eval_recovery(meta: dict[str, Any], retry_log: list[dict[str, Any]]) -> dic
         "retry_count": meta.get("retry_count") or len(retry_log),
         "first_plan_success": bool(meta.get("first_plan_success")),
         "duplicate_plan_count": meta.get("duplicate_plan_count") or 0,
+        "same_family_repeat_count": meta.get("same_family_repeat_count") or 0,
+        "operation_family": meta.get("operation_family"),
         "plan_validation_failure_count": meta.get("plan_validation_failure_count") or 0,
         "execution_failure_count": meta.get("execution_failure_count") or 0,
         "result_validation_failure_count": meta.get("result_validation_failure_count") or 0,
         "stages": [e.get("failure_stage") for e in retry_log],
         "repeated_plan": any("repeated_plan" in (e.get("failure_codes") or []) for e in retry_log),
+        "repeated_family": any(
+            "repeated_integration_family" in (e.get("failure_codes") or []) for e in retry_log
+        ),
+        "validator_blocked_unsafe_plan": bool(meta.get("validator_blocked_unsafe_plan")),
     }
 
 

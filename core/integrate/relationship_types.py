@@ -121,6 +121,9 @@ class PairwiseObservation:
     schema_similarity: float = 0.0
     dtype_compatibility_ratio: float = 0.0
     candidate_pairs: list[ColumnPairObservation] = field(default_factory=list)
+    # Phase 20: observational key ambiguity / composite uniqueness (not decisions)
+    key_ambiguity_observation: dict[str, Any] = field(default_factory=dict)
+    composite_key_observations: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -136,6 +139,8 @@ class PairwiseObservation:
             "schema_similarity": self.schema_similarity,
             "dtype_compatibility_ratio": self.dtype_compatibility_ratio,
             "candidate_pairs": [p.to_dict() for p in self.candidate_pairs],
+            "key_ambiguity_observation": dict(self.key_ambiguity_observation),
+            "composite_key_observations": list(self.composite_key_observations),
             "notes": list(self.notes),
         }
 

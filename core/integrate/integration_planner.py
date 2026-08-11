@@ -17,6 +17,7 @@ from core.integrate.integration_plan_types import (
     IntegrationPlan,
     IntegrationPlanParseError,
     canonical_integration_plan_signature,
+    integration_operation_family_signature,
     integration_plan_from_dict,
 )
 from core.integrate.relationship_types import CrossFileUnderstanding
@@ -36,15 +37,40 @@ Allowed ops ONLY:
 
 Do NOT use aggregate_merge, pivot, pandas code, or invented ops.
 
-Rules:
-- Relationship labels (same_schema, join_candidate, …) are HINTS, not operation orders.
-  Never map relationship→op deterministically; always consider user_prompt.
-- key_candidates are candidates, not confirmed truth. Choose explicitly or cannot_plan.
+Relationship labels are HINTS, never operation orders:
+- join_candidate / master_detail_candidate / lookup_candidate ≠ "must join"
+- same_schema / compatible_schema ≠ "must union"
+- Always combine user_prompt + observations + labels.
+
+Key selection:
+- key_candidates are candidates, not confirmed truth.
+- If key_ambiguity_observation.near_tied is true (multiple singleton keys with
+  near-equal evidence) and the user did not resolve which key/link to use:
+  return status=cannot_plan (do NOT pick one key arbitrarily).
+- Composite keys (multiple columns together) differ from ambiguous singleton choice.
+
+Composition decision guide (domain-neutral; not keyword rules):
+- Rows from multiple compatible datasets into one dataset → consider union_rows.
+- Summarize after combining rows → often union_rows then aggregate.
+- Filter before combining → filter_rows (per source as needed) then union_rows
+  then aggregate when totals are requested.
+- Attributes from another dataset needed before aggregation → join then aggregate.
+- Multiple reference datasets → multiple joins may be required before aggregate.
+- Prefer explicit intermediate outputs; final_output must be a step output id.
+
+Abstract structure examples (NOT domain instructions):
+1) Compatible event rows in A and B; user wants total metric by entity across both:
+   union_rows → aggregate
+2) Detail rows need attributes from a reference table, then totals by group:
+   join → aggregate
+3) Two near-tied singleton keys and user only says "connect the files":
+   cannot_plan
+
+Other rules:
 - Do not invent sources/columns. Use source_id and observed column names only.
-- Do not use filename semantics (budget/orders/golden/expected) as meaning.
-- Do not assume numeric columns are additive/summable without user intent + evidence.
+- Do not use filename semantics as meaning.
+- Do not assume numeric columns are additive without user intent + evidence.
 - Prefer a minimal step list. No unnecessary steps.
-- Intermediate outputs must be explicit; final_output must be a step output id.
 - If unrelated / ambiguous keys / insufficient evidence / unsupported transform:
   return status=cannot_plan with reason and ambiguities (steps must be []).
 
@@ -128,6 +154,7 @@ def build_integration_plan(
                 **dict(plan.meta),
                 "parse_attempts": attempt + 1,
                 "plan_signature": canonical_integration_plan_signature(plan),
+                "operation_family": integration_operation_family_signature(plan),
                 "allowed_ops": sorted(INTEGRATION_ATOMIC_OPS),
             }
             return plan
@@ -212,6 +239,8 @@ def _compact_understanding_for_prompt(understanding: dict[str, Any]) -> dict[str
                 "schema_similarity": o.get("schema_similarity"),
                 "exact_column_name_overlap": o.get("exact_column_name_overlap"),
                 "candidate_pairs": pairs,
+                "key_ambiguity_observation": o.get("key_ambiguity_observation") or {},
+                "composite_key_observations": list(o.get("composite_key_observations") or [])[:4],
             }
         )
 
@@ -254,7 +283,8 @@ def _build_user_prompt(
         parts.append("\nPrior attempt feedback (evidence only — do not invent keys/ops):\n")
         parts.append("\n".join(retry_feedback))
         parts.append(
-            "\nDo not repeat the previous rejected plan unchanged. "
+            "\nDo not repeat the previous rejected plan or the same integration "
+            "strategy family unchanged. "
             "Produce a materially different plan, or status=cannot_plan if ambiguity remains.\n"
         )
     parts.append("\nReturn IntegrationPlan JSON only.")

@@ -110,11 +110,16 @@ def build_pairwise_observation(
         right_norm=right_norm,
         max_candidates=max_candidates,
     )
+    key_ambiguity = _key_ambiguity_observation(candidates)
+    composites = _composite_key_observations(
+        left_df, right_df, exact_overlap=exact_overlap
+    )
 
     notes = [
         "candidate_pairs are observation pre-filters only — not confirmed join keys",
         "cardinality_evidence is uniqueness pattern among overlapping values — not a join decision",
         "filename/source_id is display-only and must not drive semantics",
+        "key_ambiguity_observation / composite_key_observations are facts, not operation choices",
     ]
     return PairwiseObservation(
         left_source=str(left_source),
@@ -128,6 +133,8 @@ def build_pairwise_observation(
         schema_similarity=round(schema_sim, 4),
         dtype_compatibility_ratio=round(dtype_compat_ratio, 4),
         candidate_pairs=candidates,
+        key_ambiguity_observation=key_ambiguity,
+        composite_key_observations=composites,
         notes=notes,
     )
 
@@ -449,13 +456,119 @@ def _select_candidate_pairs(
                 prune_reason=prune_reason,
             )
             # Ranking for cap: prefer exact/norm match, then overlap, then name_sim
-            score = (
-                (3.0 if name_exact or norm_match else 0.0)
-                + 2.0 * overlap_ratio
-                + 1.0 * name_sim
-                + (0.3 if dtype_ok else 0.0)
-            )
+            score = _candidate_strength_score(pair)
             scored.append((score, pair))
 
     scored.sort(key=lambda x: (-x[0], x[1].left_column, x[1].right_column))
     return [p for _, p in scored[:max_candidates]]
+
+
+def _candidate_strength_score(pair: ColumnPairObservation) -> float:
+    """Deterministic ranking score for observation only (not a join decision)."""
+    return (
+        (3.0 if pair.name_exact_match else 0.0)
+        + 2.0 * float(pair.value_overlap_ratio)
+        + 1.0 * float(pair.name_similarity)
+        + (0.3 if pair.dtype_compatible else 0.0)
+    )
+
+
+_NEAR_TIE_GAP = 0.15
+_STRONG_SCORE = 4.0  # exact+high overlap roughly
+_STRONG_OVERLAP = 0.8
+# Singleton join-key plausibility needs uniqueness on at least one side.
+# Low-uniqueness overlapping columns (composite parts) are NOT singleton key candidates.
+_SINGLETON_UNIQUENESS = 0.95
+
+
+def _key_ambiguity_observation(
+    candidates: list[ColumnPairObservation],
+) -> dict[str, Any]:
+    """Detect near-tied singleton key candidates (observation — does not choose a key)."""
+    strong: list[tuple[float, ColumnPairObservation]] = []
+    for p in candidates:
+        if float(p.value_overlap_ratio) < _STRONG_OVERLAP:
+            continue
+        if float(p.name_similarity) < 0.9 and not p.name_exact_match:
+            continue
+        # Composite-part columns often overlap but are not unique alone.
+        if max(float(p.left_uniqueness), float(p.right_uniqueness)) < _SINGLETON_UNIQUENESS:
+            continue
+        strong.append((_candidate_strength_score(p), p))
+    strong.sort(key=lambda x: (-x[0], x[1].left_column, x[1].right_column))
+    if len(strong) < 2:
+        return {
+            "plausible_singleton_count": len(strong),
+            "near_tied": False,
+            "evidence_gap": None,
+            "tied_pairs": [],
+        }
+    gap = float(strong[0][0] - strong[1][0])
+    top = strong[0][0]
+    near_tied = gap <= _NEAR_TIE_GAP and strong[1][0] >= _STRONG_SCORE
+    tied = [
+        {
+            "left_column": p.left_column,
+            "right_column": p.right_column,
+            "score": round(s, 4),
+            "value_overlap_ratio": p.value_overlap_ratio,
+            "left_uniqueness": p.left_uniqueness,
+            "right_uniqueness": p.right_uniqueness,
+            "cardinality_evidence": p.cardinality_evidence,
+        }
+        for s, p in strong
+        if abs(s - top) <= _NEAR_TIE_GAP
+    ]
+    return {
+        "plausible_singleton_count": len(strong),
+        "near_tied": bool(near_tied and len(tied) >= 2),
+        "evidence_gap": round(gap, 4),
+        "tied_pairs": tied if near_tied else [],
+    }
+
+
+def _composite_key_observations(
+    left_df: pd.DataFrame,
+    right_df: pd.DataFrame,
+    *,
+    exact_overlap: list[str],
+) -> list[dict[str, Any]]:
+    """Observational composite uniqueness for exact-overlap column pairs (size 2)."""
+    cols = [c for c in exact_overlap if c in left_df.columns and c in right_df.columns]
+    if len(cols) < 2:
+        return []
+    out: list[dict[str, Any]] = []
+    for combo in combinations(cols[:5], 2):
+        left_cols = list(combo)
+        right_cols = list(combo)
+        left_u = _composite_uniqueness(left_df, left_cols)
+        right_u = _composite_uniqueness(right_df, right_cols)
+        if left_u >= 0.98 and right_u >= 0.98:
+            card = "one_to_one"
+        elif left_u >= 0.98 and right_u < 0.98:
+            card = "one_to_many"
+        elif right_u >= 0.98 and left_u < 0.98:
+            card = "many_to_one"
+        elif left_u < 0.95 and right_u < 0.95:
+            card = "many_to_many"
+        else:
+            card = "insufficient"
+        out.append(
+            {
+                "left_columns": left_cols,
+                "right_columns": right_cols,
+                "left_uniqueness": round(left_u, 4),
+                "right_uniqueness": round(right_u, 4),
+                "cardinality_evidence": card,
+            }
+        )
+    return out[:6]
+
+
+def _composite_uniqueness(df: pd.DataFrame, cols: list[str]) -> float:
+    if not cols or len(df) == 0:
+        return 0.0
+    n = int(len(df))
+    distinct = int(df.groupby(cols, dropna=False).ngroups)
+    return float(distinct / n) if n else 0.0
+

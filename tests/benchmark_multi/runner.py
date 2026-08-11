@@ -183,7 +183,9 @@ def run_suite(
     if case_ids:
         want = set(case_ids)
         cases = [c for c in cases if c.id in want]
-    if not live:
+    if live:
+        cases = [c for c in cases if not c.deterministic_only]
+    else:
         cases = [c for c in cases if c.fixed_plan is not None or not c.live_only]
 
     results = [

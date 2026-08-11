@@ -38,6 +38,22 @@ You must NOT treat numeric dtype alone as additive/measure meaning.
 You must NOT treat high uniqueness alone as a confirmed primary key.
 You must NOT treat column-name equality alone as a confirmed join relationship.
 
+Label meanings (CRITICAL):
+- join_candidate / master_detail_candidate / lookup_candidate:
+  mean "join MAY be plausible", NOT "you must join" and NOT a chosen key.
+- same_schema / compatible_schema:
+  mean schemas align for possible row stacking; NOT "you must union".
+- ambiguous:
+  use when TWO OR MORE singleton key candidates have similarly strong
+  overlap/uniqueness/name evidence and choosing one is unresolved.
+  If key_ambiguity_observation.near_tied is true, prefer relationship=ambiguous.
+- Do NOT emit join_candidate when near-tied singleton keys remain unresolved.
+- High schema_similarity with largely overlapping columns usually favors
+  same_schema/compatible_schema over join_candidate, unless clear
+  master-detail/lookup cardinality evidence exists on a dominant key.
+- Composite keys (multiple columns together) are NOT the same as ambiguous
+  singleton choice; note composite evidence in notes/ambiguities if relevant.
+
 If evidence is weak, conflicting, or insufficient, choose:
   unrelated | ambiguous | insufficient_evidence
 

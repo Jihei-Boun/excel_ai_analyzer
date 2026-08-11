@@ -2,6 +2,9 @@
 
 Does NOT switch route_multi. No legacy/PandasAI fallback.
 max_retries default matches single-file analysis_pipeline (2 → 3 attempts).
+
+Phase 20: also track integration operation family for retry diversity
+(observability / feedback only — never synthesizes plans).
 """
 
 from __future__ import annotations
@@ -16,6 +19,8 @@ from core.integrate.integration_execution_types import IntegrationExecutionResul
 from core.integrate.integration_plan_types import (
     IntegrationPlan,
     canonical_integration_plan_signature,
+    integration_operation_family_signature,
+    repeated_integration_family_feedback,
 )
 from core.integrate.integration_plan_validate import validate_integration_plan
 from core.integrate.integration_planner import build_integration_plan
@@ -50,6 +55,16 @@ _RETRYABLE_EXEC_CODES = frozenset(
         "union_empty_intersection",
         "aggregate_alias_collision",
         "runtime_error",
+    }
+)
+
+_UNSAFE_PLAN_CODES = frozenset(
+    {
+        "ambiguous_key_selection",
+        "insufficient_evidence_forced_join",
+        "join_against_unrelated",
+        "many_to_many_join_risk",
+        "extreme_row_amplification",
     }
 )
 
@@ -107,10 +122,15 @@ def run_integration_pipeline(
     retry_log: list[dict[str, Any]] = []
     feedback: list[str] = []
     seen_signatures: set[str] = set()
+    rejected_families: list[str] = []
     duplicate_plan_count = 0
+    same_family_repeat_count = 0
     plan_validation_failure_count = 0
     execution_failure_count = 0
     result_validation_failure_count = 0
+    validator_blocked_unsafe_plan = False
+    first_plan_ops: list[str] = []
+    first_plan_family: str | None = None
     first_plan_success = False
 
     last_plan: IntegrationPlan | None = None
@@ -157,12 +177,25 @@ def run_integration_pipeline(
 
         last_plan = plan
         sig = canonical_integration_plan_signature(plan)
+        family = integration_operation_family_signature(plan)
         ops = [s.op for s in plan.steps]
-        repeated = sig in seen_signatures and plan.status == "planned"
+        if attempt == 0:
+            first_plan_ops = list(ops)
+            first_plan_family = family
+
+        repeated_sig = sig in seen_signatures and plan.status == "planned"
+        family_repeated = bool(
+            plan.status == "planned"
+            and family
+            and family != "cannot_plan"
+            and family in rejected_families
+        )
         if plan.status == "planned":
             seen_signatures.add(sig)
-        if repeated:
+        if repeated_sig:
             duplicate_plan_count += 1
+        if family_repeated:
+            same_family_repeat_count += 1
 
         if plan.status == "cannot_plan":
             return IntegrationPipelineResult(
@@ -177,6 +210,12 @@ def run_integration_pipeline(
                     execution_failure_count=execution_failure_count,
                     result_validation_failure_count=result_validation_failure_count,
                     duplicate_plan_count=duplicate_plan_count,
+                    same_family_repeat_count=same_family_repeat_count,
+                    rejected_families=list(rejected_families),
+                    first_plan_operations=first_plan_ops,
+                    first_plan_family=first_plan_family,
+                    operation_family=family,
+                    validator_blocked_unsafe_plan=validator_blocked_unsafe_plan,
                     final_status="cannot_plan",
                     selected_operations=ops,
                     source_count=len(sources),
@@ -184,26 +223,34 @@ def run_integration_pipeline(
                 ),
             )
 
-        if repeated:
+        if repeated_sig or family_repeated:
+            diversity = repeated_integration_family_feedback(family)
             feedback = [
                 f"Failure stage: {FAILURE_STAGE_PLAN_GENERATION}",
-                "Code: repeated_plan",
-                "Previous plan was rejected and has been repeated unchanged.",
-                "Generate a materially different plan or return cannot_plan "
-                "if the ambiguity cannot be resolved.",
+                *(
+                    ["Code: repeated_plan", "Previous plan was rejected and repeated unchanged."]
+                    if repeated_sig
+                    else []
+                ),
+                *diversity,
                 *feedback,
             ]
             retry_log.append(
                 {
                     "attempt": attempt,
                     "failure_stage": FAILURE_STAGE_PLAN_GENERATION,
-                    "failure_codes": ["repeated_plan"],
+                    "failure_codes": (
+                        ["repeated_plan", "repeated_integration_family"]
+                        if repeated_sig
+                        else ["repeated_integration_family"]
+                    ),
                     "plan_signature": sig,
+                    "operation_family": family,
                     "selected_ops": ops,
                 }
             )
-            # Still validate/execute once? Spec says detect duplicate and strengthen
-            # feedback — skip re-executing identical rejected plan to save work.
+            if family and family not in rejected_families:
+                rejected_families.append(family)
             if attempt < rounds - 1:
                 continue
 
@@ -212,22 +259,28 @@ def run_integration_pipeline(
         if not plan_val.valid:
             plan_validation_failure_count += 1
             codes = [e.code for e in plan_val.errors]
+            if any(c in _UNSAFE_PLAN_CODES for c in codes):
+                validator_blocked_unsafe_plan = True
+            if family and family not in rejected_families:
+                rejected_families.append(family)
             entry = {
                 "attempt": attempt,
                 "failure_stage": FAILURE_STAGE_PLAN_VALIDATION,
                 "failure_codes": codes,
                 "plan_signature": sig,
+                "operation_family": family,
                 "selected_ops": ops,
                 "evidence_summary": [e.message for e in plan_val.errors[:5]],
+                "same_operation_family_repeat": family_repeated,
+                "unsafe_blocked": any(c in _UNSAFE_PLAN_CODES for c in codes),
             }
             retry_log.append(entry)
             feedback = format_integration_validation_feedback(
                 plan_val, previous_plan=plan.to_dict()
             )
-            if repeated:
+            if family_repeated or repeated_sig:
                 feedback = [
-                    "Code: repeated_plan",
-                    "Previous plan was rejected and has been repeated unchanged.",
+                    *repeated_integration_family_feedback(family),
                     *feedback,
                 ]
             continue
@@ -240,11 +293,14 @@ def run_integration_pipeline(
             execution_failure_count += 1
             code = getattr(execution.error, "code", "execution_failed")
             retryable = code in _RETRYABLE_EXEC_CODES
+            if family and family not in rejected_families:
+                rejected_families.append(family)
             entry = {
                 "attempt": attempt,
                 "failure_stage": FAILURE_STAGE_EXECUTION,
                 "failure_codes": [code],
                 "plan_signature": sig,
+                "operation_family": family,
                 "selected_ops": ops,
                 "retryable": retryable,
                 "evidence_summary": [getattr(execution.error, "message", "")],
@@ -254,7 +310,6 @@ def run_integration_pipeline(
                 execution, previous_plan=plan.to_dict()
             )
             if not retryable and attempt < rounds - 1:
-                # Non-retryable: still allow remaining attempts only if planner can cannot_plan
                 feedback = [
                     *feedback,
                     "This execution failure may not be recoverable by replanning. "
@@ -269,11 +324,14 @@ def run_integration_pipeline(
         if not result_val.valid:
             result_validation_failure_count += 1
             codes = [e.code for e in result_val.errors]
+            if family and family not in rejected_families:
+                rejected_families.append(family)
             entry = {
                 "attempt": attempt,
                 "failure_stage": FAILURE_STAGE_RESULT_VALIDATION,
                 "failure_codes": codes,
                 "plan_signature": sig,
+                "operation_family": family,
                 "selected_ops": ops,
                 "evidence_summary": [e.message for e in result_val.errors[:5]],
                 "warning_codes": [w.code for w in result_val.warnings[:8]],
@@ -303,6 +361,12 @@ def run_integration_pipeline(
                 execution_failure_count=execution_failure_count,
                 result_validation_failure_count=result_validation_failure_count,
                 duplicate_plan_count=duplicate_plan_count,
+                same_family_repeat_count=same_family_repeat_count,
+                rejected_families=list(rejected_families),
+                first_plan_operations=first_plan_ops,
+                first_plan_family=first_plan_family,
+                operation_family=family,
+                validator_blocked_unsafe_plan=validator_blocked_unsafe_plan,
                 final_status="success",
                 selected_operations=ops,
                 source_count=len(sources),
@@ -331,6 +395,14 @@ def run_integration_pipeline(
             execution_failure_count=execution_failure_count,
             result_validation_failure_count=result_validation_failure_count,
             duplicate_plan_count=duplicate_plan_count,
+            same_family_repeat_count=same_family_repeat_count,
+            rejected_families=list(rejected_families),
+            first_plan_operations=first_plan_ops,
+            first_plan_family=first_plan_family,
+            operation_family=(
+                integration_operation_family_signature(last_plan) if last_plan else None
+            ),
+            validator_blocked_unsafe_plan=validator_blocked_unsafe_plan,
             final_status="failed",
             selected_operations=[s.op for s in last_plan.steps] if last_plan else [],
             source_count=len(sources),
@@ -341,5 +413,5 @@ def run_integration_pipeline(
 
 
 def _obs_meta(**kwargs: Any) -> dict[str, Any]:
-    meta = {"phase": 18, **kwargs}
+    meta = {"phase": 20, **kwargs}
     return meta

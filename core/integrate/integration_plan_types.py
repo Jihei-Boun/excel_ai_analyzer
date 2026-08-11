@@ -171,7 +171,7 @@ def integration_plan_from_dict(data: Any) -> IntegrationPlan:
 
 
 def canonical_integration_plan_signature(plan: IntegrationPlan | dict[str, Any]) -> str:
-    """Stable signature for future duplicate-plan / retry diversity (Phase 18)."""
+    """Stable signature for duplicate-plan / retry diversity."""
     if isinstance(plan, IntegrationPlan):
         payload = plan.to_dict()
     else:
@@ -191,6 +191,100 @@ def canonical_integration_plan_signature(plan: IntegrationPlan | dict[str, Any])
         ],
     }
     return json.dumps(_canon(slim), ensure_ascii=False, sort_keys=True)
+
+
+# Observability / retry diversity only — never used to synthesize a plan.
+INTEGRATION_FAMILY_LABELS: dict[str, str] = {
+    "join_only": "single join without further composition",
+    "union_only": "union without aggregation",
+    "union_then_aggregate": "union followed by aggregation",
+    "join_then_aggregate": "join followed by aggregation",
+    "filter_union_aggregate": "filter(s) then union then aggregate",
+    "filter_then_union": "filter(s) then union",
+    "multi_join_chain": "multiple joins (chain)",
+    "multi_join_then_aggregate": "multiple joins then aggregate",
+    "rename_then_union": "rename then union",
+    "aggregate_only": "aggregate without multi-source combine",
+    "select_only": "column selection only",
+    "cannot_plan": "cannot_plan",
+    "other": "other integration composition",
+}
+
+
+def integration_operation_family_signature(
+    plan: IntegrationPlan | dict[str, Any] | None,
+) -> str:
+    """Classify integration strategy family for retry diversity / observability.
+
+    Does NOT prescribe or generate plans. Domain-neutral op-sequence patterns only.
+    """
+    if plan is None:
+        return "other"
+    if isinstance(plan, IntegrationPlan):
+        status = plan.status
+        ops = [s.op for s in plan.steps]
+    else:
+        status = str(plan.get("status") or "")
+        ops = [
+            str(s.get("op") or "").strip().lower()
+            for s in (plan.get("steps") or [])
+            if isinstance(s, dict)
+        ]
+        ops = [o for o in ops if o]
+
+    if status == "cannot_plan" or not ops:
+        return "cannot_plan" if status == "cannot_plan" else "other"
+
+    has = set(ops)
+    n_join = sum(1 for o in ops if o == "join")
+    n_union = sum(1 for o in ops if o == "union_rows")
+    n_filter = sum(1 for o in ops if o == "filter_rows")
+    n_agg = sum(1 for o in ops if o == "aggregate")
+    n_rename = sum(1 for o in ops if o == "rename_columns")
+
+    if n_filter and n_union and n_agg:
+        return "filter_union_aggregate"
+    if n_filter and n_union and not n_agg:
+        return "filter_then_union"
+    if n_join >= 2 and n_agg:
+        return "multi_join_then_aggregate"
+    if n_join >= 2:
+        return "multi_join_chain"
+    if n_join == 1 and n_agg:
+        return "join_then_aggregate"
+    if n_join == 1 and not n_union and not n_agg:
+        return "join_only"
+    if n_union and n_agg:
+        return "union_then_aggregate"
+    if n_union and not n_agg:
+        return "union_only"
+    if n_rename and n_union:
+        return "rename_then_union"
+    if n_agg and not n_join and not n_union:
+        return "aggregate_only"
+    if has <= {"select_columns"}:
+        return "select_only"
+    return "other"
+
+
+def integration_operation_family_label(family: str | None) -> str:
+    if not family:
+        return INTEGRATION_FAMILY_LABELS["other"]
+    return INTEGRATION_FAMILY_LABELS.get(family, family)
+
+
+def repeated_integration_family_feedback(
+    family: str | None,
+) -> list[str]:
+    """Evidence-only retry feedback — never prescribe keys or ops."""
+    label = integration_operation_family_label(family)
+    return [
+        "Code: repeated_integration_family",
+        "The same integration strategy family was already rejected.",
+        f"Previous rejected family: {label}",
+        "Use a materially different integration strategy if supported by the evidence, "
+        "or return status=cannot_plan if ambiguity remains unresolved.",
+    ]
 
 
 def _canon(obj: object) -> object:

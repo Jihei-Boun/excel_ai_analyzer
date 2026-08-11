@@ -383,6 +383,45 @@ def _pair_stats(
     return None
 
 
+def _key_ambiguity_from_pairwise(
+    pairwise_index: dict[tuple[str, str], dict[str, Any]],
+    left: str,
+    right: str,
+) -> dict[str, Any]:
+    obs = pairwise_index.get((left, right))
+    if not obs:
+        return {}
+    amb = obs.get("key_ambiguity_observation")
+    return dict(amb) if isinstance(amb, dict) else {}
+
+
+def _composite_stats(
+    pairwise_index: dict[tuple[str, str], dict[str, Any]],
+    left: str,
+    right: str,
+    left_keys: list[str],
+    right_keys: list[str],
+) -> dict[str, Any] | None:
+    obs = pairwise_index.get((left, right))
+    if not obs:
+        return None
+    stored_left = str(obs.get("left_source") or "")
+    flip = stored_left == right
+    want_l = list(left_keys)
+    want_r = list(right_keys)
+    for item in obs.get("composite_key_observations") or []:
+        if not isinstance(item, dict):
+            continue
+        cl = [str(x) for x in (item.get("left_columns") or [])]
+        cr = [str(x) for x in (item.get("right_columns") or [])]
+        if flip:
+            cl, cr = cr, cl
+        # Order-independent match (Planner key order may differ from observation)
+        if sorted(cl) == sorted(want_l) and sorted(cr) == sorted(want_r) and len(cl) == len(want_l):
+            return item
+    return None
+
+
 def _dtypes_compatible(a: str, b: str) -> bool:
     if a == b:
         return True
@@ -713,16 +752,74 @@ def _v_join(
                 relationship=label,
             )
 
-    # Per-key checks (use first key pair for cardinality/amplification; composite uses all)
+    # Observational singleton-key ambiguity (independent of LLM label).
+    # Composite joins (len>=2) are NOT treated as ambiguous singletons.
+    if len(left_keys) == 1 and len(right_keys) == 1:
+        amb = _key_ambiguity_from_pairwise(pairwise_index, left.name, right.name)
+        if amb.get("near_tied") and len(amb.get("tied_pairs") or []) >= 2:
+            planned = (left_keys[0], right_keys[0])
+            tied = {
+                (str(t.get("left_column")), str(t.get("right_column")))
+                for t in (amb.get("tied_pairs") or [])
+            }
+            # Orientation may flip in stored pairwise
+            tied |= {(b, a) for a, b in list(tied)}
+            other_tied = [t for t in tied if t != planned and (t[1], t[0]) != planned]
+            if planned in tied or (planned[1], planned[0]) in tied:
+                if other_tied:
+                    err(
+                        "ambiguous_key_selection",
+                        "Multiple singleton key candidates have near-tied observational "
+                        "evidence; plan selects one without resolving ambiguity. "
+                        "Validator will not choose a key.",
+                        step_id=step.id,
+                        planned_left_key=left_keys[0],
+                        planned_right_key=right_keys[0],
+                        evidence_gap=amb.get("evidence_gap"),
+                        tied_pairs=list(amb.get("tied_pairs") or [])[:6],
+                    )
+
+    # Per-key checks; composite uses composite uniqueness when available
     card = "unknown"
     overlap = None
     left_u = right_u = None
     left_null = right_null = None
+    is_composite = len(left_keys) >= 2
+
+    if is_composite:
+        comp = _composite_stats(
+            pairwise_index, left.name, right.name, left_keys, right_keys
+        )
+        if comp:
+            left_u = float(comp.get("left_uniqueness") or 0.0)
+            right_u = float(comp.get("right_uniqueness") or 0.0)
+            card = str(comp.get("cardinality_evidence") or "unknown")
+            info(
+                "composite_key_stats",
+                "Observed composite key uniqueness",
+                step_id=step.id,
+                left_keys=left_keys,
+                right_keys=right_keys,
+                left_uniqueness=left_u,
+                right_uniqueness=right_u,
+                cardinality_evidence=card,
+            )
+        else:
+            # Do not infer many_to_many from per-column uniqueness alone for composites.
+            card = "unknown"
+            info(
+                "composite_key_no_observation",
+                "Composite join without composite uniqueness observation; "
+                "skipping per-column many_to_many inference",
+                step_id=step.id,
+            )
+
     for lk, rk in zip(left_keys, right_keys):
         if lk not in left.columns or rk not in right.columns:
             continue
         lc, rc = left.columns[lk], right.columns[rk]
-        left_u, right_u = lc.uniqueness_ratio, rc.uniqueness_ratio
+        if not is_composite:
+            left_u, right_u = lc.uniqueness_ratio, rc.uniqueness_ratio
         left_null, right_null = lc.null_ratio, rc.null_ratio
         if not _dtypes_compatible(lc.dtype_family, rc.dtype_family):
             err(
@@ -757,6 +854,9 @@ def _v_join(
                 right_null_ratio=right_null,
             )
 
+        if is_composite:
+            continue
+
         stats = _pair_stats(pairwise_index, left.name, right.name, lk, rk)
         if stats:
             card = str(stats.get("cardinality_evidence") or "unknown")
@@ -781,7 +881,6 @@ def _v_join(
                     how=how,
                 )
         else:
-            # Derive cardinality evidence from uniqueness alone (observation)
             if left_u is not None and right_u is not None:
                 if left_u >= 0.98 and right_u >= 0.98:
                     card = "one_to_one"

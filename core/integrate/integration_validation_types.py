@@ -68,6 +68,24 @@ def format_integration_validation_feedback(
     for issue in result.infos[:8]:
         lines.append(_format_issue(issue, prefix="INFO"))
 
+    codes = {i.code for i in result.errors}
+    if "ambiguous_key_selection" in codes:
+        lines.append(
+            "Previous plan failed because ambiguous relationship evidence remained unresolved. "
+            "Do not arbitrarily pick among near-tied singleton keys. "
+            "Use a materially different integration strategy if supported by the evidence, "
+            "or return status=cannot_plan."
+        )
+    elif codes & {
+        "insufficient_evidence_forced_join",
+        "join_against_unrelated",
+        "many_to_many_join_risk",
+    }:
+        lines.append(
+            "Previous plan failed because the join was unsafe given relationship evidence. "
+            "Use a materially different integration strategy if supported by the evidence, "
+            "or return status=cannot_plan."
+        )
     lines.append(
         "Do not automatically invent or swap keys/operations. "
         "Regenerate the integration plan using relationship evidence and the user request."

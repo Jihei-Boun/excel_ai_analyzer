@@ -23,6 +23,7 @@ from core.integrate.integration_pipeline import (
 from core.integrate.integration_plan_types import (
     IntegrationPlan,
     IntegrationPlanParseError,
+    integration_operation_family_signature,
     integration_plan_from_dict,
 )
 from core.integrate.integration_plan_validate import validate_integration_plan
@@ -58,6 +59,7 @@ __all__ = [
     "IntegrationPlan",
     "IntegrationPlanParseError",
     "integration_plan_from_dict",
+    "integration_operation_family_signature",
     "build_integration_plan",
     "validate_integration_plan",
     "IntegrationValidationIssue",

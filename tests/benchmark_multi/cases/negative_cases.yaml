@@ -217,6 +217,9 @@ cases:
   - id: repeated_plan_001
     scenario: repeated_plan
     domain: negative
+    # Live LLM path is not the intended test: fixed bad plan + no retry diversity.
+    # Counting a valid live join as "unsafe" was a Phase 19/20 benchmark artifact.
+    deterministic_only: true
     files: [customers.xlsx, orders.xlsx]
     prompt: "연결해줘"
     fixed_relationships:
