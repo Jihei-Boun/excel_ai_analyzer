@@ -81,5 +81,5 @@ tests/benchmark/datasets/*
 # Runtime cleanup helper: ./scripts/clean_artifacts.sh
 
 
-docs/learning_note/시연_대본.md
-docs/learning_note/시연_복붙_질문.txt
+docs/시연_대본.md
+docs/시연_복붙_질문.txt
