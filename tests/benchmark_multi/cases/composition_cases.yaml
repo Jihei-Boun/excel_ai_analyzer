@@ -1,0 +1,154 @@
+cases:
+  - id: filter_union_aggregate_001
+    scenario: filter_union_aggregate
+    domain: inventory
+    files: [inv_east.xlsx, inv_west.xlsx]
+    prompt: "동부 재고에서 qty가 5 이상인 행만 남기고 서부와 합친 뒤 sku별 합계를 구해줘"
+    fixed_relationships:
+      - left_source: inv_east
+        right_source: inv_west
+        relationship: same_schema
+        key_candidates: []
+        confidence: 0.85
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: filter_rows
+          inputs: [inv_east]
+          output: east2
+          params:
+            conditions:
+              - {column: qty, operator: gte, value: 5}
+        - id: step_2
+          op: union_rows
+          inputs: [east2, inv_west]
+          output: combined
+          params: {column_policy: aligned}
+        - id: step_3
+          op: aggregate
+          inputs: [combined]
+          output: summary
+          params:
+            group_by: [sku]
+            metrics:
+              - {column: qty, function: sum, alias: total_qty}
+      final_output: summary
+    expected:
+      pipeline_status: success
+      safety_outcome: safe
+      required_operations: [filter_rows, union_rows, aggregate]
+      result:
+        required_columns: [sku, total_qty]
+        result_compare:
+          key_column: sku
+          value_column: total_qty
+          expected_result:
+            S2: 8
+            S1: 2
+            S4: 9
+
+  - id: three_file_chain_001
+    scenario: three_file_chain
+    domain: orders
+    files: [customers.xlsx, orders.xlsx, products.xlsx]
+    prompt: "상품 정보를 주문에 연결하고 고객별 카테고리 주문금액을 계산해줘"
+    fixed_relationships:
+      - left_source: customers
+        right_source: orders
+        relationship: master_detail_candidate
+        key_candidates:
+          - {left_column: customer_id, right_column: customer_id, confidence: 0.9}
+        confidence: 0.9
+        evidence: []
+        ambiguities: []
+      - left_source: orders
+        right_source: products
+        relationship: lookup_candidate
+        key_candidates:
+          - {left_column: product_id, right_column: product_id, confidence: 0.9}
+        confidence: 0.88
+        evidence: []
+        ambiguities: []
+      - left_source: customers
+        right_source: products
+        relationship: unrelated
+        key_candidates: []
+        confidence: 0.2
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: join
+          inputs: [orders, products]
+          output: op
+          params:
+            left_keys: [product_id]
+            right_keys: [product_id]
+            how: left
+        - id: step_2
+          op: join
+          inputs: [op, customers]
+          output: full
+          params:
+            left_keys: [customer_id]
+            right_keys: [customer_id]
+            how: left
+        - id: step_3
+          op: aggregate
+          inputs: [full]
+          output: summary
+          params:
+            group_by: [customer_name, category_name]
+            metrics:
+              - {column: order_amount, function: sum, alias: total_amount}
+      final_output: summary
+    expected:
+      pipeline_status: success
+      safety_outcome: safe
+      required_operations: [join, aggregate]
+      result:
+        required_columns: [customer_name, category_name, total_amount]
+
+  - id: dirty_multifile_001
+    scenario: dirty_multifile
+    domain: dirty
+    files: [dirty_a.xlsx, dirty_b.xlsx]
+    prompt: "두 파일을 상품 기준으로 행 합쳐줘"
+    fixed_relationships:
+      - left_source: dirty_a
+        right_source: dirty_b
+        relationship: compatible_schema
+        key_candidates: []
+        confidence: 0.5
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: rename_columns
+          inputs: [dirty_a]
+          output: a2
+          params:
+            mapping:
+              "Product ID": product_id
+              QTY: qty
+              Amount: amount
+        - id: step_2
+          op: union_rows
+          inputs: [a2, dirty_b]
+          output: combined
+          params: {column_policy: union_with_nulls}
+      final_output: combined
+    expected:
+      pipeline_status: success
+      safety_outcome: safe
+      required_operations: [rename_columns, union_rows]
+      result:
+        expected_row_count: 4
+        required_columns: [product_id]

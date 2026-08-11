@@ -1,0 +1,243 @@
+cases:
+  - id: master_detail_join_001
+    scenario: master_detail_join
+    domain: orders
+    files: [customers.xlsx, orders.xlsx]
+    prompt: "고객 정보와 주문 정보를 연결해줘"
+    fixed_relationships:
+      - left_source: customers
+        right_source: orders
+        relationship: master_detail_candidate
+        key_candidates:
+          - {left_column: customer_id, right_column: customer_id, confidence: 0.9}
+        confidence: 0.9
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: join
+          inputs: [customers, orders]
+          output: joined
+          params:
+            left_keys: [customer_id]
+            right_keys: [customer_id]
+            how: left
+      final_output: joined
+    expected:
+      pipeline_status: success
+      safety_outcome: safe
+      relationship:
+        allowed: [master_detail_candidate, join_candidate]
+      required_operations: [join]
+      join:
+        left_keys: [customer_id]
+        right_keys: [customer_id]
+      required_input_files: [customers.xlsx, orders.xlsx]
+      result:
+        expected_row_count: 4
+        required_columns: [customer_id, customer_name, order_amount]
+
+  - id: lookup_join_001
+    scenario: lookup_join
+    domain: logistics
+    files: [products.xlsx, orders_lookup.xlsx]
+    prompt: "주문 데이터에 상품 카테고리 정보를 붙여줘"
+    fixed_relationships:
+      - left_source: products
+        right_source: orders_lookup
+        relationship: lookup_candidate
+        key_candidates:
+          - {left_column: product_id, right_column: product_id, confidence: 0.9}
+        confidence: 0.88
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: join
+          inputs: [orders_lookup, products]
+          output: enriched
+          params:
+            left_keys: [product_id]
+            right_keys: [product_id]
+            how: left
+      final_output: enriched
+    expected:
+      pipeline_status: success
+      safety_outcome: safe
+      relationship:
+        allowed: [lookup_candidate, join_candidate, master_detail_candidate]
+      required_operations: [join]
+      join:
+        left_keys: [product_id]
+        right_keys: [product_id]
+      result:
+        expected_row_count: 3
+        required_columns: [product_id, category_name, amount]
+
+  - id: join_aggregate_001
+    scenario: join_aggregate
+    domain: orders
+    files: [customers.xlsx, orders.xlsx]
+    prompt: "고객 정보를 연결해서 지역별 주문금액 합계를 알려줘"
+    fixed_relationships:
+      - left_source: customers
+        right_source: orders
+        relationship: master_detail_candidate
+        key_candidates:
+          - {left_column: customer_id, right_column: customer_id, confidence: 0.9}
+        confidence: 0.9
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: join
+          inputs: [customers, orders]
+          output: joined
+          params:
+            left_keys: [customer_id]
+            right_keys: [customer_id]
+            how: inner
+        - id: step_2
+          op: aggregate
+          inputs: [joined]
+          output: summary
+          params:
+            group_by: [region]
+            metrics:
+              - {column: order_amount, function: sum, alias: total_amount}
+      final_output: summary
+    expected:
+      pipeline_status: success
+      safety_outcome: safe
+      required_operations: [join, aggregate]
+      join:
+        left_keys: [customer_id]
+        right_keys: [customer_id]
+      result:
+        required_columns: [region, total_amount]
+        result_compare:
+          key_column: region
+          value_column: total_amount
+          expected_result:
+            Seoul: 180
+            Busan: 20
+
+  - id: rename_join_001
+    scenario: rename_join
+    domain: orders
+    files: [customers_cid.xlsx, orders_cust_id.xlsx]
+    prompt: "고객 정보와 주문 데이터를 연결해줘"
+    fixed_relationships:
+      - left_source: customers_cid
+        right_source: orders_cust_id
+        relationship: join_candidate
+        key_candidates:
+          - {left_column: customer_id, right_column: cust_id, confidence: 0.8}
+        confidence: 0.75
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: rename_columns
+          inputs: [orders_cust_id]
+          output: orders2
+          params:
+            mapping: {cust_id: customer_id}
+        - id: step_2
+          op: join
+          inputs: [customers_cid, orders2]
+          output: joined
+          params:
+            left_keys: [customer_id]
+            right_keys: [customer_id]
+            how: inner
+      final_output: joined
+    expected:
+      pipeline_status: success
+      safety_outcome: safe
+      required_operations: [join]
+      notes: "rename→join or join with distinct left/right key names are both acceptable"
+      result:
+        expected_row_count: 3
+        required_columns: [customer_id, name, amount]
+
+  - id: composite_key_join_001
+    scenario: composite_key_join
+    domain: sales
+    files: [sales_store.xlsx, price_store.xlsx]
+    prompt: "매장·상품 기준으로 판매와 가격을 연결해줘"
+    fixed_relationships:
+      - left_source: sales_store
+        right_source: price_store
+        relationship: join_candidate
+        key_candidates:
+          - {left_column: store_id, right_column: store_id, confidence: 0.5}
+          - {left_column: product_id, right_column: product_id, confidence: 0.5}
+        confidence: 0.8
+        evidence: ["composite keys needed"]
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: join
+          inputs: [sales_store, price_store]
+          output: joined
+          params:
+            left_keys: [store_id, product_id]
+            right_keys: [store_id, product_id]
+            how: inner
+      final_output: joined
+    expected:
+      pipeline_status: success
+      safety_outcome: safe
+      required_operations: [join]
+      join:
+        left_keys: [store_id, product_id]
+        right_keys: [store_id, product_id]
+      result:
+        expected_row_count: 3
+        required_columns: [store_id, product_id, units, unit_price]
+
+  - id: partial_overlap_join_001
+    scenario: partial_overlap_join
+    domain: generic
+    files: [partial_left.xlsx, partial_right.xlsx]
+    prompt: "두 파일을 id로 연결해줘"
+    fixed_relationships:
+      - left_source: partial_left
+        right_source: partial_right
+        relationship: partial_overlap
+        key_candidates:
+          - {left_column: id, right_column: id, confidence: 0.4}
+        confidence: 0.45
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: join
+          inputs: [partial_left, partial_right]
+          output: joined
+          params:
+            left_keys: [id]
+            right_keys: [id]
+            how: inner
+      final_output: joined
+    expected:
+      pipeline_status: success
+      safety_outcome: safe
+      required_operations: [join]
+      notes: "Low overlap may warn; success still allowed"
+      result:
+        expected_row_count: 2
+        required_columns: [id, v, w]

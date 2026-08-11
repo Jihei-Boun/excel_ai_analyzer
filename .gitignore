@@ -70,10 +70,14 @@ htmlcov/
 # Benchmark live/deterministic outputs (keep folder)
 benchmark_results/*
 !benchmark_results/.gitkeep
+benchmark_results/multi/*
+!benchmark_results/multi/.gitkeep
 
 # Generated benchmark datasets (recreate via generate_datasets.py)
 tests/benchmark/datasets/*
 !tests/benchmark/datasets/.gitkeep
+tests/benchmark_multi/datasets/*
+!tests/benchmark_multi/datasets/.gitkeep
 
 # Local Streamlit cache
 .streamlit/cache/

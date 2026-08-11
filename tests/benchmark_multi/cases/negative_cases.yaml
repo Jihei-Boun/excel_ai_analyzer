@@ -1,0 +1,247 @@
+cases:
+  - id: ambiguous_keys_001
+    scenario: ambiguous_key
+    domain: ambiguous
+    files: [ambiguous_a.xlsx, ambiguous_b.xlsx]
+    prompt: "두 파일을 연결해줘"
+    fixed_relationships:
+      - left_source: ambiguous_a
+        right_source: ambiguous_b
+        relationship: ambiguous
+        key_candidates:
+          - {left_column: customer_id, right_column: customer_id, confidence: 0.8}
+          - {left_column: account_id, right_column: account_id, confidence: 0.8}
+        confidence: 0.4
+        evidence: []
+        ambiguities: ["customer_id vs account_id"]
+    fixed_plan:
+      status: cannot_plan
+      steps: []
+      final_output: null
+      reason: "Multiple plausible join keys remain unresolved"
+      ambiguities: ["customer_id and account_id both plausible"]
+    expected:
+      pipeline_status: [cannot_plan]
+      safety_outcome: safe
+      relationship:
+        allowed: [ambiguous]
+      forbidden_operations: [join]
+      notes: "Choosing either key without evidence is unsafe"
+
+  - id: unrelated_files_001
+    scenario: unrelated
+    domain: negative
+    files: [employees.xlsx, sensor_readings.xlsx]
+    prompt: "이 두 파일을 합쳐줘"
+    fixed_relationships:
+      - left_source: employees
+        right_source: sensor_readings
+        relationship: unrelated
+        key_candidates: []
+        confidence: 0.1
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: cannot_plan
+      steps: []
+      final_output: null
+      reason: "Files appear unrelated; no safe integration"
+      ambiguities: []
+    expected:
+      pipeline_status: [cannot_plan]
+      safety_outcome: safe
+      relationship:
+        allowed: [unrelated]
+        forbidden: [join_candidate, master_detail_candidate]
+      forbidden_operations: [join, union_rows]
+
+  - id: many_to_many_001
+    scenario: many_to_many
+    domain: negative
+    files: [campaign_events.xlsx, campaign_orders.xlsx]
+    prompt: "캠페인 이벤트와 주문을 category로 연결해줘"
+    fixed_relationships:
+      - left_source: campaign_events
+        right_source: campaign_orders
+        relationship: join_candidate
+        key_candidates:
+          - {left_column: category, right_column: category, confidence: 0.5}
+        confidence: 0.4
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: join
+          inputs: [campaign_events, campaign_orders]
+          output: joined
+          params:
+            left_keys: [category]
+            right_keys: [category]
+            how: inner
+      final_output: joined
+    # retry returns cannot_plan (safe)
+    fixed_plan_retry:
+      status: cannot_plan
+      steps: []
+      final_output: null
+      reason: "Join keys are non-unique on both sides"
+      ambiguities: ["many_to_many"]
+    expected:
+      pipeline_status: [cannot_plan, failed]
+      safety_outcome: safe
+      allow_plan_validation_block: true
+      forbidden_operations: []
+      notes: "Unsafe many-to-many join must be blocked; cannot_plan/failed is safe"
+
+  - id: incompatible_union_001
+    scenario: incompatible_union
+    domain: negative
+    files: [schema_left.xlsx, schema_right.xlsx]
+    prompt: "두 파일을 행으로 합쳐줘"
+    fixed_relationships:
+      - left_source: schema_left
+        right_source: schema_right
+        relationship: unrelated
+        key_candidates: []
+        confidence: 0.2
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: union_rows
+          inputs: [schema_left, schema_right]
+          output: combined
+          params: {column_policy: aligned}
+      final_output: combined
+    fixed_plan_retry:
+      status: cannot_plan
+      steps: []
+      final_output: null
+      reason: "Schemas are incompatible for aligned union"
+      ambiguities: []
+    expected:
+      pipeline_status: [cannot_plan, failed]
+      safety_outcome: safe
+      allow_plan_validation_block: true
+
+  - id: impossible_aggregate_001
+    scenario: impossible_aggregate
+    domain: negative
+    files: [agg_bad.xlsx, agg_bad_b.xlsx]
+    prompt: "두 파일을 합친 뒤 label을 합산해줘"
+    fixed_relationships:
+      - left_source: agg_bad
+        right_source: agg_bad_b
+        relationship: same_schema
+        key_candidates: []
+        confidence: 0.8
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: union_rows
+          inputs: [agg_bad, agg_bad_b]
+          output: combined
+          params: {column_policy: aligned}
+        - id: step_2
+          op: aggregate
+          inputs: [combined]
+          output: summary
+          params:
+            group_by: [g]
+            metrics:
+              - {column: label, function: sum, alias: total}
+      final_output: summary
+    fixed_plan_retry:
+      status: cannot_plan
+      steps: []
+      final_output: null
+      reason: "Cannot sum non-numeric label"
+      ambiguities: []
+    expected:
+      pipeline_status: [cannot_plan, failed]
+      safety_outcome: safe
+      allow_plan_validation_block: true
+
+  - id: retry_recovery_001
+    scenario: retry_recovery
+    domain: orders
+    files: [customers.xlsx, orders.xlsx]
+    prompt: "고객과 주문을 연결해줘"
+    fixed_relationships:
+      - left_source: customers
+        right_source: orders
+        relationship: master_detail_candidate
+        key_candidates:
+          - {left_column: customer_id, right_column: customer_id, confidence: 0.9}
+        confidence: 0.9
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: join
+          inputs: [customers, orders]
+          output: joined
+          params:
+            left_keys: [missing_key]
+            right_keys: [customer_id]
+            how: inner
+      final_output: joined
+    fixed_plan_retry:
+      status: planned
+      steps:
+        - id: step_1
+          op: join
+          inputs: [customers, orders]
+          output: joined
+          params:
+            left_keys: [customer_id]
+            right_keys: [customer_id]
+            how: left
+      final_output: joined
+    expected:
+      pipeline_status: success
+      safety_outcome: safe
+      required_operations: [join]
+      result:
+        expected_row_count: 4
+
+  - id: repeated_plan_001
+    scenario: repeated_plan
+    domain: negative
+    files: [customers.xlsx, orders.xlsx]
+    prompt: "연결해줘"
+    fixed_relationships:
+      - left_source: customers
+        right_source: orders
+        relationship: master_detail_candidate
+        key_candidates:
+          - {left_column: customer_id, right_column: customer_id, confidence: 0.9}
+        confidence: 0.9
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: join
+          inputs: [customers, orders]
+          output: joined
+          params:
+            left_keys: [nope]
+            right_keys: [customer_id]
+            how: inner
+      final_output: joined
+    # no retry plan change → repeated
+    expected:
+      pipeline_status: [failed]
+      safety_outcome: safe
+      allow_plan_validation_block: true

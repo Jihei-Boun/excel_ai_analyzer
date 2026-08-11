@@ -1,0 +1,154 @@
+cases:
+  - id: same_schema_union_001
+    scenario: same_schema_union
+    domain: sales
+    files: [sales_jan.xlsx, sales_feb.xlsx]
+    prompt: "1월과 2월 판매 데이터를 하나로 합쳐줘"
+    fixed_relationships:
+      - left_source: sales_jan
+        right_source: sales_feb
+        relationship: same_schema
+        key_candidates: []
+        confidence: 0.9
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: union_rows
+          inputs: [sales_jan, sales_feb]
+          output: combined
+          params: {column_policy: aligned}
+      final_output: combined
+    expected:
+      pipeline_status: success
+      safety_outcome: safe
+      relationship:
+        allowed: [same_schema, compatible_schema]
+      required_operations: [union_rows]
+      result:
+        expected_row_count: 6
+        required_columns: [product_id, qty, amount]
+
+  - id: compatible_schema_union_001
+    scenario: compatible_schema_union
+    domain: sales
+    files: [sales_a.xlsx, sales_b.xlsx]
+    prompt: "두 판매 파일을 행으로 합쳐줘"
+    fixed_relationships:
+      - left_source: sales_a
+        right_source: sales_b
+        relationship: compatible_schema
+        key_candidates: []
+        confidence: 0.7
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: union_rows
+          inputs: [sales_a, sales_b]
+          output: combined
+          params: {column_policy: union_with_nulls}
+      final_output: combined
+    expected:
+      pipeline_status: success
+      safety_outcome: safe
+      required_operations: [union_rows]
+      result:
+        expected_row_count: 3
+        required_columns: [product_id, qty, amount]
+
+  - id: union_aggregate_001
+    scenario: union_aggregate
+    domain: inventory
+    files: [warehouse_a.xlsx, warehouse_b.xlsx]
+    prompt: "두 창고 데이터를 합쳐 상품별 총 재고를 계산해줘"
+    fixed_relationships:
+      - left_source: warehouse_a
+        right_source: warehouse_b
+        relationship: same_schema
+        key_candidates: []
+        confidence: 0.85
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: union_rows
+          inputs: [warehouse_a, warehouse_b]
+          output: combined
+          params: {column_policy: aligned}
+        - id: step_2
+          op: aggregate
+          inputs: [combined]
+          output: summary
+          params:
+            group_by: [product_id]
+            metrics:
+              - {column: stock, function: sum, alias: total_stock}
+      final_output: summary
+    expected:
+      pipeline_status: success
+      safety_outcome: safe
+      required_operations: [union_rows, aggregate]
+      result:
+        expected_row_count: 3
+        required_columns: [product_id, total_stock]
+        result_compare:
+          sort_by: [product_id]
+          key_column: product_id
+          value_column: total_stock
+          expected_result:
+            P001: 120
+            P002: 10
+            P003: 5
+
+  - id: multifile_budget_001
+    scenario: multifile_budget
+    domain: budget
+    files: [budget_a.xlsx, budget_b.xlsx]
+    prompt: "두 파일을 통합해 비용코드별 실행예산과 집행액을 합산해줘"
+    fixed_relationships:
+      - left_source: budget_a
+        right_source: budget_b
+        relationship: same_schema
+        key_candidates: []
+        confidence: 0.9
+        evidence: []
+        ambiguities: []
+    fixed_plan:
+      status: planned
+      steps:
+        - id: step_1
+          op: union_rows
+          inputs: [budget_a, budget_b]
+          output: combined
+          params: {column_policy: aligned}
+        - id: step_2
+          op: aggregate
+          inputs: [combined]
+          output: summary
+          params:
+            group_by: [비용코드]
+            metrics:
+              - {column: 실행예산, function: sum, alias: 실행예산_합계}
+              - {column: 집행액, function: sum, alias: 집행액_합계}
+      final_output: summary
+    expected:
+      pipeline_status: success
+      safety_outcome: safe
+      required_operations: [union_rows, aggregate]
+      forbidden_operations: [aggregate_merge]
+      result:
+        required_columns: [비용코드, 실행예산_합계, 집행액_합계]
+        result_compare:
+          key_column: 비용코드
+          value_column: 실행예산_합계
+          expected_result:
+            C01: 1300
+            C02: 500
+            C03: 400
