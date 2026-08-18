@@ -204,7 +204,9 @@ cases:
         left_keys: [store_id, product_id]
         right_keys: [store_id, product_id]
       result:
-        expected_row_count: 3
+        # Fixture corrected in Phase 21 to true composite (4 rows); was 3 when
+        # singles were artificially unique (defeated composite scenario).
+        expected_row_count: 4
         required_columns: [store_id, product_id, units, unit_price]
 
   - id: partial_overlap_join_001

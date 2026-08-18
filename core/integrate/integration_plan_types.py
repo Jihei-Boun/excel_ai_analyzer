@@ -69,6 +69,35 @@ class IntegrationStep:
 
 
 @dataclass
+class FinalOutputRequirements:
+    """Planner-declared final intent (optional, Phase 24).
+
+    LLM decides grain/fields. Python only checks Plan consistency —
+    never fills these from user keywords or benchmark goldens.
+    """
+
+    grain: str | None = None  # detail | entity | group | summary
+    required_columns: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        if self.grain:
+            out["grain"] = self.grain
+        if self.required_columns:
+            out["required_columns"] = list(self.required_columns)
+        return out
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.grain and not self.required_columns
+
+
+FINAL_GRAIN_VALUES = frozenset({"detail", "entity", "group", "summary"})
+FINAL_GRAIN_ROW_LEVEL = frozenset({"detail", "entity"})
+FINAL_GRAIN_COLLAPSED = frozenset({"group", "summary"})
+
+
+@dataclass
 class IntegrationPlan:
     """LLM Integration Planner output (or cannot_plan safe failure)."""
 
@@ -79,9 +108,10 @@ class IntegrationPlan:
     ambiguities: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
+    final_output_requirements: FinalOutputRequirements | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "status": self.status,
             "steps": [s.to_dict() for s in self.steps],
             "final_output": self.final_output,
@@ -90,6 +120,9 @@ class IntegrationPlan:
             "notes": list(self.notes),
             "meta": dict(self.meta),
         }
+        if self.final_output_requirements and not self.final_output_requirements.is_empty:
+            payload["final_output_requirements"] = self.final_output_requirements.to_dict()
+        return payload
 
 
 def integration_plan_from_dict(data: Any) -> IntegrationPlan:
@@ -130,6 +163,7 @@ def integration_plan_from_dict(data: Any) -> IntegrationPlan:
             ambiguities=ambiguities,
             notes=notes,
             meta={"phase": 15},
+            final_output_requirements=None,
         )
 
     # status == planned
@@ -167,6 +201,7 @@ def integration_plan_from_dict(data: Any) -> IntegrationPlan:
         ambiguities=ambiguities,
         notes=notes,
         meta={"phase": 15},
+        final_output_requirements=_parse_final_output_requirements(data),
     )
 
 
@@ -179,6 +214,7 @@ def canonical_integration_plan_signature(plan: IntegrationPlan | dict[str, Any])
     slim = {
         "status": payload.get("status"),
         "final_output": payload.get("final_output"),
+        "final_output_requirements": payload.get("final_output_requirements"),
         "steps": [
             {
                 "op": s.get("op"),
@@ -478,6 +514,11 @@ def _normalize_params(op: str, params: dict[str, Any], *, index: int) -> dict[st
             alias = m.get("alias")
             if alias is not None and str(alias).strip():
                 item["alias"] = str(alias).strip()
+            # Structural materialize: always attach resolved alias so Planner,
+            # Validator, and Executor share one name (no semantic rename).
+            from core.integrate.integration_contracts import materialize_aggregate_metric
+
+            item = materialize_aggregate_metric(item)
             norm_metrics.append(item)
         return {"group_by": group_s, "metrics": norm_metrics}
 
@@ -495,6 +536,34 @@ def _normalize_params(op: str, params: dict[str, Any], *, index: int) -> dict[st
         return {"columns": cols}
 
     raise IntegrationPlanParseError(f"unhandled op {op!r}")
+
+
+def _parse_final_output_requirements(data: dict[str, Any]) -> FinalOutputRequirements | None:
+    """Optional Planner declaration — structural normalize only."""
+    raw = data.get("final_output_requirements")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise IntegrationPlanParseError("final_output_requirements must be an object")
+    grain_raw = raw.get("grain")
+    grain = str(grain_raw).strip().lower() if grain_raw is not None else None
+    if grain == "":
+        grain = None
+    if grain is not None and grain not in FINAL_GRAIN_VALUES:
+        raise IntegrationPlanParseError(
+            f"final_output_requirements.grain must be one of "
+            f"{sorted(FINAL_GRAIN_VALUES)}, got {grain!r}"
+        )
+    cols_raw = raw.get("required_columns") or raw.get("required_fields") or []
+    if cols_raw is None:
+        cols_raw = []
+    if not isinstance(cols_raw, list):
+        raise IntegrationPlanParseError(
+            "final_output_requirements.required_columns must be a list"
+        )
+    cols = [str(x).strip() for x in cols_raw if str(x).strip()]
+    req = FinalOutputRequirements(grain=grain, required_columns=cols)
+    return None if req.is_empty else req
 
 
 def _str_list(value: Any) -> list[str]:

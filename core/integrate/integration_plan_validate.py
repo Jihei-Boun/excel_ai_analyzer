@@ -13,6 +13,9 @@ from typing import Any
 from core.integrate.integration_plan_types import (
     AGGREGATE_FUNCTIONS,
     FILTER_OPERATORS,
+    FINAL_GRAIN_COLLAPSED,
+    FINAL_GRAIN_ROW_LEVEL,
+    FINAL_GRAIN_VALUES,
     INTEGRATION_ATOMIC_OPS,
     JOIN_HOW,
     IntegrationPlan,
@@ -237,6 +240,12 @@ def validate_integration_plan(
             if out_meta is not None:
                 datasets[step.output] = out_meta
                 produced.add(step.output)
+                if lineage:
+                    lineage[-1]["output_columns"] = sorted(out_meta.columns.keys())
+                    if step.op == "join":
+                        from core.integrate.integration_contracts import JOIN_SUFFIXES
+
+                        lineage[-1]["join_suffixes"] = list(JOIN_SUFFIXES)
         else:
             # Still mark output as unknown placeholder to catch later deps softly
             produced.add(step.output)
@@ -255,6 +264,13 @@ def validate_integration_plan(
             "final_output_resolved",
             f"final_output resolves to {plan_obj.final_output!r}",
             final_output=plan_obj.final_output,
+        )
+        _validate_final_output_requirements(
+            plan_obj,
+            datasets=datasets,
+            err=err,
+            warn=warn,
+            info=info,
         )
 
     # Plan immutability
@@ -282,6 +298,128 @@ def validate_integration_plan(
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
+
+def _validate_final_output_requirements(
+    plan_obj: IntegrationPlan,
+    *,
+    datasets: dict[str, _DatasetMeta],
+    err,
+    warn,
+    info,
+) -> None:
+    """Consistency checks for Planner-declared final_output_requirements only.
+
+    Does not infer user intent. Does not rewrite the plan.
+    """
+    req = plan_obj.final_output_requirements
+    if req is None or req.is_empty:
+        info(
+            "final_output_requirements_absent",
+            "Plan has no final_output_requirements; grain/field consistency "
+            "checks are skipped (optional Phase 24 contract).",
+        )
+        return
+
+    grain = (req.grain or "").strip().lower() or None
+    if grain and grain not in FINAL_GRAIN_VALUES:
+        err(
+            "invalid_final_grain",
+            f"final_output_requirements.grain {grain!r} is not supported",
+            grain=grain,
+        )
+        return
+
+    ops = [s.op for s in plan_obj.steps]
+    has_aggregate = "aggregate" in ops
+    final_id = plan_obj.final_output
+    final_step = next((s for s in plan_obj.steps if s.output == final_id), None)
+    aggregate_produces_final = bool(final_step and final_step.op == "aggregate")
+    # Also: final is select/rename of an aggregate output
+    upstream_agg = False
+    if final_step and final_step.op != "aggregate":
+        produced_by_agg = {s.output for s in plan_obj.steps if s.op == "aggregate"}
+        frontier = set(final_step.inputs)
+        seen: set[str] = set()
+        while frontier:
+            cur = frontier.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            if cur in produced_by_agg:
+                upstream_agg = True
+                break
+            prev = next((s for s in plan_obj.steps if s.output == cur), None)
+            if prev:
+                frontier.update(prev.inputs)
+
+    collapses = aggregate_produces_final or upstream_agg or (
+        has_aggregate and final_step is None
+    )
+
+    if grain in FINAL_GRAIN_ROW_LEVEL and (aggregate_produces_final or upstream_agg):
+        # Warning (not error): LLMs often mislabel grain=detail while correctly
+        # aggregating for a summary request. Blocking caused retry-exhausted
+        # false failures on valid group/summary plans (Phase 24 live).
+        # Row-level intent is still enforced when required_columns list detail
+        # fields that aggregate would drop → final_required_field_missing ERROR.
+        warn(
+            "final_grain_contradiction",
+            "Declared final grain is row-level (detail/entity), but the plan "
+            "collapses rows with aggregate before/at final_output. "
+            "Align grain with the plan (use group/summary if aggregating) "
+            "or remove the collapsing aggregate if row-level output was intended.",
+            grain=grain,
+            has_aggregate=has_aggregate,
+            aggregate_produces_final=aggregate_produces_final,
+            upstream_aggregate=upstream_agg,
+        )
+    elif grain in FINAL_GRAIN_COLLAPSED and not has_aggregate:
+        warn(
+            "final_grain_contradiction",
+            "Declared final grain is group/summary, but the plan has no aggregate step. "
+            "Align grain with the plan or add the aggregate required for that grain.",
+            grain=grain,
+        )
+    elif grain == "group" and has_aggregate:
+        # Prefer non-empty group_by on the aggregate that feeds final
+        agg_steps = [s for s in plan_obj.steps if s.op == "aggregate"]
+        relevant = [
+            s
+            for s in agg_steps
+            if s.output == final_id
+            or (final_step and s.output in (final_step.inputs or []))
+        ] or agg_steps[-1:]
+        for s in relevant:
+            gb = [str(x) for x in ((s.params or {}).get("group_by") or [])]
+            if not gb:
+                warn(
+                    "final_grain_group_without_group_by",
+                    "Declared grain=group but aggregate has empty group_by "
+                    "(global summary). Prefer grain=summary or set group_by.",
+                    step_id=s.id,
+                )
+
+    # Required columns must exist on simulated final schema
+    final_meta = datasets.get(str(final_id)) if final_id else None
+    if final_meta is not None and req.required_columns:
+        missing = [c for c in req.required_columns if c not in final_meta.columns]
+        if missing:
+            err(
+                "final_required_field_missing",
+                "Declared final_output_requirements.required_columns are not "
+                "present in the simulated final schema. Later transformations "
+                "may have dropped them.",
+                missing_columns=missing,
+                final_output=final_id,
+                available_columns=sorted(final_meta.columns.keys())[:40],
+            )
+        else:
+            info(
+                "final_required_fields_present",
+                "Declared required_columns are present on simulated final schema",
+                required_columns=list(req.required_columns),
+            )
 
 
 def _build_source_datasets(und: dict[str, Any]) -> dict[str, _DatasetMeta]:
@@ -1011,7 +1149,9 @@ def _v_aggregate(step: IntegrationStep, src: _DatasetMeta, *, err, warn, lineage
             continue
         col = str(m.get("column") or "")
         fn = str(m.get("function") or m.get("fn") or "").lower()
-        alias = str(m.get("alias") or col)
+        from core.integrate.integration_contracts import resolve_aggregate_alias
+
+        alias = resolve_aggregate_alias(m if isinstance(m, dict) else {})
         cols_used.append(col)
         aliases.append(alias)
         if col not in src.columns:
@@ -1179,14 +1319,40 @@ def _simulate_output(step: IntegrationStep, inputs: list[_DatasetMeta]) -> _Data
             may_contain_summary_rows=summary,
         )
     if step.op == "join":
+        from core.integrate.integration_contracts import join_output_column_names
+
         left, right = inputs[0], inputs[1]
-        cols = dict(left.columns)
-        for name, meta in right.columns.items():
-            if name in cols:
-                cols[f"{right.name}__{name}"] = meta  # collision placeholder name
+        left_keys = [str(k) for k in (step.params.get("left_keys") or [])]
+        right_keys = [str(k) for k in (step.params.get("right_keys") or [])]
+        out_names = join_output_column_names(
+            left.columns.keys(),
+            right.columns.keys(),
+            left_keys=left_keys,
+            right_keys=right_keys,
+        )
+        # Map output names → column meta (prefer left, then right; suffix strip for collisions)
+        cols: dict[str, _ColumnMeta] = {}
+        for name in out_names:
+            base = name
+            if name.endswith("_left") and name[: -len("_left")] in left.columns:
+                base = name[: -len("_left")]
+                meta = left.columns[base]
+            elif name.endswith("_right") and name[: -len("_right")] in right.columns:
+                base = name[: -len("_right")]
+                meta = right.columns[base]
+            elif name in left.columns:
+                meta = left.columns[name]
+            elif name in right.columns:
+                meta = right.columns[name]
             else:
-                cols[name] = meta
-        # row count unknown precisely
+                meta = _ColumnMeta(name=name, dtype_family="unknown")
+            cols[name] = _ColumnMeta(
+                name=name,
+                dtype_family=meta.dtype_family,
+                null_ratio=meta.null_ratio,
+                uniqueness_ratio=meta.uniqueness_ratio,
+                distinct_count=meta.distinct_count,
+            )
         return _DatasetMeta(
             name=step.output,
             kind="intermediate",
@@ -1205,7 +1371,9 @@ def _simulate_output(step: IntegrationStep, inputs: list[_DatasetMeta]) -> _Data
         for m in step.params.get("metrics") or []:
             if not isinstance(m, dict):
                 continue
-            alias = str(m.get("alias") or m.get("column") or "")
+            from core.integrate.integration_contracts import resolve_aggregate_alias
+
+            alias = resolve_aggregate_alias(m)
             if alias:
                 cols[alias] = _ColumnMeta(name=alias, dtype_family="numeric")
         return _DatasetMeta(

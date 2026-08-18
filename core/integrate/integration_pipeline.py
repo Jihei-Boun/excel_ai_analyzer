@@ -22,6 +22,12 @@ from core.integrate.integration_plan_types import (
     integration_operation_family_signature,
     repeated_integration_family_feedback,
 )
+from core.integrate.integration_contracts import (
+    FAILURE_TYPE_ALIAS,
+    FAILURE_TYPE_STRUCTURAL,
+    classify_integration_failure_codes,
+    retry_mode_for_failure_type,
+)
 from core.integrate.integration_plan_validate import validate_integration_plan
 from core.integrate.integration_planner import build_integration_plan
 from core.integrate.integration_result_validate import validate_integration_result
@@ -132,6 +138,10 @@ def run_integration_pipeline(
     first_plan_ops: list[str] = []
     first_plan_family: str | None = None
     first_plan_success = False
+    repeated_contract_failure = False
+    last_structural_codes: tuple[str, ...] | None = None
+    expected_schema_by_step: list[dict[str, Any]] = []
+    actual_schema_by_step: list[dict[str, Any]] = []
 
     last_plan: IntegrationPlan | None = None
     last_plan_val: IntegrationValidationResult | None = None
@@ -220,6 +230,9 @@ def run_integration_pipeline(
                     selected_operations=ops,
                     source_count=len(sources),
                     warnings=[],
+                    repeated_contract_failure=repeated_contract_failure,
+                    expected_schema_by_step=expected_schema_by_step,
+                    actual_schema_by_step=actual_schema_by_step,
                 ),
             )
 
@@ -256,9 +269,34 @@ def run_integration_pipeline(
 
         plan_val = validate_integration_plan(understanding, plan, user_prompt=user_prompt)
         last_plan_val = plan_val
+        expected_schema_by_step = [
+            {
+                "step_id": e.get("step_id"),
+                "op": e.get("op"),
+                "output": e.get("output"),
+                "output_columns": e.get("output_columns"),
+                "join_suffixes": e.get("join_suffixes"),
+            }
+            for e in (plan_val.lineage or [])
+            if isinstance(e, dict)
+        ]
         if not plan_val.valid:
             plan_validation_failure_count += 1
             codes = [e.code for e in plan_val.errors]
+            ftype = classify_integration_failure_codes(codes)
+            code_key = tuple(sorted(codes))
+            if (
+                ftype
+                in {
+                    FAILURE_TYPE_STRUCTURAL,
+                    FAILURE_TYPE_ALIAS,
+                }
+                and last_structural_codes is not None
+                and code_key == last_structural_codes
+            ):
+                repeated_contract_failure = True
+            if ftype in {FAILURE_TYPE_STRUCTURAL, FAILURE_TYPE_ALIAS}:
+                last_structural_codes = code_key
             if any(c in _UNSAFE_PLAN_CODES for c in codes):
                 validator_blocked_unsafe_plan = True
             if family and family not in rejected_families:
@@ -267,17 +305,28 @@ def run_integration_pipeline(
                 "attempt": attempt,
                 "failure_stage": FAILURE_STAGE_PLAN_VALIDATION,
                 "failure_codes": codes,
+                "failure_type": ftype,
+                "retry_mode": retry_mode_for_failure_type(ftype),
                 "plan_signature": sig,
                 "operation_family": family,
                 "selected_ops": ops,
                 "evidence_summary": [e.message for e in plan_val.errors[:5]],
                 "same_operation_family_repeat": family_repeated,
+                "repeated_structural_contract_failure": repeated_contract_failure,
                 "unsafe_blocked": any(c in _UNSAFE_PLAN_CODES for c in codes),
+                "expected_schema_by_step": expected_schema_by_step,
             }
             retry_log.append(entry)
             feedback = format_integration_validation_feedback(
                 plan_val, previous_plan=plan.to_dict()
             )
+            if repeated_contract_failure:
+                feedback = [
+                    "Code: repeated_structural_contract_failure",
+                    "Do not repeat the same unresolved downstream column reference "
+                    "or alias/schema contract violation.",
+                    *feedback,
+                ]
             if family_repeated or repeated_sig:
                 feedback = [
                     *repeated_integration_family_feedback(family),
@@ -289,6 +338,18 @@ def run_integration_pipeline(
 
         execution = execute_integration_plan(sources, plan, plan_val)
         last_exec = execution
+        actual_schema_by_step = []
+        for sr in getattr(execution, "step_results", None) or []:
+            cols = getattr(sr, "columns_after", None)
+            if cols is None and isinstance(getattr(sr, "metadata", None), dict):
+                cols = sr.metadata.get("output_columns")
+            actual_schema_by_step.append(
+                {
+                    "step_id": getattr(sr, "step_id", None),
+                    "op": getattr(sr, "op", None),
+                    "output_columns": list(cols) if cols is not None else None,
+                }
+            )
         if not execution.success:
             execution_failure_count += 1
             code = getattr(execution.error, "code", "execution_failed")
@@ -376,6 +437,9 @@ def run_integration_pipeline(
                     else None
                 ),
                 warnings=warnings,
+                repeated_contract_failure=repeated_contract_failure,
+                expected_schema_by_step=expected_schema_by_step,
+                actual_schema_by_step=actual_schema_by_step,
             ),
         )
 
@@ -408,10 +472,13 @@ def run_integration_pipeline(
             source_count=len(sources),
             warnings=[],
             exhausted=True,
+            repeated_contract_failure=repeated_contract_failure,
+            expected_schema_by_step=expected_schema_by_step,
+            actual_schema_by_step=actual_schema_by_step,
         ),
     )
 
 
 def _obs_meta(**kwargs: Any) -> dict[str, Any]:
-    meta = {"phase": 20, **kwargs}
+    meta = {"phase": 22, **kwargs}
     return meta

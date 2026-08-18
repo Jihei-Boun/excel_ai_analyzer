@@ -147,14 +147,14 @@ def generate_all(datasets_dir: Path | None = None, *, force: bool = True) -> dic
         root / "inv_west.xlsx",
     )
 
-    # 9 composite key — each single key unique enough to avoid false many-to-many
-    # on per-column uniqueness checks; composite keys still required in plan.
+    # 9 composite key — true composite: singles are NOT unique alone;
+    # (store_id, product_id) jointly uniquely identifies a row.
     out["sales_store.xlsx"] = _write(
         pd.DataFrame(
             {
-                "store_id": [1, 2, 3],
-                "product_id": ["A", "B", "C"],
-                "units": [5, 3, 2],
+                "store_id": [1, 1, 2, 2],
+                "product_id": ["A", "B", "A", "B"],
+                "units": [5, 3, 2, 4],
             }
         ),
         root / "sales_store.xlsx",
@@ -162,9 +162,9 @@ def generate_all(datasets_dir: Path | None = None, *, force: bool = True) -> dic
     out["price_store.xlsx"] = _write(
         pd.DataFrame(
             {
-                "store_id": [1, 2, 3],
-                "product_id": ["A", "B", "C"],
-                "unit_price": [10.0, 20.0, 15.0],
+                "store_id": [1, 1, 2, 2],
+                "product_id": ["A", "B", "A", "B"],
+                "unit_price": [10.0, 12.0, 20.0, 15.0],
             }
         ),
         root / "price_store.xlsx",

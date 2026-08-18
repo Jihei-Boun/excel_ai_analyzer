@@ -5,6 +5,15 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from core.integrate.integration_contracts import (
+    FAILURE_TYPE_ALIAS,
+    FAILURE_TYPE_AMBIGUITY,
+    FAILURE_TYPE_RESULT,
+    FAILURE_TYPE_STRUCTURAL,
+    classify_integration_failure_codes,
+    retry_mode_for_failure_type,
+)
+
 
 SEVERITY_ERROR = "error"
 SEVERITY_WARNING = "warning"
@@ -54,10 +63,19 @@ def format_integration_validation_feedback(
     *,
     previous_plan: dict[str, Any] | None = None,
 ) -> list[str]:
-    """Structured feedback for Phase 18 Planner retry (no answer keys prescribed)."""
+    """Structured feedback for Planner retry (no answer keys prescribed).
+
+    Phase 21: distinguish structural repair vs semantic regenerate vs ambiguity.
+    """
+    codes = [i.code for i in result.errors]
+    failure_type = classify_integration_failure_codes(codes)
+    retry_mode = retry_mode_for_failure_type(failure_type)
+
     lines: list[str] = [
         "Failure stage: integration_plan_validation",
         f"valid: {result.valid}",
+        f"failure_type: {failure_type}",
+        f"retry_mode: {retry_mode}",
     ]
     if result.errors:
         lines.append("The integration plan cannot be executed because:")
@@ -68,27 +86,83 @@ def format_integration_validation_feedback(
     for issue in result.infos[:8]:
         lines.append(_format_issue(issue, prefix="INFO"))
 
-    codes = {i.code for i in result.errors}
-    if "ambiguous_key_selection" in codes:
+    if failure_type == FAILURE_TYPE_AMBIGUITY:
         lines.append(
-            "Previous plan failed because ambiguous relationship evidence remained unresolved. "
+            "Previous plan failed because ambiguous or unsupported relationship "
+            "evidence remained unresolved. "
             "Do not arbitrarily pick among near-tied singleton keys. "
-            "Use a materially different integration strategy if supported by the evidence, "
-            "or return status=cannot_plan."
+            "Composite relationship observations in the context are facts only — "
+            "do not invent keys. "
+            "Use a materially different interpretation if supported by the evidence and "
+            "user request, or return status=cannot_plan."
         )
-    elif codes & {
-        "insufficient_evidence_forced_join",
-        "join_against_unrelated",
-        "many_to_many_join_risk",
-    }:
+        if "join_against_unrelated" in codes or "union_incompatible_schema" in codes:
+            lines.append(
+                "Sources appear unrelated or schema-incompatible for the attempted "
+                "combine operation. Prefer status=cannot_plan with empty steps rather "
+                "than repeating the same unsupported union/join."
+            )
+        if "ambiguous_key_selection" in codes:
+            lines.append(
+                "The previous singleton-key interpretation was already rejected. "
+                "Composite relationship evidence may exist in the observations. "
+                "Re-evaluate the relationship without repeating the same unsupported "
+                "singleton interpretation. Do not invent key lists."
+            )
+    elif failure_type in {FAILURE_TYPE_STRUCTURAL, FAILURE_TYPE_ALIAS}:
         lines.append(
-            "Previous plan failed because the join was unsafe given relationship evidence. "
-            "Use a materially different integration strategy if supported by the evidence, "
+            "This is a structural_contract_failure"
+            + (
+                " (alias/schema naming)"
+                if failure_type == FAILURE_TYPE_ALIAS
+                else ""
+            )
+            + ". "
+            "Prefer repairing the previous plan: keep the same integration strategy family "
+            "when the composition matches the user request; fix only contract violations "
+            "(missing/renamed columns, aliases, step outputs, params shape). "
+            "Do not invent keys or swap to an unrelated strategy. "
+            "Semantic operation sequence can remain; downstream references must match "
+            "declared intermediate schemas."
+        )
+        if "nonexistent_column" in codes or "missing_column" in codes:
+            lines.append(
+                "The previous step does not produce a referenced column. "
+                "Review the declared output aliases and downstream dependencies. "
+                "Do not repeat the same unresolved downstream column reference. "
+                "Do not invent substitute column names that are not declared by prior steps."
+            )
+        if "final_grain_contradiction" in codes or "final_required_field_missing" in codes:
+            lines.append(
+                "The executed/validated plan does not satisfy the final output "
+                "requirements declared by the plan. "
+                "Review whether later transformations preserve the requested grain "
+                "and fields. Do not repeat the same unresolved final-output contract. "
+                "Do not invent specific replacement operations or column names."
+            )
+        if failure_type == FAILURE_TYPE_ALIAS or "missing_metric_output" in codes:
+            lines.append(
+                "Aggregate alias contract: explicit alias in the plan is authoritative; "
+                "if omitted, the structural default is the source column name. "
+                "Downstream steps must use that same declared name."
+            )
+    elif failure_type == FAILURE_TYPE_RESULT:
+        lines.append(
+            "Previous plan failed a result/safety invariant. "
+            "Do not repeat the same unsafe integration strategy. "
+            "Use a materially different strategy if supported by the evidence, "
             "or return status=cannot_plan."
         )
+    else:
+        lines.append(
+            "This is a semantic_failure. Regenerate with a materially different composition "
+            "that still matches the user request and evidence. "
+            "Do not repeat the previously rejected approach unchanged."
+        )
+
     lines.append(
         "Do not automatically invent or swap keys/operations. "
-        "Regenerate the integration plan using relationship evidence and the user request."
+        "Do not prescribe specific column names that are not in the observations."
     )
     if previous_plan is not None:
         import json

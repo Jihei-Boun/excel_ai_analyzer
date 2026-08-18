@@ -30,8 +30,7 @@ from core.integrate.integration_plan_types import (
 )
 from core.integrate.integration_validation_types import IntegrationValidationResult
 
-# Mechanical join suffix when non-key column names collide (not semantic).
-JOIN_SUFFIXES = ("_left", "_right")
+from core.integrate.integration_contracts import JOIN_SUFFIXES
 
 
 def execute_integration_plan(
@@ -738,13 +737,10 @@ def _op_aggregate(
                 op=step.op,
                 details={"column": col},
             )
-        # Alias optional in Phase 15 contract: mechanical fallback is the source
-        # column name only (not inventing fn). Collision → runtime failure.
-        alias_raw = m.get("alias")
-        if alias_raw is not None and str(alias_raw).strip():
-            alias = str(alias_raw).strip()
-        else:
-            alias = col
+        # Alias: shared structural contract (integration_contracts).
+        from core.integrate.integration_contracts import resolve_aggregate_alias
+
+        alias = resolve_aggregate_alias(m)
         if alias in named:
             raise IntegrationExecutionError(
                 code="aggregate_alias_collision",

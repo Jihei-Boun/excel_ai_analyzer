@@ -81,6 +81,13 @@ def format_integration_result_validation_feedback(
         lines.append(_format_issue(issue, prefix="WARNING"))
     for issue in result.infos[:4]:
         lines.append(_format_issue(issue, prefix="INFO"))
+    codes = [e.code for e in result.errors]
+    if "final_required_column_missing" in codes:
+        lines.append(
+            "The executed plan produced a final output that does not satisfy "
+            "the final output requirements declared by the plan. "
+            "Review whether later transformations preserve the requested grain and fields."
+        )
     lines.append(
         "Do not repeat the previous integration plan unchanged. "
         "Use the available cross-file relationship evidence and execution evidence "

@@ -533,7 +533,11 @@ def _composite_key_observations(
     *,
     exact_overlap: list[str],
 ) -> list[dict[str, Any]]:
-    """Observational composite uniqueness for exact-overlap column pairs (size 2)."""
+    """Observational composite uniqueness for exact-overlap column pairs (size 2).
+
+    Emits facts only. Prefers combinations where individual columns are not
+    uniquely identifying alone (true composite evidence signal).
+    """
     cols = [c for c in exact_overlap if c in left_df.columns and c in right_df.columns]
     if len(cols) < 2:
         return []
@@ -543,6 +547,14 @@ def _composite_key_observations(
         right_cols = list(combo)
         left_u = _composite_uniqueness(left_df, left_cols)
         right_u = _composite_uniqueness(right_df, right_cols)
+        left_singles = [_column_uniqueness(left_df, c) for c in left_cols]
+        right_singles = [_column_uniqueness(right_df, c) for c in right_cols]
+        singles_max = max(left_singles + right_singles) if left_singles else 0.0
+        # Strong composite signal: pair unique-ish while constituents are weaker.
+        improves = left_u > max(left_singles + [0.0]) + 0.05 or right_u > max(
+            right_singles + [0.0]
+        ) + 0.05
+        constituents_weak = singles_max < _SINGLETON_UNIQUENESS
         if left_u >= 0.98 and right_u >= 0.98:
             card = "one_to_one"
         elif left_u >= 0.98 and right_u < 0.98:
@@ -553,16 +565,39 @@ def _composite_key_observations(
             card = "many_to_many"
         else:
             card = "insufficient"
+        # Skip noisy pairs of already-unique columns that do not improve uniqueness
+        # (same_schema measure overlaps) — still allow when constituents are weak.
+        if not constituents_weak and not improves:
+            continue
         out.append(
             {
                 "left_columns": left_cols,
                 "right_columns": right_cols,
                 "left_uniqueness": round(left_u, 4),
                 "right_uniqueness": round(right_u, 4),
+                "left_singleton_uniqueness": [round(x, 4) for x in left_singles],
+                "right_singleton_uniqueness": [round(x, 4) for x in right_singles],
+                "constituents_individually_unique": not constituents_weak,
+                "composite_improves_uniqueness": bool(improves),
                 "cardinality_evidence": card,
             }
         )
+    # Prefer true composite signals first
+    out.sort(
+        key=lambda x: (
+            0 if not x["constituents_individually_unique"] else 1,
+            0 if x["composite_improves_uniqueness"] else 1,
+            -float(x["left_uniqueness"]),
+        )
+    )
     return out[:6]
+
+
+def _column_uniqueness(df: pd.DataFrame, col: str) -> float:
+    if col not in df.columns or len(df) == 0:
+        return 0.0
+    n = int(len(df))
+    return float(df[col].nunique(dropna=False) / n) if n else 0.0
 
 
 def _composite_uniqueness(df: pd.DataFrame, cols: list[str]) -> float:

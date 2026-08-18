@@ -38,21 +38,28 @@ You must NOT treat numeric dtype alone as additive/measure meaning.
 You must NOT treat high uniqueness alone as a confirmed primary key.
 You must NOT treat column-name equality alone as a confirmed join relationship.
 
+Ambiguity means multiple materially plausible semantic integration interpretations —
+NOT merely "columns overlap" or "scores are similar when both are weak".
+
 Label meanings (CRITICAL):
 - join_candidate / master_detail_candidate / lookup_candidate:
   mean "join MAY be plausible", NOT "you must join" and NOT a chosen key.
 - same_schema / compatible_schema:
   mean schemas align for possible row stacking; NOT "you must union".
+  Prefer these when schema_similarity is high and shared columns look like
+  the same row layout (including measure columns), unless clear master-detail
+  / lookup cardinality exists on a dominant key.
 - ambiguous:
-  use when TWO OR MORE singleton key candidates have similarly strong
-  overlap/uniqueness/name evidence and choosing one is unresolved.
-  If key_ambiguity_observation.near_tied is true, prefer relationship=ambiguous.
-- Do NOT emit join_candidate when near-tied singleton keys remain unresolved.
-- High schema_similarity with largely overlapping columns usually favors
-  same_schema/compatible_schema over join_candidate, unless clear
-  master-detail/lookup cardinality evidence exists on a dominant key.
-- Composite keys (multiple columns together) are NOT the same as ambiguous
-  singleton choice; note composite evidence in notes/ambiguities if relevant.
+  use when TWO OR MORE singleton key candidates are each strong AND near-tied
+  (see key_ambiguity_observation.near_tied == true), so choosing one is unresolved.
+  Do NOT label ambiguous when near_tied is false.
+  Do NOT label ambiguous merely because many columns share names.
+- insufficient_evidence: candidates are weak / unclear — not the same as strong near-tie.
+- Do NOT emit join_candidate when near_tied singleton keys remain unresolved.
+- Composite keys (multiple columns together) are NOT ambiguous singleton choice.
+  If composite_key_observations show constituents that are not individually unique
+  but the combination is strong, note that in notes — do not call it ambiguous
+  solely for that reason.
 
 If evidence is weak, conflicting, or insufficient, choose:
   unrelated | ambiguous | insufficient_evidence

@@ -134,6 +134,9 @@ def validate_integration_result(
             cols=int(execution.final_output.shape[1]),
         )
         _validate_final_frame(execution.final_output, err=err, warn=warn, info=info)
+        _validate_declared_final_requirements(
+            plan_obj, execution.final_output, err=err, info=info
+        )
 
     if plan_obj.final_output and plan_obj.final_output not in (execution.datasets or {}):
         err(
@@ -303,6 +306,43 @@ def _validate_step_contract(step: IntegrationStep, sr: Any, *, err) -> None:
             step_id=step.id,
             plan_output=step.output,
             execution_output=sr.output,
+        )
+
+
+def _validate_declared_final_requirements(
+    plan_obj: IntegrationPlan,
+    final_df: pd.DataFrame,
+    *,
+    err,
+    info,
+) -> None:
+    """Compare actual final frame to Planner-declared requirements only."""
+    req = plan_obj.final_output_requirements
+    if req is None or req.is_empty:
+        return
+    if req.required_columns:
+        missing = [c for c in req.required_columns if c not in final_df.columns]
+        if missing:
+            err(
+                "final_required_column_missing",
+                "Actual final_output is missing columns declared in "
+                "final_output_requirements.required_columns",
+                missing_columns=missing,
+                available_columns=[str(c) for c in final_df.columns][:40],
+            )
+        else:
+            info(
+                "final_required_columns_present",
+                "Declared required_columns are present on actual final_output",
+                required_columns=list(req.required_columns),
+            )
+    if req.grain:
+        info(
+            "final_grain_declared",
+            "Planner declared final grain (structural check done at plan validation)",
+            grain=req.grain,
+            final_rows=int(len(final_df)),
+            final_cols=int(final_df.shape[1]),
         )
 
 
@@ -557,11 +597,13 @@ def _v_aggregate_result(step, sr, frame: pd.DataFrame, *, err, warn, info) -> No
                 step_id=step.id,
                 column=g,
             )
+    from core.integrate.integration_contracts import resolve_aggregate_alias
+
     aliases = []
     for m in metrics:
         if not isinstance(m, dict):
             continue
-        alias = str(m.get("alias") or m.get("column") or "")
+        alias = resolve_aggregate_alias(m)
         aliases.append(alias)
         if alias and alias not in frame.columns:
             err(

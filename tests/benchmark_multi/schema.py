@@ -19,6 +19,9 @@ class ResultCompareSpec:
     expected_result: dict[str, Any] = field(default_factory=dict)
     expected_row_count: int | None = None
     required_columns: list[str] = field(default_factory=list)
+    # Phase 23 — benchmark semantic expectations (evaluation only; never passed to Planner)
+    expected_metrics: list[dict[str, Any]] = field(default_factory=list)
+    expected_grain: str | None = None  # detail | group | summary | None
     rtol: float = 1e-6
     atol: float = 1e-6
 
@@ -70,6 +73,7 @@ def _as_status_list(value: Any) -> list[str]:
 def _parse_result(data: dict[str, Any] | None) -> ResultCompareSpec:
     data = data or {}
     compare = dict(data.get("result_compare") or {})
+    metrics_raw = data.get("expected_metrics") or compare.get("expected_metrics") or []
     return ResultCompareSpec(
         sort_by=[str(x) for x in (compare.get("sort_by") or data.get("sort_by") or [])],
         key_column=(compare.get("key_column") or data.get("key_column")),
@@ -85,6 +89,10 @@ def _parse_result(data: dict[str, Any] | None) -> ResultCompareSpec:
         required_columns=[
             str(x) for x in (data.get("required_columns") or compare.get("required_columns") or [])
         ],
+        expected_metrics=[dict(m) for m in metrics_raw if isinstance(m, dict)],
+        expected_grain=(
+            str(data.get("expected_grain") or compare.get("expected_grain") or "") or None
+        ),
         rtol=float(compare.get("rtol") or data.get("rtol") or 1e-6),
         atol=float(compare.get("atol") or data.get("atol") or 1e-6),
     )

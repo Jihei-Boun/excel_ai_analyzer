@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from tests.benchmark_multi.schema import MultiBenchmarkCase
+from tests.benchmark_multi.semantic_compare import compare_semantic_result
 
 
 def evaluate_case(
@@ -76,8 +77,15 @@ def evaluate_case(
     # ---- L3 plan safety ----
     levels["L3_plan_safety"] = _eval_plan_safety(case, plan_val, retry_log, plan_dict)
 
-    # ---- L4 execution / golden ----
+    # ---- L4 execution / golden (presentation-strict legacy fields kept) ----
     levels["L4_execution"] = _eval_execution(case, status, execution, final_df)
+
+    # ---- L4b semantic result (Phase 23) — lineage-based, not alias wording ----
+    semantic = compare_semantic_result(case, plan_dict=plan_dict, final_df=final_df)
+    if status != "success":
+        levels["L4_semantic"] = {"checked": False, "skipped": True, "ok": True}
+    else:
+        levels["L4_semantic"] = semantic.to_dict()
 
     # ---- L5 result validation ----
     levels["L5_result_validation"] = _eval_result_validation(result_val, retry_log)
@@ -88,13 +96,94 @@ def evaluate_case(
     # failure categories
     categories.extend(_classify(case, status, levels, plan_dict, planner_quality, unsafe))
 
-    overall_ok = bool(status_ok and safety_ok and levels["L4_execution"].get("ok", True))
+    # overall_ok: safety + status + semantic result (alias presentation alone does not fail)
+    presentation_strict_ok = bool(levels["L4_execution"].get("ok", True))
+    semantic_ok = bool(levels["L4_semantic"].get("ok", True))
+    result_ok = semantic_ok if status == "success" else True
+    overall_ok = bool(status_ok and safety_ok and result_ok)
     # For cannot_plan expected cases, L4 may be N/A
     if cp_expected and cp_actual and safety_ok:
         overall_ok = True
     if case.expected.allow_plan_validation_block and levels["L3_plan_safety"].get("blocked_unsafe"):
         if not unsafe:
             overall_ok = status_ok or status in {"failed", "cannot_plan"}
+
+    ops = _ops(plan_dict)
+    required_ops_ok = all(op in ops for op in case.expected.required_operations)
+    l4 = levels["L4_execution"]
+    correct_op_wrong_result = bool(
+        status == "success"
+        and required_ops_ok
+        and case.expected.required_operations
+        and not result_ok
+        and not l4.get("skipped")
+    )
+    # Decompose correct_op_wrong_result
+    correct_op_representation = bool(
+        correct_op_wrong_result and semantic.representation_only and semantic.ok
+    )
+    # If semantic ok but presentation strict failed → representation-only (not wrong result)
+    presentation_only_fail = bool(
+        status == "success"
+        and safety_ok
+        and semantic_ok
+        and not presentation_strict_ok
+    )
+    correct_op_structural = bool(
+        correct_op_wrong_result and semantic.structural_mismatch
+    )
+    correct_op_grain = bool(correct_op_wrong_result and semantic.grain_mismatch)
+    correct_op_semantic_wrong = bool(
+        correct_op_wrong_result and semantic.true_semantic_mismatch
+    )
+    safe_but_incorrect = bool(safety_ok and not overall_ok)
+    safe_but_semantically_wrong = bool(safety_ok and status == "success" and not semantic_ok)
+    if presentation_only_fail:
+        categories.append("representation_only_mismatch")
+        categories.append("alias_only_mismatch")
+    if correct_op_wrong_result:
+        categories.append("correct_operation_wrong_result")
+        if correct_op_representation or presentation_only_fail:
+            categories.append("correct_op_representation_mismatch")
+        if correct_op_structural:
+            categories.append("correct_op_structural_mismatch")
+        if correct_op_grain:
+            categories.append("correct_op_grain_mismatch")
+        if correct_op_semantic_wrong:
+            categories.append("correct_op_semantic_wrong_result")
+        if l4.get("missing_columns") and not semantic_ok:
+            categories.append("alias_contract_error")
+    if safe_but_incorrect:
+        categories.append("safe_but_incorrect")
+    if safe_but_semantically_wrong:
+        categories.append("safe_but_semantically_wrong")
+
+    # Composite / three-file split metrics (observability)
+    composite_key_ok = None
+    composite_final_ok = None
+    if case.scenario == "composite_key_join":
+        join_steps = [
+            s
+            for s in (plan_dict or {}).get("steps") or []
+            if isinstance(s, dict) and s.get("op") == "join"
+        ]
+        if join_steps and (case.expected.join_left_keys or case.expected.join_right_keys):
+            params = join_steps[0].get("params") or {}
+            lk = [str(x) for x in (params.get("left_keys") or [])]
+            rk = [str(x) for x in (params.get("right_keys") or [])]
+            composite_key_ok = True
+            if case.expected.join_left_keys and sorted(lk) != sorted(case.expected.join_left_keys):
+                composite_key_ok = False
+            if case.expected.join_right_keys and sorted(rk) != sorted(case.expected.join_right_keys):
+                composite_key_ok = False
+        composite_final_ok = bool(overall_ok)
+
+    three_file_join_ok = None
+    three_file_final_ok = None
+    if case.scenario == "three_file_chain":
+        join_count = sum(1 for o in ops if o == "join")
+        three_file_join_ok = join_count >= 2 and status == "success"
+        three_file_final_ok = bool(overall_ok)
 
     return {
         "case_id": case.id,
@@ -107,10 +196,24 @@ def evaluate_case(
         "unsafe_execution": unsafe,
         "correct_cannot_plan": levels["correct_cannot_plan"],
         "unnecessary_cannot_plan": levels["unnecessary_cannot_plan"],
+        "correct_operation_wrong_result": correct_op_wrong_result and not presentation_only_fail,
+        "correct_op_representation_mismatch": presentation_only_fail or correct_op_representation,
+        "correct_op_structural_mismatch": correct_op_structural,
+        "correct_op_grain_mismatch": correct_op_grain,
+        "correct_op_semantic_wrong_result": correct_op_semantic_wrong,
+        "safe_but_incorrect": safe_but_incorrect,
+        "safe_but_semantically_wrong": safe_but_semantically_wrong,
+        "semantic_equivalent": bool(status == "success" and semantic_ok),
+        "representation_only_mismatch": presentation_only_fail,
+        "alias_only_mismatch": bool(presentation_only_fail or semantic.alias_only_mismatch),
+        "composite_key_selection_success": composite_key_ok,
+        "composite_final_result_success": composite_final_ok,
+        "three_file_join_chain_success": three_file_join_ok,
+        "three_file_final_result_success": three_file_final_ok,
         "levels": levels,
         "planner_quality": planner_quality,
-        "failure_categories": categories,
-        "selected_operations": _ops(plan_dict),
+        "failure_categories": sorted(set(categories)),
+        "selected_operations": ops,
         "retry_log": retry_log,
         "metadata": {
             "attempt_count": meta.get("attempt_count"),
@@ -122,10 +225,13 @@ def evaluate_case(
             "first_plan_family": meta.get("first_plan_family"),
             "validator_blocked_unsafe_plan": meta.get("validator_blocked_unsafe_plan"),
             "final_shape": meta.get("final_shape"),
+            "repeated_contract_failure": meta.get("repeated_contract_failure"),
+            "expected_schema_by_step": meta.get("expected_schema_by_step"),
+            "actual_schema_by_step": meta.get("actual_schema_by_step"),
         },
         "observability": {
             "relationship_labels": _rel_labels(understanding),
-            "first_plan_operations": meta.get("first_plan_operations") or _ops(plan_dict),
+            "first_plan_operations": meta.get("first_plan_operations") or ops,
             "retry_plan_operations": [
                 e.get("selected_ops")
                 for e in retry_log
@@ -159,6 +265,19 @@ def evaluate_case(
                 meta.get("validator_blocked_unsafe_plan")
                 or (levels.get("L3_plan_safety") or {}).get("blocked_unsafe")
             ),
+            "expected_grain": semantic.expected_grain if status == "success" else None,
+            "actual_grain": semantic.actual_grain if status == "success" else None,
+            "grain_match": semantic.grain_match if status == "success" else None,
+            "semantic_equivalent": bool(status == "success" and semantic_ok),
+            "representation_match": not presentation_only_fail,
+            "alias_only_mismatch": bool(presentation_only_fail),
+            "structural_mismatch": bool(semantic.structural_mismatch) if status == "success" else False,
+            "true_semantic_mismatch": bool(semantic.true_semantic_mismatch)
+            if status == "success"
+            else False,
+            "safe_but_semantically_wrong": safe_but_semantically_wrong,
+            "evaluation_reason": list(semantic.reasons) if status == "success" else [],
+            "column_mapping": dict(semantic.column_mapping) if status == "success" else {},
         },
     }
 
@@ -484,7 +603,10 @@ def _classify(
     if not levels["L1_understanding"].get("ok", True) and levels["L1_understanding"].get("checked"):
         cats.append("relationship_error")
     if not levels["L4_execution"].get("ok", True) and not levels["L4_execution"].get("skipped"):
-        cats.append("wrong_result")
+        # Phase 23: presentation-strict L4 fail is not "wrong_result" when semantic L4 passes
+        sem = levels.get("L4_semantic") or {}
+        if not sem.get("ok", False):
+            cats.append("wrong_result")
     if status == "failed" and not cats:
         cats.append("retry_exhausted")
     return sorted(set(cats))
