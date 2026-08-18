@@ -10,6 +10,7 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.integrate.integration_contracts import resolve_aggregate_alias
 from core.integrate.integration_plan_types import (
     AGGREGATE_FUNCTIONS,
     FILTER_OPERATORS,
@@ -405,21 +406,245 @@ def _validate_final_output_requirements(
     if final_meta is not None and req.required_columns:
         missing = [c for c in req.required_columns if c not in final_meta.columns]
         if missing:
+            loss_trace = _required_column_loss_trace(
+                plan_obj, datasets=datasets, missing=missing
+            )
             err(
                 "final_required_field_missing",
                 "Declared final_output_requirements.required_columns are not "
                 "present in the simulated final schema. Later transformations "
-                "may have dropped them.",
+                "may have dropped them permanently.",
                 missing_columns=missing,
                 final_output=final_id,
                 available_columns=sorted(final_meta.columns.keys())[:40],
+                loss_trace=loss_trace,
             )
+            for item in loss_trace:
+                if item.get("status") == "permanently_lost":
+                    err(
+                        "required_field_permanently_lost",
+                        "Declared required column was available earlier but was "
+                        "removed and no later step can recreate it.",
+                        column=item.get("column"),
+                        lost_at_step=item.get("lost_at_step"),
+                        lost_at_op=item.get("lost_at_op"),
+                        last_seen_output=item.get("last_seen_output"),
+                    )
+                elif item.get("status") == "never_materializable":
+                    err(
+                        "required_field_not_materializable",
+                        "Declared required column is not present on any simulated "
+                        "dataset and no step creates it (rename/aggregate alias).",
+                        column=item.get("column"),
+                    )
         else:
             info(
                 "final_required_fields_present",
                 "Declared required_columns are present on simulated final schema",
                 required_columns=list(req.required_columns),
             )
+
+    # Strong grain contradiction: row-level declaration + collapsing aggregate
+    # that drops declared required fields (not merely a mislabeled grain).
+    if (
+        grain in FINAL_GRAIN_ROW_LEVEL
+        and (aggregate_produces_final or upstream_agg)
+        and req.required_columns
+        and final_meta is not None
+    ):
+        missing_req = [c for c in req.required_columns if c not in final_meta.columns]
+        if missing_req:
+            err(
+                "final_grain_contradiction",
+                "Declared row-level final grain conflicts with a collapsing "
+                "aggregate that permanently removes declared required columns. "
+                "Align grain/requirements with the plan, or revise transformations "
+                "so the declared final-output contract remains satisfiable.",
+                grain=grain,
+                missing_columns=missing_req,
+            )
+
+    if req.one_row_represents:
+        info(
+            "final_one_row_represents_declared",
+            "Planner declared one_row_represents (observability only)",
+            one_row_represents=req.one_row_represents,
+        )
+
+    # Structural projection: detail/entity + select drops upstream join keys
+    _check_join_keys_dropped_by_select(
+        plan_obj,
+        grain=grain,
+        datasets=datasets,
+        err=err,
+    )
+
+
+def _collect_upstream_join_keys(plan_obj: IntegrationPlan, final_id: str | None) -> set[str]:
+    """Join key column names reachable upstream of final_output (structural)."""
+    if not final_id:
+        return set()
+    keys: set[str] = set()
+    by_out = {s.output: s for s in plan_obj.steps}
+    frontier = {final_id}
+    seen: set[str] = set()
+    while frontier:
+        cur = frontier.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        step = by_out.get(cur)
+        if not step:
+            continue
+        if step.op == "join":
+            params = step.params or {}
+            for k in list(params.get("left_keys") or []) + list(params.get("right_keys") or []):
+                if str(k).strip():
+                    keys.add(str(k).strip())
+        for inp in step.inputs or []:
+            frontier.add(inp)
+    return keys
+
+
+def _check_join_keys_dropped_by_select(
+    plan_obj: IntegrationPlan,
+    *,
+    grain: str | None,
+    datasets: dict[str, _DatasetMeta],
+    err,
+) -> None:
+    """Row-level grain + select removing upstream join keys → ERROR.
+
+    Evidence for retry — does not prescribe non-key columns to keep.
+    """
+    if grain not in FINAL_GRAIN_ROW_LEVEL:
+        return
+    final_id = plan_obj.final_output
+    final_step = next((s for s in plan_obj.steps if s.output == final_id), None)
+    if not final_step or final_step.op != "select_columns":
+        return
+    join_keys = _collect_upstream_join_keys(plan_obj, final_id)
+    if not join_keys:
+        return
+    if not final_step.inputs:
+        return
+    src_name = final_step.inputs[0]
+    src_meta = datasets.get(src_name)
+    final_meta = datasets.get(str(final_id)) if final_id else None
+    if not src_meta or not final_meta:
+        return
+    present_before = [k for k in sorted(join_keys) if k in src_meta.columns]
+    dropped = [k for k in present_before if k not in final_meta.columns]
+    if dropped:
+        err(
+            "join_key_dropped_in_final_projection",
+            "Declared row-level final grain (detail/entity), but select_columns "
+            "removed join key column(s) that identify rows on the prior dataset. "
+            "The final projection no longer matches the declared output semantics. "
+            "Reconsider whether select_columns is necessary, or whether identifying "
+            "keys must remain available through the final output.",
+            dropped_join_keys=dropped,
+            select_step=final_step.id,
+            grain=grain,
+        )
+
+
+def _step_can_create_column(step: IntegrationStep, column: str) -> bool:
+    """Structural materialization only (rename target / aggregate alias / group_by)."""
+    params = step.params or {}
+    if step.op == "rename_columns":
+        mapping = params.get("mapping") or {}
+        return column in {str(v) for v in mapping.values()}
+    if step.op == "aggregate":
+        if column in {str(g) for g in (params.get("group_by") or [])}:
+            return True
+        for m in params.get("metrics") or []:
+            if isinstance(m, dict) and resolve_aggregate_alias(m) == column:
+                return True
+    return False
+
+
+
+def _required_column_loss_trace(
+    plan_obj: IntegrationPlan,
+    *,
+    datasets: dict[str, _DatasetMeta],
+    missing: list[str],
+) -> list[dict[str, Any]]:
+    """Trace declared required columns that are absent from final schema.
+
+    Distinguishes:
+    - permanently_lost: present on an intermediate, removed, not recreated later
+    - never_materializable: never appears and no step creates it
+    - available_now / materializable_later are not returned for missing finals
+    """
+    out: list[dict[str, Any]] = []
+    steps = list(plan_obj.steps)
+    # Walk lineage in order using simulated datasets after each step
+    for col in missing:
+        last_seen_step: str | None = None
+        last_seen_output: str | None = None
+        lost_at_step: str | None = None
+        lost_at_op: str | None = None
+        seen_anywhere = False
+        for i, step in enumerate(steps):
+            meta = datasets.get(step.output)
+            cols = set((meta.columns if meta else {}).keys())
+            if col in cols:
+                seen_anywhere = True
+                last_seen_step = step.id
+                last_seen_output = step.output
+                continue
+            # absent on this output
+            if seen_anywhere and lost_at_step is None:
+                # was present earlier → lost here unless later materializes
+                later = steps[i + 1 :]
+                if any(_step_can_create_column(s, col) for s in later):
+                    continue
+                # check if any later output regains it via simulation
+                regained = any(
+                    col in ((datasets.get(s.output).columns if datasets.get(s.output) else {}))
+                    for s in later
+                )
+                if regained:
+                    continue
+                lost_at_step = step.id
+                lost_at_op = step.op
+        if lost_at_step:
+            out.append(
+                {
+                    "column": col,
+                    "status": "permanently_lost",
+                    "lost_at_step": lost_at_step,
+                    "lost_at_op": lost_at_op,
+                    "last_seen_step": last_seen_step,
+                    "last_seen_output": last_seen_output,
+                }
+            )
+        else:
+            creatable = any(_step_can_create_column(s, col) for s in steps)
+            # Also: present on a source but never flowed to final
+            on_source = any(
+                col in (meta.columns or {})
+                for name, meta in datasets.items()
+                if meta.kind == "source"
+            )
+            if not creatable and not on_source and not seen_anywhere:
+                out.append({"column": col, "status": "never_materializable"})
+            elif seen_anywhere or on_source:
+                out.append(
+                    {
+                        "column": col,
+                        "status": "permanently_lost",
+                        "lost_at_step": lost_at_step,
+                        "lost_at_op": lost_at_op,
+                        "last_seen_step": last_seen_step,
+                        "last_seen_output": last_seen_output,
+                    }
+                )
+            else:
+                out.append({"column": col, "status": "never_materializable"})
+    return out
 
 
 def _build_source_datasets(und: dict[str, Any]) -> dict[str, _DatasetMeta]:

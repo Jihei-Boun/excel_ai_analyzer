@@ -63,31 +63,101 @@ Key / ambiguity (CRITICAL — do not invent evidence):
 - Shared columns under high schema_similarity usually support row stacking
   (union), not forced join-key ambiguity.
 
-Final grain awareness (Planner judgment — not keyword rules):
-- Row-level combined data: user wants files combined as rows → often union_rows
-  (and rename_columns if representation differs). Do NOT add aggregate unless
-  the user asks for totals/summaries by entity/group.
-- Entity/group-level summary: user wants totals/sums by key → combine then aggregate.
-- Attribute enrichment then summary: join (possibly multiple) then aggregate.
-- Before returning, verify that the final output grain matches what the user asked for.
-  Do not aggregate merely because numeric columns exist.
-  Do not preserve detail rows when the requested answer requires an entity/group-level
-  summary. Every aggregate step must be necessary for the requested final result.
-- If the user asks only to connect / link / attach / stack rows, stop after the
-  join or union that produces that row-level result — do not add aggregate.
-- After enrichment joins, prefer omitting select_columns; if selecting, retain join
-  keys and attributes still needed to understand the enriched rows.
-- When summarizing by an entity, group_by columns should identify that entity using
-  columns present after joins (prefer stable identifiers already in the joined
-  schema; include descriptive label columns in group_by or select when they remain
-  available and the user asked for named entities).
+Final-output-aware planning (CRITICAL — requirements before steps):
+Mentally complete this order BEFORE constructing steps
+(do not print chain-of-thought — only emit the JSON plan):
+  1) What should ONE ROW in the final output represent?
+     (see grain / one_row_represents below)
+  2) Which fields must be observable in the final answer?
+  3) Where can each required field originate (source / rename / join / aggregate)?
+  4) Which transformations are actually necessary for that grain and those fields?
+  5) Will any transformation destroy the required grain or fields?
+  6) Only then construct the forward step sequence.
+Do NOT invent steps first and then invent requirements that merely describe those steps.
+Never reverse-engineer requirements from an already-chosen aggregate/select.
+Requirements describe the user's requested final result; steps must satisfy them.
+
+Grain = "what does one output row represent?" (Planner judgment — not keyword rules):
+- detail: one source/event/transaction row (or one matched combined row) still at
+  record grain after connect/link/attach/stack.
+- entity: one identifiable entity instance (often after enrichment), still not
+  collapsed into group totals.
+- group: one aggregated group after collapsing multiple rows by group_by keys.
+- summary: one overall collapsed summary (often empty group_by).
+Generic illustrations (NOT domain rules): one matched composite-key row; one
+enriched lookup row; one category total; one stacked event row.
+Connecting / linking / attaching attributes without asking for totals or
+"by group" summaries → detail or entity. Do NOT choose group/summary merely
+because numeric columns exist.
+If tempted to aggregate after a connect/link/attach request, stop: use join
+(or union) only and set grain=detail|entity.
+
+final_output_requirements contract:
+{
+  "grain": "detail|entity|group|summary",
+  "one_row_represents": "<short phrase: what one final row means>",
+  "required_columns": ["<observed column names needed in the final answer>"]
+}
+- Prefer always setting one_row_represents (brief).
+- For detail/entity after a join: required_columns SHOULD include the join key
+  column(s) that identify each output row PLUS attributes needed to answer.
+- For group/summary: required_columns SHOULD include group_by fields the user
+  needs to read (prefer descriptive name fields present after joins when the
+  user asks for named entities) PLUS metric aliases.
+- Use only observed/intermediate column names — never invent columns.
+
+Backward dependency reasoning (Planner judgment — not Python rules):
+- For each required final field: where does it originate, which step creates/preserves it,
+  and does it still exist on final_output?
+- For the declared grain: which step establishes it, and does any later step destroy it?
+- Preserve fields needed by later joins and by the final output until they are used.
+
+Minimum necessary transformation:
+- Every operation must have a necessary role in producing the declared final output.
+- Before adding aggregate / select_columns / rename_columns, ask:
+  "What information does this step add that is required by the user's requested final output?"
+  If none, omit it.
+
+Aggregate necessity (Planner self-check — Python will not delete aggregates):
+- Aggregate only when the requested final grain requires collapsing multiple rows
+  into a group/summary result.
+- What duplication/grain problem does aggregation solve?
+- Which final fields will aggregation remove, and are any of them required?
+- Is the current dataset already at the requested grain?
+- Do not aggregate merely because numeric columns exist.
+- If a join/union result already satisfies the declared final output, stop — no aggregate.
+
+Select necessity / FINAL PROJECTION:
+- Do not use select_columns merely to make the result look smaller/cleaner.
+- Do not add select_columns unless it serves the requested final output.
+- Before selecting: are all declared required_columns retained?
+- Does select remove identity/context fields needed to interpret each row?
+- Are selected names taken from the correct post-join/post-rename schema
+  (including suffixes)?
+- After enrichment joins, prefer omitting select_columns; if selecting, keep
+  join keys and attached attributes required in the answer.
+- Are future join keys still needed?
+
+Rename / dirty representation:
+- If schemas are largely the same meaning but column names/representations differ,
+  rename_columns to align names BEFORE union_rows under aligned policy.
+- Do not skip rename when aligned union would otherwise be schema-incompatible.
+
+Relationship evidence is evidence, not an instruction:
+- Do not force join/union when relationship evidence is unrelated / insufficient
+  and no requested integration is semantically supported → status=cannot_plan.
+- join_candidate / compatible_schema hints do not override an unsupported request.
+- Conversely: when observations show supported join/lookup/master-detail candidates
+  AND the user asks to connect/enrich/calculate across those files, do NOT return
+  cannot_plan merely to be "safe". Build the minimum join/union chain that the
+  evidence supports. Multi-file enrichment + summary is planned with joins (then
+  aggregate only if the final grain requires it), not cannot_plan.
 
 Composition decision guide (domain-neutral; not keyword rules):
-- Rows from multiple compatible datasets into one dataset → consider union_rows.
-- Summarize after combining rows → often union_rows then aggregate.
-- Filter before combining → filter_rows (per source as needed) then union_rows
-  then aggregate when totals are requested.
-- Attributes from another dataset needed before aggregation → join then aggregate.
+- Compatible rows into one dataset → consider union_rows (rename first if needed).
+- Summarize after combining → union_rows then aggregate.
+- Filter before combining → filter_rows then union_rows then aggregate when totals asked.
+- Attributes from another dataset before aggregation → join then aggregate.
 - Multiple reference datasets → multiple joins may be required before aggregate.
 - Prefer explicit intermediate outputs; final_output must be a step output id.
 
@@ -132,36 +202,43 @@ Abstract structure examples (NOT domain instructions):
    (do not substitute count)
 7) User only asks to connect row-level detail without totals → join only
    (do not add aggregate that drops detail columns)
+8) Enrichment join already has all needed row-level fields → join only
+   (do not select away keys/fields required in the final answer)
+9) Compatible rows with different column spellings → rename then union_rows
+10) Multi-file enrichment then totals by named entity → joins then aggregate;
+    group_by/required_columns include readable entity fields present after joins
 
-Before returning status=planned, self-check:
-- Determine the grain required by the user's requested final output
-  (detail/entity row-level vs group/summary).
-- Verify every transformation preserves or intentionally changes grain
-  toward that requested output.
-- Do not aggregate merely because numeric columns exist.
-- If a join/union result already satisfies the requested output, do not add
-  an unnecessary aggregate.
-- Before select_columns, verify fields needed in the final answer remain available.
-  Prefer omitting select_columns unless a clear subset is required.
-- For multi-step joins, preserve fields required by later steps and the final output.
-- Every aggregate/select step must have a clear purpose for the requested final result.
-- Does every necessary source appear in the dependency chain?
-- Does every requested transformation have a corresponding step?
-- Is each intermediate output consumed correctly?
-- Does final_output match the requested grain (row-level vs group-level)?
-- Are derived summaries preceded by the required integration step?
-- Are aggregate aliases explicit when summaries are requested?
-- Does every downstream column reference exist in the declared output schema
-  of its previous step (including aggregate aliases and join suffixes)?
-- Are all keys needed by later joins/aggregates preserved (not dropped by
-  an earlier select_columns)?
-- For composite relationships, are all required key components represented?
+FINAL OUTPUT CONSISTENCY CHECK (before returning status=planned):
+FINAL PROJECTION CHECK:
+  - Does final_output still expose every field needed to answer the user?
+  - Is select_columns actually necessary?
+  - Does aggregate collapse fields still required in the answer?
+  - Are suffix/rename effects accounted for?
+For each declared required column:
+  - Where does it come from?
+  - Which step creates or preserves it?
+  - Does it exist in the final output?
+For the declared grain / one_row_represents:
+  - Which step establishes the final grain?
+  - Does any later operation destroy it?
+For every aggregate/select:
+  - Why is this operation necessary?
+  - Does it remove something required?
+For multi-file chains:
+  - Are future join keys preserved until used?
+If any answer is unresolved: revise the plan before returning it.
+Also verify:
+- Every necessary source appears in the dependency chain.
+- Every intermediate output is consumed correctly.
+- Downstream column references exist in prior step schemas (aliases/suffixes).
+- Composite relationships include all required key components.
 - Every step has non-empty id, op, inputs, output, params.
-- Declare final_output_requirements (grain + required_columns using observed
-  column names) so validators can check consistency. Do not invent columns.
+- Declare final_output_requirements (grain, one_row_represents, required_columns
+  using observed names). Do not invent columns.
 - If the plan aggregates, set grain to group or summary — never detail/entity.
 - If the plan keeps row-level join/union output, set grain to detail or entity
-  and list the row-level fields still required in required_columns.
+  and list the row-level fields still required in required_columns
+  (including identifying join keys for entity/detail enrichment).
 
 JSON shape:
 {
@@ -178,6 +255,7 @@ JSON shape:
   "final_output": "<output id or null>",
   "final_output_requirements": {
     "grain": "detail|entity|group|summary",
+    "one_row_represents": "<short phrase>",
     "required_columns": ["..."]
   },
   "reason": "<string or null>",

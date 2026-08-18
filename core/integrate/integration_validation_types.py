@@ -132,13 +132,74 @@ def format_integration_validation_feedback(
                 "Do not repeat the same unresolved downstream column reference. "
                 "Do not invent substitute column names that are not declared by prior steps."
             )
-        if "final_grain_contradiction" in codes or "final_required_field_missing" in codes:
+        if (
+            "final_grain_contradiction" in codes
+            or "final_required_field_missing" in codes
+            or "required_field_permanently_lost" in codes
+            or "required_field_not_materializable" in codes
+            or "join_key_dropped_in_final_projection" in codes
+        ):
+            lines.append("Failure stage: integration_plan_validation")
+            lines.append("Failure type: final_requirement_preservation")
+            # Declared vs observed (evidence only — no prescribed ops/columns)
+            if previous_plan and isinstance(previous_plan, dict):
+                req = previous_plan.get("final_output_requirements") or {}
+                if req:
+                    lines.append(
+                        "Declared final requirement: "
+                        f"grain={req.get('grain')!r}; "
+                        f"one_row_represents={req.get('one_row_represents')!r}; "
+                        f"required_columns={req.get('required_columns')!r}"
+                    )
+            for issue in result.errors:
+                if issue.code in {
+                    "required_field_permanently_lost",
+                    "final_required_field_missing",
+                    "join_key_dropped_in_final_projection",
+                    "final_grain_contradiction",
+                }:
+                    lines.append(
+                        f"Observed plan effect: code={issue.code}; {issue.message}"
+                    )
+                    break
             lines.append(
-                "The executed/validated plan does not satisfy the final output "
-                "requirements declared by the plan. "
-                "Review whether later transformations preserve the requested grain "
-                "and fields. Do not repeat the same unresolved final-output contract. "
+                "Invariant: The final plan must remain consistent with its own "
+                "declared final-output contract."
+            )
+            lines.append(
+                "A declared required field may have become unavailable, "
+                "the declared grain may conflict with a later collapsing "
+                "transformation, or the final projection may no longer represent "
+                "the declared output semantics. "
                 "Do not invent specific replacement operations or column names."
+            )
+            lines.append(
+                "retry_mode_hint: repair when the integration chain is sound and only "
+                "the final transformation violates the declared contract; "
+                "regenerate when the operation family itself conflicts with the "
+                "declared grain/fields."
+            )
+            for issue in result.errors:
+                if issue.code in {
+                    "required_field_permanently_lost",
+                    "final_required_field_missing",
+                    "join_key_dropped_in_final_projection",
+                }:
+                    lost_op = (issue.details or {}).get("lost_at_op") or (
+                        issue.details or {}
+                    ).get("select_step")
+                    if lost_op:
+                        lines.append(
+                            "Evidence: a declared final-output field or identifying "
+                            f"join key became unavailable around step/op {lost_op!r}."
+                        )
+                        break
+        if "union_incompatible_schema" in codes:
+            lines.append(
+                "Observed plan effect: union under the chosen column policy is "
+                "schema-incompatible. Consider whether a prior rename is required "
+                "to align representations before stacking rows. "
+                "Do not invent column mappings that are not supported by observations."
             )
         if failure_type == FAILURE_TYPE_ALIAS or "missing_metric_output" in codes:
             lines.append(

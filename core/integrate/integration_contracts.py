@@ -144,6 +144,9 @@ _STRUCTURAL_CODES = frozenset(
         "duplicate_select_column",
         "final_grain_contradiction",
         "final_required_field_missing",
+        "required_field_permanently_lost",
+        "required_field_not_materializable",
+        "join_key_dropped_in_final_projection",
         "invalid_final_grain",
     }
 )
@@ -165,6 +168,18 @@ _ALIAS_CODES = frozenset(
     }
 )
 
+_FINAL_CONTRACT_CODES = frozenset(
+    {
+        "final_grain_contradiction",
+        "final_required_field_missing",
+        "required_field_permanently_lost",
+        "required_field_not_materializable",
+        "final_required_column_missing",
+        "invalid_final_grain",
+        "join_key_dropped_in_final_projection",
+    }
+)
+
 
 def classify_integration_failure_codes(codes: list[str] | None) -> str:
     """Map validation/execution error codes → failure type for retry feedback."""
@@ -175,11 +190,18 @@ def classify_integration_failure_codes(codes: list[str] | None) -> str:
         return FAILURE_TYPE_RESULT
     if codes_s & {"missing_metric_output", "aggregate_alias_collision"}:
         return FAILURE_TYPE_ALIAS
+    if codes_s & _FINAL_CONTRACT_CODES:
+        # Prefer structural repair on first hit; pipeline may escalate to regenerate.
+        return FAILURE_TYPE_STRUCTURAL
     if codes_s & _STRUCTURAL_CODES:
         return FAILURE_TYPE_STRUCTURAL
     if not codes_s:
         return FAILURE_TYPE_SEMANTIC
     return FAILURE_TYPE_SEMANTIC
+
+
+def is_final_contract_failure(codes: list[str] | None) -> bool:
+    return bool({str(c) for c in (codes or [])} & _FINAL_CONTRACT_CODES)
 
 
 def retry_mode_for_failure_type(failure_type: str) -> str:

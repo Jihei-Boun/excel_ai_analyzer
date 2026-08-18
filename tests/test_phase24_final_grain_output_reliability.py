@@ -255,7 +255,12 @@ def test_required_field_drop_by_select_detected() -> None:
     assert not val.valid
     assert any(i.code == "final_required_field_missing" for i in val.errors)
     fb = "\n".join(format_integration_validation_feedback(val, previous_plan=plan.to_dict()))
-    assert "final output requirements" in fb.lower() or "requested grain" in fb.lower()
+    assert (
+        "final output requirements" in fb.lower()
+        or "requested grain" in fb.lower()
+        or "final_requirement_preservation" in fb.lower()
+        or "final-output contract" in fb.lower()
+    )
     assert "Remove the aggregate" not in fb
     assert "product_id" not in fb or "Change" not in fb  # no prescribed fix naming
 

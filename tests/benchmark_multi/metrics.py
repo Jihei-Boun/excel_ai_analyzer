@@ -90,14 +90,50 @@ def summarize_results(
         )
 
     def _vfp(c: dict[str, Any]) -> bool:
-        # Expected-success cases incorrectly blocked by plan validator
+        """Strict validator false positive.
+
+        Only count when an expected-success case is blocked by a *safety* heuristic
+        while the plan is not independently structurally invalid.
+
+        Rejecting nonexistent columns / incompatible unions / final-contract
+        violations is correct validation — not a false positive.
+        """
         if c.get("scenario") in {"many_to_many", "unrelated", "ambiguous_key", "incompatible_union"}:
             return False
         if "success" not in _expected_statuses(c):
             return False
         if c.get("status") == "success":
             return False
-        return bool((c.get("levels") or {}).get("L3_plan_safety", {}).get("blocked_unsafe"))
+        l3 = (c.get("levels") or {}).get("L3_plan_safety") or {}
+        if not l3.get("blocked_unsafe"):
+            return False
+        codes = {str(x) for x in (l3.get("error_codes") or [])}
+        # Correct rejections of invalid / unsupported plans
+        correct_rejection = {
+            "nonexistent_column",
+            "missing_column",
+            "malformed_params",
+            "union_incompatible_schema",
+            "join_against_unrelated",
+            "final_required_field_missing",
+            "required_field_permanently_lost",
+            "required_field_not_materializable",
+            "final_grain_contradiction",
+            "invalid_final_grain",
+            "join_key_dropped_in_final_projection",
+            "unsupported_operation",
+            "unsupported_aggregation",
+        }
+        if codes & correct_rejection:
+            return False
+        # Residual: safety-only blocks on otherwise expected-success cases
+        safety_only = {
+            "many_to_many_join_risk",
+            "extreme_row_amplification",
+            "ambiguous_key_selection",
+            "insufficient_evidence_forced_join",
+        }
+        return bool(codes & safety_only)
 
     def _alias_failure(c: dict[str, Any]) -> bool:
         l4 = (c.get("levels") or {}).get("L4_execution") or {}
@@ -237,6 +273,66 @@ def summarize_results(
     )
     safe_but_true_value = rate(lambda c: c.get("correct_op_semantic_wrong_result"))
 
+    # Phase 25 — requirement understanding vs preservation (benchmark observability)
+    final_req_declared = rate(
+        lambda c: bool((c.get("observability") or {}).get("final_requirement_declared"))
+    )
+    req_grain_acc = _rate_among(
+        lambda c: (c.get("observability") or {}).get("final_requirement_grain_accuracy") is not None,
+        lambda c: (c.get("observability") or {}).get("final_requirement_grain_accuracy") is True,
+    )
+    # mean recall among cases with a numeric recall
+    recalls = [
+        float((c.get("observability") or {}).get("final_requirement_column_recall"))
+        for c in case_results
+        if (c.get("observability") or {}).get("final_requirement_column_recall") is not None
+    ]
+    req_col_recall = round(100.0 * (sum(recalls) / len(recalls)), 2) if recalls else 0.0
+    req_understanding_fail = rate(
+        lambda c: bool((c.get("observability") or {}).get("requirement_understanding_failure"))
+    )
+    req_preservation_fail = rate(
+        lambda c: bool((c.get("observability") or {}).get("requirement_preservation_failure"))
+    )
+    req_preservation_rate = rate(
+        lambda c: (c.get("observability") or {}).get("requirement_preservation_failure") is False
+        and c.get("status") == "success"
+    )
+    required_field_survival = rate(
+        lambda c: bool((c.get("observability") or {}).get("required_field_survival"))
+    )
+    final_grain_preservation = rate(
+        lambda c: bool((c.get("observability") or {}).get("final_grain_preservation"))
+    )
+    unnecessary_transformation = rate(
+        lambda c: bool((c.get("observability") or {}).get("unnecessary_transformation"))
+        or c.get("correct_op_grain_mismatch")
+    )
+    post_join_tf_fail = rate(
+        lambda c: bool((c.get("observability") or {}).get("post_join_transformation_failure"))
+    )
+    final_projection_fail = rate(
+        lambda c: bool((c.get("observability") or {}).get("final_projection_failure"))
+        or "join_key_dropped_in_final_projection"
+        in ((c.get("observability") or {}).get("plan_validation_codes") or [])
+        or c.get("correct_op_structural_mismatch")
+    )
+    final_contract_retry_success = rate(
+        lambda c: bool((c.get("metadata") or {}).get("final_contract_retry_success"))
+        or bool((c.get("observability") or {}).get("final_contract_retry_success"))
+    )
+    repeated_final_contract = rate(
+        lambda c: bool((c.get("metadata") or {}).get("repeated_final_contract_failure"))
+        or any(
+            e.get("repeated_final_contract_failure")
+            for e in (c.get("retry_log") or [])
+        )
+    )
+    unrelated_safe = _rate_among(
+        lambda c: c.get("scenario") == "unrelated",
+        lambda c: bool(c.get("safe_outcome")),
+    )
+
     # failure taxonomy
     cat_counts: dict[str, int] = {}
     for c in case_results:
@@ -325,6 +421,20 @@ def summarize_results(
             "required_field_loss_rate": required_field_loss,
             "safe_but_final_contract_mismatch_rate": safe_but_final_contract,
             "safe_but_true_semantic_value_error_rate": safe_but_true_value,
+            "final_requirement_declared_rate": final_req_declared,
+            "final_requirement_grain_accuracy": req_grain_acc,
+            "final_requirement_column_recall": req_col_recall,
+            "requirement_understanding_failure_rate": req_understanding_fail,
+            "requirement_preservation_failure_rate": req_preservation_fail,
+            "requirement_preservation_rate": req_preservation_rate,
+            "required_field_survival_rate": required_field_survival,
+            "final_grain_preservation_rate": final_grain_preservation,
+            "unnecessary_transformation_rate": unnecessary_transformation,
+            "post_join_transformation_failure_rate": post_join_tf_fail,
+            "final_projection_failure_rate": final_projection_fail,
+            "final_contract_retry_success_rate": final_contract_retry_success,
+            "repeated_final_contract_failure_rate": repeated_final_contract,
+            "unrelated_safe_outcome_rate": unrelated_safe,
         },
         "planner_quality": planner_quality,
         "failure_categories": cat_counts,

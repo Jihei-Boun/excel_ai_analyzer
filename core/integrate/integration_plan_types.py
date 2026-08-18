@@ -70,14 +70,21 @@ class IntegrationStep:
 
 @dataclass
 class FinalOutputRequirements:
-    """Planner-declared final intent (optional, Phase 24).
+    """Planner-declared final intent (optional, Phase 24–26).
 
     LLM decides grain/fields. Python only checks Plan consistency —
     never fills these from user keywords or benchmark goldens.
+
+    Phase 26: optional ``one_row_represents`` is a short Planner self-check
+    phrase (what one final row means). Validator does not interpret it
+    semantically — it is stored for observability / retry context only.
+    identity_columns intentionally not added (probe: failures are wrong grain
+    declaration / projection, not identity-vs-required ambiguity).
     """
 
     grain: str | None = None  # detail | entity | group | summary
     required_columns: list[str] = field(default_factory=list)
+    one_row_represents: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
@@ -85,11 +92,13 @@ class FinalOutputRequirements:
             out["grain"] = self.grain
         if self.required_columns:
             out["required_columns"] = list(self.required_columns)
+        if self.one_row_represents:
+            out["one_row_represents"] = self.one_row_represents
         return out
 
     @property
     def is_empty(self) -> bool:
-        return not self.grain and not self.required_columns
+        return not self.grain and not self.required_columns and not self.one_row_represents
 
 
 FINAL_GRAIN_VALUES = frozenset({"detail", "entity", "group", "summary"})
@@ -320,6 +329,36 @@ def repeated_integration_family_feedback(
         f"Previous rejected family: {label}",
         "Use a materially different integration strategy if supported by the evidence, "
         "or return status=cannot_plan if ambiguity remains unresolved.",
+    ]
+
+
+def final_contract_failure_family(codes: list[str] | None) -> str | None:
+    """Classify final-output contract failures for retry diversity (observability)."""
+    codes_s = {str(c) for c in (codes or [])}
+    if codes_s & {
+        "join_key_dropped_in_final_projection",
+        "final_required_field_missing",
+        "required_field_permanently_lost",
+    }:
+        return "projection_failure_family"
+    if codes_s & {"final_grain_contradiction", "invalid_final_grain"}:
+        return "grain_failure_family"
+    if codes_s & {"required_field_not_materializable"}:
+        return "field_survival_failure_family"
+    if codes_s & {
+        "final_required_column_missing",
+    }:
+        return "final_requirement_family"
+    return None
+
+
+def repeated_final_contract_family_feedback(family: str | None) -> list[str]:
+    return [
+        "Code: repeated_final_contract_failure",
+        "Previous attempts failed for the same final-output contract reason.",
+        f"Previous rejected final-contract family: {family or 'final_requirement_family'}",
+        "Use a materially different planning approach that preserves the declared "
+        "grain and fields. Do not invent specific operations or column names.",
     ]
 
 
@@ -562,7 +601,13 @@ def _parse_final_output_requirements(data: dict[str, Any]) -> FinalOutputRequire
             "final_output_requirements.required_columns must be a list"
         )
     cols = [str(x).strip() for x in cols_raw if str(x).strip()]
-    req = FinalOutputRequirements(grain=grain, required_columns=cols)
+    one_raw = raw.get("one_row_represents")
+    one = str(one_raw).strip() if one_raw is not None else None
+    if one == "":
+        one = None
+    req = FinalOutputRequirements(
+        grain=grain, required_columns=cols, one_row_represents=one
+    )
     return None if req.is_empty else req
 
 

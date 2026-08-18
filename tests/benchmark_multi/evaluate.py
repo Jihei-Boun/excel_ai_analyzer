@@ -185,6 +185,16 @@ def evaluate_case(
         three_file_join_ok = join_count >= 2 and status == "success"
         three_file_final_ok = bool(overall_ok)
 
+    req_obs = _requirement_observability(
+        case,
+        plan_dict=plan_dict,
+        status=status,
+        semantic=semantic,
+        ops=ops,
+        meta=meta,
+        overall_ok=overall_ok,
+    )
+
     return {
         "case_id": case.id,
         "scenario": case.scenario,
@@ -215,6 +225,7 @@ def evaluate_case(
         "failure_categories": sorted(set(categories)),
         "selected_operations": ops,
         "retry_log": retry_log,
+        "plan": plan_dict,
         "metadata": {
             "attempt_count": meta.get("attempt_count"),
             "retry_count": meta.get("retry_count"),
@@ -226,6 +237,8 @@ def evaluate_case(
             "validator_blocked_unsafe_plan": meta.get("validator_blocked_unsafe_plan"),
             "final_shape": meta.get("final_shape"),
             "repeated_contract_failure": meta.get("repeated_contract_failure"),
+            "repeated_final_contract_failure": meta.get("repeated_final_contract_failure"),
+            "final_contract_retry_success": meta.get("final_contract_retry_success"),
             "expected_schema_by_step": meta.get("expected_schema_by_step"),
             "actual_schema_by_step": meta.get("actual_schema_by_step"),
         },
@@ -278,6 +291,7 @@ def evaluate_case(
             "safe_but_semantically_wrong": safe_but_semantically_wrong,
             "evaluation_reason": list(semantic.reasons) if status == "success" else [],
             "column_mapping": dict(semantic.column_mapping) if status == "success" else {},
+            **req_obs,
         },
     }
 
@@ -576,6 +590,129 @@ def _eval_recovery(meta: dict[str, Any], retry_log: list[dict[str, Any]]) -> dic
             "repeated_integration_family" in (e.get("failure_codes") or []) for e in retry_log
         ),
         "validator_blocked_unsafe_plan": bool(meta.get("validator_blocked_unsafe_plan")),
+    }
+
+
+def _requirement_observability(
+    case: MultiBenchmarkCase,
+    *,
+    plan_dict: dict[str, Any] | None,
+    status: str,
+    semantic: Any,
+    ops: list[str],
+    meta: dict[str, Any],
+    overall_ok: bool,
+) -> dict[str, Any]:
+    """Benchmark-only: declared final_output_requirements vs expected golden.
+
+    Never used by production Validator/Planner.
+    """
+    from tests.benchmark_multi.semantic_compare import infer_expected_grain
+
+    req = (plan_dict or {}).get("final_output_requirements") or {}
+    declared_grain = str(req.get("grain") or "").strip().lower() or None
+    declared_cols = [str(c) for c in (req.get("required_columns") or [])]
+    expected_grain = infer_expected_grain(case)
+    expected_cols = list(case.expected.result.required_columns or [])
+
+    declared = bool(declared_grain or declared_cols)
+
+    def _grain_compat(d: str | None, e: str | None) -> bool | None:
+        if not d or not e:
+            return None
+        row, grp = {"detail", "entity"}, {"group", "summary"}
+        if d in row and e in row:
+            return True
+        if d in grp and e in grp:
+            return True
+        return False
+
+    grain_acc = _grain_compat(declared_grain, expected_grain)
+    recall = None
+    if expected_cols:
+        if not declared_cols:
+            recall = 0.0
+        else:
+            recall = round(len(set(expected_cols) & set(declared_cols)) / len(expected_cols), 4)
+
+    schemas = list(meta.get("expected_schema_by_step") or [])
+    lost_mid = False
+    if schemas and expected_cols:
+        prev = None
+        for step in schemas:
+            cols = set(step.get("output_columns") or [])
+            if prev is not None:
+                for ec in expected_cols:
+                    if ec in prev and ec not in cols:
+                        lost_mid = True
+            prev = cols
+
+    understanding_fail = False
+    preservation_fail = False
+    if declared and grain_acc is False:
+        understanding_fail = True
+    if expected_cols and recall is not None and recall < 0.5:
+        understanding_fail = True
+    if not declared and status == "success" and not overall_ok:
+        understanding_fail = True
+    if lost_mid:
+        preservation_fail = True
+    if expected_grain in {"detail", "entity"} and "aggregate" in ops and not overall_ok:
+        preservation_fail = True
+        if grain_acc is not True:
+            understanding_fail = True
+    if "select_columns" in ops and lost_mid:
+        preservation_fail = True
+
+    final_cols: set[str] = set()
+    if schemas:
+        final_cols = set((schemas[-1] or {}).get("output_columns") or [])
+    declared_survival = None
+    if declared_cols:
+        declared_survival = all(c in final_cols for c in declared_cols) if final_cols else False
+
+    grain_pres = None
+    if status == "success":
+        grain_pres = bool(getattr(semantic, "grain_match", None))
+
+    unnecessary_tf = bool(
+        expected_grain in {"detail", "entity"} and "aggregate" in ops and not overall_ok
+    )
+    post_join_fail = bool(
+        status == "success"
+        and not overall_ok
+        and "join" in ops
+        and any(o in ops for o in ("aggregate", "select_columns"))
+    )
+
+    return {
+        "final_requirement_declared": declared,
+        "declared_final_grain": declared_grain,
+        "declared_required_columns": declared_cols,
+        "final_requirement_grain_accuracy": grain_acc,
+        "final_requirement_column_recall": recall,
+        "requirement_understanding_failure": understanding_fail,
+        "requirement_preservation_failure": preservation_fail,
+        "required_field_survival": (
+            bool(declared_survival)
+            if declared_survival is not None
+            else (not lost_mid and overall_ok)
+        ),
+        "final_grain_preservation": grain_pres if grain_pres is not None else overall_ok,
+        "unnecessary_transformation": unnecessary_tf,
+        "post_join_transformation_failure": post_join_fail,
+        "final_projection_failure": bool(
+            lost_mid
+            or post_join_fail
+            or (
+                status == "success"
+                and not overall_ok
+                and "select_columns" in ops
+            )
+        ),
+        "final_contract_retry_success": bool(meta.get("final_contract_retry_success")),
+        "repeated_final_contract_failure": bool(meta.get("repeated_final_contract_failure")),
+        "one_row_represents": (req.get("one_row_represents") if isinstance(req, dict) else None),
     }
 
 
