@@ -144,11 +144,12 @@ def test_detail_grain_rejects_collapsing_aggregate() -> None:
     # Missing required fields after aggregate is the hard error
     assert not val.valid
     assert any(i.code == "final_required_field_missing" for i in val.errors)
-    assert any(i.code == "final_grain_contradiction" for i in val.warnings)
+    # Phase 30: row grain + collapsing aggregate is also a blocking error
+    assert any(i.code == "final_grain_contradiction" and i.severity == "error" for i in val.errors)
 
 
-def test_detail_grain_mislabel_with_valid_group_plan_is_warning_only() -> None:
-    """Correct group aggregate + mislabeled grain=detail must not hard-fail."""
+def test_detail_grain_mislabel_with_aggregate_is_blocking() -> None:
+    """Phase 30: row-level grain + collapsing aggregate is a declared-contract ERROR."""
     a = pd.DataFrame({"id": [1, 2], "x": [1, 2]})
     b = pd.DataFrame({"id": [1, 2], "y": [3, 4]})
     und = _und_two(a, b)
@@ -186,8 +187,8 @@ def test_detail_grain_mislabel_with_valid_group_plan_is_warning_only() -> None:
         }
     )
     val = validate_integration_plan(und, plan)
-    assert val.valid, [e.message for e in val.errors]
-    assert any(i.code == "final_grain_contradiction" for i in val.warnings)
+    assert not val.valid
+    assert any(i.code == "final_grain_contradiction" and i.severity == "error" for i in val.errors)
 
 
 def test_group_grain_requires_aggregate() -> None:

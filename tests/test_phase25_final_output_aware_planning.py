@@ -248,9 +248,9 @@ def test_entity_group_by_identity_aggregate_allowed() -> None:
         }
     )
     val = validate_integration_plan(und, plan)
-    # grain=entity + aggregate → warning only when required fields present
-    assert val.valid, [e.message for e in val.errors]
-    assert any(i.code == "final_grain_contradiction" for i in val.warnings)
+    # Phase 30: grain=entity + collapsing aggregate → blocking ERROR
+    assert not val.valid
+    assert any(i.code == "final_grain_contradiction" and i.severity == "error" for i in val.errors)
 
 
 def test_final_contract_failure_classification() -> None:

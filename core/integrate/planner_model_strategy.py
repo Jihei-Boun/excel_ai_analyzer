@@ -18,6 +18,10 @@ _ESCALATION_TRIGGER_CODES = frozenset(
     {
         "join_key_dropped_in_final_projection",
         "required_field_not_materializable",
+        # Phase 30: same final-contract family as projection failures — generic,
+        # not scenario-routed. Enables recoverable grain-consistency exhaustion
+        # to escalate under existing evidence-based policy.
+        "final_grain_contradiction",
     }
 )
 

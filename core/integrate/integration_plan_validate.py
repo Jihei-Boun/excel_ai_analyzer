@@ -359,12 +359,11 @@ def _validate_final_output_requirements(
     )
 
     if grain in FINAL_GRAIN_ROW_LEVEL and (aggregate_produces_final or upstream_agg):
-        # Warning (not error): LLMs often mislabel grain=detail while correctly
-        # aggregating for a summary request. Blocking caused retry-exhausted
-        # false failures on valid group/summary plans (Phase 24 live).
-        # Row-level intent is still enforced when required_columns list detail
-        # fields that aggregate would drop → final_required_field_missing ERROR.
-        warn(
+        # Phase 30: blocking ERROR (was WARNING since Phase 24).
+        # Validates Planner-declared row-level grain vs collapsing aggregate that
+        # feeds final_output — no new user-intent inference.
+        # Aggregate alone is not blocked; grain=group/summary + aggregate remains valid.
+        err(
             "final_grain_contradiction",
             "Declared final grain is row-level (detail/entity), but the plan "
             "collapses rows with aggregate before/at final_output. "
