@@ -103,6 +103,7 @@ def run_case(
     base_url: str = "http://localhost:11434",
     model: str = "qwen2.5:7b",
     max_retries: int = 2,
+    chat_json_fn: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     sources = _load_sources(case, datasets_dir)
     crashed = False
@@ -112,7 +113,10 @@ def run_case(
     try:
         if live:
             understanding = _build_understanding_live(
-                sources, base_url=base_url, model=model, chat_json_fn=None
+                sources,
+                base_url=base_url,
+                model=model,
+                chat_json_fn=chat_json_fn,
             )
             pipeline = run_integration_pipeline(
                 case.prompt,
@@ -121,6 +125,7 @@ def run_case(
                 max_retries=max_retries,
                 base_url=base_url,
                 model=model,
+                chat_json_fn=chat_json_fn,
             )
         else:
             if case.live_only and case.fixed_plan is None:
@@ -177,6 +182,8 @@ def run_suite(
     save: bool = True,
     max_retries: int = 2,
     case_ids: list[str] | None = None,
+    results_dir: Path | None = None,
+    chat_json_fn: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     ensure_datasets(DATASETS_DIR, force=False)
     cases = load_all_cases()
@@ -196,6 +203,7 @@ def run_suite(
             base_url=base_url,
             model=model,
             max_retries=max_retries,
+            chat_json_fn=chat_json_fn if live else None,
         )
         for c in cases
     ]
@@ -203,7 +211,8 @@ def run_suite(
         results, mode="live" if live else "deterministic", model=model if live else None
     )
     if save:
-        path = save_summary(summary, RESULTS_DIR)
+        out_dir = results_dir or RESULTS_DIR
+        path = save_summary(summary, out_dir)
         summary["saved_to"] = str(path)
     return summary
 
@@ -218,10 +227,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--no-save", action="store_true")
     parser.add_argument("--max-retries", type=int, default=2)
     parser.add_argument("--case", action="append", default=None)
+    parser.add_argument(
+        "--results-dir",
+        default=None,
+        help="Optional directory for saved summaries (Phase 27 model comparison)",
+    )
     args = parser.parse_args(argv)
 
     if not args.live and not args.deterministic:
         args.deterministic = True
+
+    results_dir = Path(args.results_dir) if args.results_dir else None
 
     if args.deterministic:
         summary = run_suite(
@@ -229,6 +245,7 @@ def main(argv: list[str] | None = None) -> None:
             save=not args.no_save,
             max_retries=args.max_retries,
             case_ids=args.case,
+            results_dir=results_dir,
         )
         overall = summary["overall"]
         print(
@@ -251,6 +268,7 @@ def main(argv: list[str] | None = None) -> None:
                 save=not args.no_save,
                 max_retries=args.max_retries,
                 case_ids=args.case,
+                results_dir=results_dir,
             )
             runs.append(summary)
             o = summary["overall"]
@@ -261,10 +279,11 @@ def main(argv: list[str] | None = None) -> None:
             )
         if len(runs) > 1:
             multi = summarize_multi_run(runs)
-            multi_path = RESULTS_DIR / "live_3run_summary.json"
-            RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+            out_root = results_dir or RESULTS_DIR
+            out_root.mkdir(parents=True, exist_ok=True)
             import json
 
+            multi_path = out_root / "live_3run_summary.json"
             multi_path.write_text(
                 json.dumps(multi, ensure_ascii=False, indent=2), encoding="utf-8"
             )
