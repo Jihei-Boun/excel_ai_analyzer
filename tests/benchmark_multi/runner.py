@@ -16,6 +16,7 @@ from typing import Any, Callable
 import pandas as pd
 
 from core.integrate.integration_pipeline import run_integration_pipeline
+from core.integrate.planner_model_strategy import PlannerModelStrategy
 from core.integrate.relationship_infer import build_cross_file_understanding
 from core.integrate.relationship_types import CrossFileRelationship
 from tests.benchmark_multi import DATASETS_DIR, RESULTS_DIR
@@ -104,6 +105,7 @@ def run_case(
     model: str = "qwen2.5:7b",
     max_retries: int = 2,
     chat_json_fn: Callable[..., dict[str, Any]] | None = None,
+    model_strategy: PlannerModelStrategy | None = None,
 ) -> dict[str, Any]:
     sources = _load_sources(case, datasets_dir)
     crashed = False
@@ -112,10 +114,16 @@ def run_case(
     pipeline = None
     try:
         if live:
+            # Understanding stays on the fast/default model (not escalated).
+            und_model = (
+                model_strategy.fast_model
+                if model_strategy is not None and model_strategy.enable_escalation
+                else model
+            )
             understanding = _build_understanding_live(
                 sources,
                 base_url=base_url,
-                model=model,
+                model=und_model,
                 chat_json_fn=chat_json_fn,
             )
             pipeline = run_integration_pipeline(
@@ -126,6 +134,7 @@ def run_case(
                 base_url=base_url,
                 model=model,
                 chat_json_fn=chat_json_fn,
+                model_strategy=model_strategy,
             )
         else:
             if case.live_only and case.fixed_plan is None:
@@ -151,6 +160,7 @@ def run_case(
                 base_url=base_url,
                 model="benchmark-fixed",
                 chat_json_fn=_fixed_chat(case),
+                model_strategy=None,
             )
         ev = evaluate_case(case, pipeline=pipeline, understanding=understanding)
         return ev
@@ -184,6 +194,7 @@ def run_suite(
     case_ids: list[str] | None = None,
     results_dir: Path | None = None,
     chat_json_fn: Callable[..., dict[str, Any]] | None = None,
+    model_strategy: PlannerModelStrategy | None = None,
 ) -> dict[str, Any]:
     ensure_datasets(DATASETS_DIR, force=False)
     cases = load_all_cases()
@@ -204,6 +215,7 @@ def run_suite(
             model=model,
             max_retries=max_retries,
             chat_json_fn=chat_json_fn if live else None,
+            model_strategy=model_strategy if live else None,
         )
         for c in cases
     ]
@@ -232,12 +244,27 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Optional directory for saved summaries (Phase 27 model comparison)",
     )
+    parser.add_argument(
+        "--escalate",
+        action="store_true",
+        help="Phase 28: enable evidence-based strong planner escalation (fast=qwen2.5:7b, strong=qwen3:32b)",
+    )
+    parser.add_argument("--strong-model", default="qwen3:32b")
+    parser.add_argument("--strong-max-retries", type=int, default=2)
     args = parser.parse_args(argv)
 
     if not args.live and not args.deterministic:
         args.deterministic = True
 
     results_dir = Path(args.results_dir) if args.results_dir else None
+    strategy = None
+    if args.escalate:
+        strategy = PlannerModelStrategy(
+            fast_model=args.model,
+            strong_model=args.strong_model,
+            enable_escalation=True,
+            strong_max_retries=args.strong_max_retries,
+        )
 
     if args.deterministic:
         summary = run_suite(
@@ -269,6 +296,7 @@ def main(argv: list[str] | None = None) -> None:
                 max_retries=args.max_retries,
                 case_ids=args.case,
                 results_dir=results_dir,
+                model_strategy=strategy,
             )
             runs.append(summary)
             o = summary["overall"]

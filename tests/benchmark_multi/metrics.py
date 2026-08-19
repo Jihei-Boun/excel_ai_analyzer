@@ -435,6 +435,47 @@ def summarize_results(
             "final_contract_retry_success_rate": final_contract_retry_success,
             "repeated_final_contract_failure_rate": repeated_final_contract,
             "unrelated_safe_outcome_rate": unrelated_safe,
+            # Phase 28 escalation KPIs
+            "escalation_rate": rate(
+                lambda c: bool((c.get("metadata") or {}).get("escalated"))
+                or bool((c.get("observability") or {}).get("escalated"))
+            ),
+            "strong_planner_invocation_rate": rate(
+                lambda c: int(
+                    (c.get("metadata") or {}).get("strong_attempt_count")
+                    or (c.get("observability") or {}).get("strong_attempt_count")
+                    or 0
+                )
+                > 0
+            ),
+            "escalation_success_rate": rate(
+                lambda c: bool((c.get("metadata") or {}).get("escalated"))
+                and bool(c.get("overall_ok"))
+            ),
+            "escalation_failure_rate": rate(
+                lambda c: bool((c.get("metadata") or {}).get("escalated"))
+                and not bool(c.get("overall_ok"))
+            ),
+            "fast_only_success_rate": rate(
+                lambda c: bool(c.get("overall_ok"))
+                and not bool((c.get("metadata") or {}).get("escalated"))
+            ),
+            "fast_first_plan_success_rate": first_plan,
+            "fast_retry_success_rate": rate(
+                lambda c: bool(c.get("overall_ok"))
+                and not bool((c.get("metadata") or {}).get("escalated"))
+                and int((c.get("metadata") or {}).get("fast_retry_count") or 0) > 0
+            ),
+            "fast_retry_exhausted_rate": rate(
+                lambda c: (c.get("metadata") or {}).get("fast_path_status") == "failed"
+                or (
+                    c.get("status") == "failed"
+                    and not bool((c.get("metadata") or {}).get("escalated"))
+                )
+            ),
+            "final_overall_ok_rate": overall_ok,
+            "final_safe_outcome_rate": safe_outcome,
+            "final_unsafe_execution_rate": unsafe_execution,
         },
         "planner_quality": planner_quality,
         "failure_categories": cat_counts,

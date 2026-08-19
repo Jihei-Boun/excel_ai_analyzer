@@ -47,6 +47,12 @@ from core.integrate.integration_validation_types import (
     IntegrationValidationResult,
     format_integration_validation_feedback,
 )
+from core.integrate.planner_model_strategy import (
+    EscalationDecision,
+    PlannerModelStrategy,
+    build_escalation_feedback,
+    should_escalate_after_fast_path,
+)
 from core.integrate.relationship_types import CrossFileUnderstanding
 
 # Align with single-file analysis_pipeline.max_retries=2 (total attempts = 3)
@@ -122,14 +128,217 @@ def run_integration_pipeline(
     model: str = "qwen2.5:7b",
     chat_json_fn: Callable[..., dict[str, Any]] | None = None,
     build_plan_fn: Callable[..., IntegrationPlan] | None = None,
+    model_strategy: PlannerModelStrategy | None = None,
 ) -> IntegrationPipelineResult:
     """Plan → validate → execute → result-validate with limited Planner retries.
 
+    Optional ``model_strategy`` enables evidence-based strong-planner escalation
+    after the fast path exhausts with recoverable validation failures.
+    Escalation never bypasses Validator/Executor/Result Validator.
+
     No route_multi switch. No legacy fallback. cannot_plan is a safe outcome.
     """
+    strategy = model_strategy
+    fast_model = (
+        strategy.fast_model if strategy is not None and strategy.enable_escalation else model
+    )
+    fast = _run_integration_attempt_loop(
+        user_prompt,
+        sources,
+        understanding,
+        max_retries=max_retries,
+        base_url=base_url,
+        model=fast_model,
+        chat_json_fn=chat_json_fn,
+        build_plan_fn=build_plan_fn,
+        initial_feedback=None,
+        path_label="fast",
+    )
+    _attach_model_strategy_meta(
+        fast,
+        initial_model=fast_model,
+        final_model=fast_model,
+        escalated=False,
+        escalation_reason=None,
+        fast_attempt_count=int((fast.metadata or {}).get("attempt_count") or 0),
+        strong_attempt_count=0,
+        fast_retry_count=int((fast.metadata or {}).get("retry_count") or 0),
+        strong_retry_count=0,
+        final_path=_final_path_for(fast, escalated=False, strong=False),
+        escalation_decision=None,
+    )
+
+    if strategy is None or not strategy.enable_escalation:
+        return fast
+
+    decision = should_escalate_after_fast_path(
+        status=fast.status,
+        retry_log=fast.retry_log,
+        metadata=fast.metadata or {},
+        strategy=strategy,
+    )
+    if not decision.should_escalate:
+        fast.metadata["escalation_decision"] = decision.to_dict()
+        fast.metadata["escalation_reason"] = decision.reason_code
+        return fast
+
+    strong_feedback = build_escalation_feedback(
+        decision=decision,
+        retry_log=fast.retry_log,
+        metadata=fast.metadata or {},
+    )
+    strong = _run_integration_attempt_loop(
+        user_prompt,
+        sources,
+        understanding,
+        max_retries=strategy.strong_max_retries,
+        base_url=base_url,
+        model=strategy.strong_model,
+        chat_json_fn=chat_json_fn,
+        build_plan_fn=build_plan_fn,
+        initial_feedback=strong_feedback,
+        path_label="strong",
+    )
+    return _merge_escalation_result(fast, strong, decision=decision, strategy=strategy)
+
+
+def _final_path_for(
+    result: IntegrationPipelineResult, *, escalated: bool, strong: bool
+) -> str:
+    if not escalated and not strong:
+        if result.status == "success":
+            retry_n = int((result.metadata or {}).get("retry_count") or 0)
+            return "fast_retry_success" if retry_n > 0 else "fast_success"
+        if result.status == "cannot_plan":
+            return "fast_cannot_plan"
+        return "fast_failed"
+    if result.status == "success":
+        return "strong_escalation_success"
+    if result.status == "cannot_plan":
+        return "strong_escalation_cannot_plan"
+    return "strong_escalation_failed"
+
+
+def _attach_model_strategy_meta(
+    result: IntegrationPipelineResult,
+    *,
+    initial_model: str,
+    final_model: str,
+    escalated: bool,
+    escalation_reason: str | None,
+    fast_attempt_count: int,
+    strong_attempt_count: int,
+    fast_retry_count: int,
+    strong_retry_count: int,
+    final_path: str,
+    escalation_decision: EscalationDecision | None,
+) -> None:
+    meta = result.metadata
+    meta["initial_model"] = initial_model
+    meta["final_model"] = final_model
+    meta["escalated"] = escalated
+    meta["escalation_reason"] = escalation_reason
+    meta["fast_attempt_count"] = fast_attempt_count
+    meta["strong_attempt_count"] = strong_attempt_count
+    meta["fast_retry_count"] = fast_retry_count
+    meta["strong_retry_count"] = strong_retry_count
+    meta["final_path"] = final_path
+    if escalation_decision is not None:
+        meta["escalation_decision"] = escalation_decision.to_dict()
+
+
+def _merge_escalation_result(
+    fast: IntegrationPipelineResult,
+    strong: IntegrationPipelineResult,
+    *,
+    decision: EscalationDecision,
+    strategy: PlannerModelStrategy,
+) -> IntegrationPipelineResult:
+    """Prefer strong-path outcome; preserve fast retry evidence in metadata/log."""
+    merged_log = [
+        *[{**e, "planner_path": "fast"} if isinstance(e, dict) else e for e in fast.retry_log],
+        {
+            "attempt": "escalation",
+            "failure_stage": "model_escalation",
+            "failure_codes": [decision.reason_code or "escalated"],
+            "evidence": list(decision.evidence),
+            "from_model": decision.from_model,
+            "to_model": decision.to_model,
+        },
+        *[
+            {**e, "planner_path": "strong"} if isinstance(e, dict) else e
+            for e in strong.retry_log
+        ],
+    ]
+    out = IntegrationPipelineResult(
+        status=strong.status,
+        plan=strong.plan,
+        plan_validation=strong.plan_validation,
+        execution=strong.execution,
+        result_validation=strong.result_validation,
+        retry_log=merged_log,
+        final_output=strong.final_output,
+        metadata=dict(strong.metadata or {}),
+    )
+    _attach_model_strategy_meta(
+        out,
+        initial_model=strategy.fast_model,
+        final_model=strategy.strong_model,
+        escalated=True,
+        escalation_reason=decision.reason_code,
+        fast_attempt_count=int((fast.metadata or {}).get("attempt_count") or 0),
+        strong_attempt_count=int((strong.metadata or {}).get("attempt_count") or 0),
+        fast_retry_count=int((fast.metadata or {}).get("retry_count") or 0),
+        strong_retry_count=int((strong.metadata or {}).get("retry_count") or 0),
+        final_path=_final_path_for(strong, escalated=True, strong=True),
+        escalation_decision=decision,
+    )
+    out.metadata["fast_path_status"] = fast.status
+    out.metadata["fast_failure_stages"] = [
+        e.get("failure_stage")
+        for e in fast.retry_log
+        if isinstance(e, dict) and e.get("failure_stage")
+    ]
+    out.metadata["strong_failure_stages"] = [
+        e.get("failure_stage")
+        for e in strong.retry_log
+        if isinstance(e, dict) and e.get("failure_stage")
+    ]
+    out.metadata["fast_path_metadata"] = {
+        k: (fast.metadata or {}).get(k)
+        for k in (
+            "plan_validation_failure_count",
+            "execution_failure_count",
+            "result_validation_failure_count",
+            "duplicate_plan_count",
+            "same_family_repeat_count",
+            "repeated_final_contract_failure",
+            "validator_blocked_unsafe_plan",
+            "selected_operations",
+            "exhausted",
+        )
+    }
+    return out
+
+
+def _run_integration_attempt_loop(
+    user_prompt: str,
+    sources: dict[str, pd.DataFrame],
+    understanding: CrossFileUnderstanding | dict[str, Any],
+    *,
+    max_retries: int,
+    base_url: str,
+    model: str,
+    chat_json_fn: Callable[..., dict[str, Any]] | None,
+    build_plan_fn: Callable[..., IntegrationPlan] | None,
+    initial_feedback: list[str] | None,
+    path_label: str,
+) -> IntegrationPipelineResult:
+    """Single-model plan→validate→execute→result-validate loop (unchanged semantics)."""
+    del path_label  # reserved for future per-attempt tagging; retry_log merge adds path
     planner = build_plan_fn or build_integration_plan
     retry_log: list[dict[str, Any]] = []
-    feedback: list[str] = []
+    feedback: list[str] = list(initial_feedback or [])
     seen_signatures: set[str] = set()
     rejected_families: list[str] = []
     duplicate_plan_count = 0
