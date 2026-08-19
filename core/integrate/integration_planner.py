@@ -23,7 +23,8 @@ from core.integrate.integration_plan_types import (
 from core.integrate.relationship_types import CrossFileUnderstanding
 from core.llm_client import chat_json
 
-_PLANNER_SYSTEM = """
+# Phase 32: baseline prompt frozen for comparison (do not edit in place for A/B).
+_PLANNER_SYSTEM_BASELINE = """
 You are an Integration Planner for a generic multi-file Excel analyzer.
 You receive:
   1) user_prompt (what the user wants)
@@ -295,6 +296,82 @@ Op params:
 """.strip()
 
 
+def _build_candidate_a_prompt(baseline: str) -> str:
+    """Phase 32 Candidate A: sharpen answer-field vs mechanics + completeness.
+
+    Does NOT add scenario/domain/column hardcoding. Compact delta only.
+    """
+    anchor = (
+        "Do NOT invent steps first and then invent requirements that merely "
+        "describe those steps.\n"
+        "Never reverse-engineer requirements from an already-chosen aggregate/select.\n"
+        "Requirements describe the user's requested final result; steps must satisfy them."
+    )
+    insert = """Do NOT invent steps first and then invent requirements that merely describe those steps.
+Never reverse-engineer requirements from an already-chosen aggregate/select.
+Requirements describe the user's requested final result; steps must satisfy them.
+
+Answer fields vs mechanics (CRITICAL — declaration precision):
+- required_columns = fields a reader must SEE in the final table to answer the user
+  (requested identities, dimensions, labels, and metrics), using observed names only.
+- A column used only as a join/link/filter key mid-pipeline is NOT automatically a
+  required_column unless the user also needs that column in the final answer.
+- Fields the user must read in the answer MUST be declared even when they are not
+  join keys.
+- Choose the observed column that best matches what the user asked to see; do not
+  substitute a different identifier merely because it was convenient for joining.
+- Do NOT dump every available column into required_columns — declare a complete but
+  minimal answer set."""
+    if anchor not in baseline:
+        raise RuntimeError("Phase 32 prompt anchor missing from baseline")
+    out = baseline.replace(anchor, insert, 1)
+
+    check_anchor = (
+        "FINAL OUTPUT CONSISTENCY CHECK (before returning status=planned):\n"
+        "FINAL PROJECTION CHECK:"
+    )
+    check_insert = (
+        "FINAL OUTPUT CONSISTENCY CHECK (before returning status=planned):\n"
+        "ANSWER COMPLETENESS (declaration):\n"
+        "  - Using ONLY declared required_columns on final_output, could a reader\n"
+        "    answer the user request? If not, revise required_columns and the steps\n"
+        "    that produce/preserve them — before inventing extra unrelated columns.\n"
+        "FINAL PROJECTION CHECK:"
+    )
+    if check_anchor not in out:
+        raise RuntimeError("Phase 32 consistency-check anchor missing")
+    return out.replace(check_anchor, check_insert, 1)
+
+
+_PLANNER_SYSTEM_CANDIDATE_A = _build_candidate_a_prompt(_PLANNER_SYSTEM_BASELINE)
+
+# Production prompt remains baseline until Phase 32 adopts Candidate A.
+_PLANNER_SYSTEM = _PLANNER_SYSTEM_BASELINE
+
+
+def get_planner_system_prompt(*, variant: str | None = None) -> str:
+    """Return planner system prompt. variant: None/production | baseline | candidate_a."""
+    if variant in (None, "production"):
+        return _PLANNER_SYSTEM
+    if variant == "baseline":
+        return _PLANNER_SYSTEM_BASELINE
+    if variant == "candidate_a":
+        return _PLANNER_SYSTEM_CANDIDATE_A
+    raise ValueError(f"unknown planner prompt variant: {variant!r}")
+
+
+def planner_prompt_token_estimate(text: str | None = None) -> dict[str, int]:
+    """Rough token estimate for length audits."""
+    src = text if text is not None else _PLANNER_SYSTEM
+    words = len(src.split())
+    chars = len(src)
+    return {
+        "chars": chars,
+        "words": words,
+        "approx_tokens": int(words * 1.3) + chars // 20,
+    }
+
+
 def _count_on_string_metrics(
     plan: IntegrationPlan, understanding: dict[str, Any]
 ) -> list[str]:
@@ -347,13 +424,16 @@ def build_integration_plan(
     chat_json_fn: Callable[..., dict[str, Any]] | None = None,
     max_parse_retries: int = 1,
     retry_feedback: list[str] | None = None,
+    system_prompt: str | None = None,
 ) -> IntegrationPlan:
     """LLM Integration Planner entry. Format retry only — no semantic repair.
 
     ``retry_feedback`` (Phase 18/21) appends prior plan/result validation evidence.
     Does not prescribe keys/ops.
+    ``system_prompt`` overrides the production planner system prompt (experiments).
     """
     fn = chat_json_fn or chat_json
+    system = system_prompt if system_prompt is not None else _PLANNER_SYSTEM
     understanding_dict = (
         understanding.to_dict()
         if isinstance(understanding, CrossFileUnderstanding)
@@ -381,7 +461,7 @@ def build_integration_plan(
         try:
             data = fn(
                 prompt,
-                system=_PLANNER_SYSTEM,
+                system=system,
                 base_url=base_url,
                 model=model,
             )
