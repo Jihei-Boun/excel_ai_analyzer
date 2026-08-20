@@ -3,9 +3,14 @@
 Phase 2 범위: multi-file AnalysisPlan은 추가하지 않는다.
 System/Data Command는 single과 동일하게 deterministic 유지.
 집계·integrate·PandasAI는 기존 흐름 유지 (향후 Planner 확장 지점).
+
+Phase 37: optional Shadow observation of the frozen Integration Pipeline.
+Shadow never replaces the user-facing SingleRouteOutcome (kill switch OFF by default).
 """
 
 from __future__ import annotations
+
+import time
 
 import pandas as pd
 
@@ -36,6 +41,7 @@ from core.filter.value_filter import (
     filter_missing_rows,
     is_missing_rows_request,
 )
+from core.shadow.hook import finish_with_shadow, maybe_build_shadow_snapshot
 
 
 def route_multi_prompt(
@@ -53,6 +59,7 @@ def route_multi_prompt(
     prepared = named_frames
 
     # A. System/Data Command (single과 동일 — Planner 불필요)
+    # Shadow는 LLM/integrate 경로만 관찰 (system command는 대상 아님)
     if is_summary_request(prompt):
         reply = build_multi_file_summary(
             prepared,
@@ -115,6 +122,23 @@ def route_multi_prompt(
             replace_selection=False,
         )
 
+    # Phase 37: snapshot before legacy LLM/integrate work (enabled via env only)
+    legacy_t0 = time.time()
+    shadow_snap = maybe_build_shadow_snapshot(
+        prompt=prompt,
+        named_frames=prepared,
+        base_url=base_url,
+        model=model,
+        profile_name=profile_name,
+    )
+
+    def _finish(outcome: SingleRouteOutcome) -> SingleRouteOutcome:
+        return finish_with_shadow(
+            outcome,
+            snapshot=shadow_snap,
+            legacy_started_at=legacy_t0,
+        )
+
     # B. Legacy multi aggregate (Phase 2: multi Planner 미구현 — 기존 유지)
     if detect_aggregate_op(prompt) is not None:
         source_named, agg_context, new_filter, new_label = resolve_multi_aggregate_source(
@@ -137,21 +161,25 @@ def route_multi_prompt(
                 if chart_path:
                     meta["chart_path"] = chart_path
                 if not wants_table_and_chart(prompt):
-                    return SingleRouteOutcome(
-                        reply=summary or "차트 결과를 생성했습니다.",
-                        dataframe=None,
-                        meta=meta,
-                        set_filter_df=new_filter,
-                        update_context_label=new_label,
+                    return _finish(
+                        SingleRouteOutcome(
+                            reply=summary or "차트 결과를 생성했습니다.",
+                            dataframe=None,
+                            meta=meta,
+                            set_filter_df=new_filter,
+                            update_context_label=new_label,
+                        )
                     )
-            return SingleRouteOutcome(
-                reply=summary,
-                dataframe=table,
-                meta=meta,
-                keep_as_filter=False,
-                replace_selection=False,
-                set_filter_df=new_filter,
-                update_context_label=new_label,
+            return _finish(
+                SingleRouteOutcome(
+                    reply=summary,
+                    dataframe=table,
+                    meta=meta,
+                    keep_as_filter=False,
+                    replace_selection=False,
+                    set_filter_df=new_filter,
+                    update_context_label=new_label,
+                )
             )
 
     # 범용 구조화 통합: LLM 스키마·계획 → 결정론 엔진 (도메인 전용 함수 호출 없음)
@@ -171,42 +199,48 @@ def route_multi_prompt(
             integrated = None
 
         if integrated is not None and integrated.validation.ok:
-            return SingleRouteOutcome(
-                reply=integrated.reply,
-                dataframe=integrated.integrated,
-                meta=dict(integrated.meta),
-                keep_as_filter=False,
-                replace_selection=True,
-                clear_operation=True,
-                set_operation_result=integrated.integrated,
-                operation_name="structured_integrate",
+            return _finish(
+                SingleRouteOutcome(
+                    reply=integrated.reply,
+                    dataframe=integrated.integrated,
+                    meta=dict(integrated.meta),
+                    keep_as_filter=False,
+                    replace_selection=True,
+                    clear_operation=True,
+                    set_operation_result=integrated.integrated,
+                    operation_name="structured_integrate",
+                )
             )
         if integrated is not None and not integrated.validation.ok:
             # 재추론 후에도 검증 실패 → 잘못된 파일 확정 대신 경고 반환
-            return SingleRouteOutcome(
-                reply=(
-                    "구조화 통합 계획을 실행했지만 검증에 실패했습니다. "
-                    "잘못된 통합 파일은 저장하지 않았습니다. "
-                    f"{integrated.validation.summary_text()}"
-                ),
-                dataframe=integrated.integrated,
-                meta={
-                    "integrate_plan": integrated.plan.to_dict(),
-                    "integrate_validation": integrated.validation.summary_text(),
-                },
-                keep_as_filter=False,
-                replace_selection=False,
-                operation_name="structured_integrate_failed",
+            return _finish(
+                SingleRouteOutcome(
+                    reply=(
+                        "구조화 통합 계획을 실행했지만 검증에 실패했습니다. "
+                        "잘못된 통합 파일은 저장하지 않았습니다. "
+                        f"{integrated.validation.summary_text()}"
+                    ),
+                    dataframe=integrated.integrated,
+                    meta={
+                        "integrate_plan": integrated.plan.to_dict(),
+                        "integrate_validation": integrated.validation.summary_text(),
+                    },
+                    keep_as_filter=False,
+                    replace_selection=False,
+                    operation_name="structured_integrate_failed",
+                )
             )
         if integrate_error:
-            return SingleRouteOutcome(
-                reply=(
-                    "구조화 통합 파이프라인 실행 중 오류가 발생했습니다. "
-                    f"{integrate_error}"
-                ),
-                dataframe=None,
-                keep_as_filter=False,
-                replace_selection=False,
+            return _finish(
+                SingleRouteOutcome(
+                    reply=(
+                        "구조화 통합 파이프라인 실행 중 오류가 발생했습니다. "
+                        f"{integrate_error}"
+                    ),
+                    dataframe=None,
+                    keep_as_filter=False,
+                    replace_selection=False,
+                )
             )
 
     result, summary, analysis_meta = run_multi_analysis(
@@ -219,10 +253,12 @@ def route_multi_prompt(
     )
 
     if analysis_meta.get("chart_path"):
-        return SingleRouteOutcome(
-            reply=summary or "차트 결과를 생성했습니다.",
-            dataframe=None,
-            meta=_merge_analysis_meta({}, analysis_meta),
+        return _finish(
+            SingleRouteOutcome(
+                reply=summary or "차트 결과를 생성했습니다.",
+                dataframe=None,
+                meta=_merge_analysis_meta({}, analysis_meta),
+            )
         )
 
     if isinstance(result, pd.DataFrame):
@@ -258,38 +294,46 @@ def route_multi_prompt(
             )
             if fs and not filter_summary:
                 filter_summary = fs
-        return SingleRouteOutcome(
-            reply=summary,
-            dataframe=result,
-            meta=meta,
-            keep_as_filter=is_filter,
-            replace_selection=True,
-            update_context_label=ctx_label,
-            update_filter_summary=filter_summary,
+        return _finish(
+            SingleRouteOutcome(
+                reply=summary,
+                dataframe=result,
+                meta=meta,
+                keep_as_filter=is_filter,
+                replace_selection=True,
+                update_context_label=ctx_label,
+                update_filter_summary=filter_summary,
+            )
         )
 
     meta = _merge_analysis_meta({}, analysis_meta)
     if meta.get("chart_path"):
-        return SingleRouteOutcome(
-            reply=summary or "차트 결과를 생성했습니다.",
-            dataframe=None,
-            meta=meta,
+        return _finish(
+            SingleRouteOutcome(
+                reply=summary or "차트 결과를 생성했습니다.",
+                dataframe=None,
+                meta=meta,
+            )
         )
 
     # 긴 문자열 답변은 metric이 아니라 채팅 메시지로만 표시
     if isinstance(result, str):
         text = result.strip()
-        return SingleRouteOutcome(
-            reply=text or summary,
-            dataframe=None,
-            meta=meta,
+        return _finish(
+            SingleRouteOutcome(
+                reply=text or summary,
+                dataframe=None,
+                meta=meta,
+            )
         )
 
-    return SingleRouteOutcome(
-        reply=summary,
-        dataframe=None,
-        meta=meta,
-        clear_operation=False,
-        set_operation_result=result,
-        operation_name="PandasAI (다중)",
+    return _finish(
+        SingleRouteOutcome(
+            reply=summary,
+            dataframe=None,
+            meta=meta,
+            clear_operation=False,
+            set_operation_result=result,
+            operation_name="PandasAI (다중)",
+        )
     )

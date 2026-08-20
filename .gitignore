@@ -30,6 +30,7 @@ logs/
 # Uploaded / generated data (keep folder via .gitkeep)
 data/uploads/*
 !data/uploads/.gitkeep
+data/shadow_telemetry/
 exports/charts/*
 !exports/charts/.gitkeep
 exports/merges/*
