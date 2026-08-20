@@ -37,7 +37,12 @@ def structural_compare(
     legacy_fp: dict[str, Any] | None,
     shadow_fp: dict[str, Any] | None,
 ) -> str:
-    """Objective metadata only — never declares semantic winner."""
+    """Objective metadata only — never declares semantic winner.
+
+    - structurally_equal: shape + ordered columns + content hash match
+    - structurally_similar: shape + column *set* match, content/order may differ
+    - structurally_different: otherwise
+    """
     if legacy_fp is None and shadow_fp is None:
         return "both_empty"
     if legacy_fp is None or shadow_fp is None:
@@ -48,6 +53,10 @@ def structural_compare(
         and legacy_fp.get("content_hash_head50") == shadow_fp.get("content_hash_head50")
     ):
         return "structurally_equal"
+    leg_cols = set(legacy_fp.get("columns") or [])
+    sh_cols = set(shadow_fp.get("columns") or [])
+    if legacy_fp.get("shape") == shadow_fp.get("shape") and leg_cols == sh_cols:
+        return "structurally_similar"
     return "structurally_different"
 
 
