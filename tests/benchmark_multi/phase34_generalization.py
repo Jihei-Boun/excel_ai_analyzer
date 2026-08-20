@@ -24,16 +24,29 @@ from tests.benchmark_multi.schema import load_all_cases
 
 OUT = Path("benchmark_results/multi/phase34")
 
-SOURCES = [
+# Optional research-only live harvest roots (NOT used by unit/CI dataset builder)
+LIVE_HARVEST_SOURCES = [
     Path("benchmark_results/multi/phase27/qwen2.5_7b/full_19"),
     Path("benchmark_results/multi/phase27/qwen3_32b/full_19"),
     Path("benchmark_results/multi/phase28/live_escalation"),
     Path("benchmark_results/multi/phase30/live_grain_hardening"),
 ]
 
+# Back-compat alias for offline research scripts that imported SOURCES
+SOURCES = LIVE_HARVEST_SOURCES
+
+# Canonical hermetic fixture for unit/CI (git-tracked)
+CANONICAL_HISTORICAL_FIXTURE = (
+    Path(__file__).resolve().parent / "fixtures" / "phase34_historical_plans.json"
+)
+
 FROZEN_MODEL = "qwen2.5:7b"
 FROZEN_VARIANT = "V1"
 BASELINE_PIPELINE_S = 34.14
+
+
+class Phase34FixtureError(FileNotFoundError):
+    """Canonical Phase 34 historical fixture missing or invalid."""
 
 
 def _prompt_fingerprint() -> dict[str, Any]:
@@ -91,14 +104,95 @@ def _plan_sig(plan: dict[str, Any]) -> str:
     )
 
 
-def _harvest_historical() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def load_canonical_historical_fixture(
+    path: Path | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Load tracked historical valid + Type-C plans. Fail loudly if missing."""
+    fixture_path = path or CANONICAL_HISTORICAL_FIXTURE
+    if not fixture_path.is_file():
+        raise Phase34FixtureError(
+            f"Phase 34 canonical historical fixture not found: {fixture_path}. "
+            "Unit/CI datasets require this git-tracked file; live benchmark_results "
+            "are not used as a fallback."
+        )
+    data = json.loads(fixture_path.read_text(encoding="utf-8"))
+    valid = list(data.get("historical_valid") or [])
+    type_c = list(data.get("historical_type_c") or [])
+    if not valid or not type_c:
+        raise Phase34FixtureError(
+            f"Phase 34 fixture empty or incomplete at {fixture_path}: "
+            f"historical_valid={len(valid)} historical_type_c={len(type_c)}"
+        )
+    # Ensure analysis-only labels
+    for v in valid:
+        v.setdefault("source_kind", "historical_real")
+        v.setdefault("label", "VALID_SUCCESS")
+    for c in type_c:
+        c.setdefault("source_kind", "historical_real")
+        c.setdefault("label", "TYPE_C")
+    return valid, type_c
+
+
+def _load_synthetic_valid_from_cases() -> list[dict[str, Any]]:
+    """Tracked case YAML fixed_plans — hermetic synthetic_valid pool."""
+    cases = {c.id: c for c in load_all_cases()}
+    valid: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for bc in cases.values():
+        if not bc.fixed_plan or bc.fixed_plan.get("status") != "planned":
+            continue
+        if "success" not in (bc.expected.pipeline_status or ["success"]):
+            continue
+        plan = dict(bc.fixed_plan)
+        vkey = f"fixed::{bc.id}::{tuple(_ops(plan))}::{_grain(plan)}"
+        if vkey in seen:
+            continue
+        seen.add(vkey)
+        if not plan.get("final_output_requirements"):
+            ops = _ops(plan)
+            grain = "group" if "aggregate" in ops else "detail"
+            plan = {
+                **plan,
+                "final_output_requirements": {
+                    "grain": grain,
+                    "required_columns": list(
+                        (bc.expected.result.required_columns or [])[:6]
+                    ),
+                    "one_row_represents": "benchmark fixed plan output",
+                },
+            }
+        valid.append(
+            {
+                "dataset_id": f"valid_fixed::{bc.id}",
+                "source_kind": "synthetic_valid",
+                "case_id_analysis_only": bc.id,
+                "domain_analysis_only": bc.domain,
+                "scenario_analysis_only": bc.scenario,
+                "user_prompt": bc.prompt,
+                "plan": plan,
+                "ops": list(_ops(plan)),
+                "grain": _grain(plan),
+                "label": "VALID_SUCCESS",
+            }
+        )
+    return valid
+
+
+def harvest_live_historical_plans(
+    roots: list[Path] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Optional research/offline harvest from generated live JSON.
+
+    NOT used by build_generalization_dataset() / unit tests.
+    Silently skips missing roots (research convenience only).
+    """
     cases = {c.id: c for c in load_all_cases()}
     valid: list[dict[str, Any]] = []
     type_c: list[dict[str, Any]] = []
     seen_valid: set[str] = set()
     seen_c: set[str] = set()
 
-    for root in SOURCES:
+    for root in roots or LIVE_HARVEST_SOURCES:
         if not root.exists():
             continue
         for path in sorted(root.glob("2026*.json")):
@@ -129,7 +223,6 @@ def _harvest_historical() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                     "source_file_analysis_only": str(path),
                 }
                 if c.get("overall_ok"):
-                    # Diversity key: case + op family + grain (one exemplar each)
                     vkey = f"{cid}::{tuple(_ops(plan))}::{_grain(plan)}"
                     if vkey in seen_valid:
                         continue
@@ -139,7 +232,6 @@ def _harvest_historical() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                 else:
                     if cid != "same_schema_union_001":
                         continue
-                    # Keep multiple historical Type-C instances (stability / variance)
                     ckey = f"{cid}::{path.stem}"
                     if ckey in seen_c:
                         continue
@@ -147,51 +239,85 @@ def _harvest_historical() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                     item["label"] = "TYPE_C"
                     item["type_c_family"] = "declared_collapsed_grain_wrong_user_intent"
                     type_c.append(item)
-
-    # synthetic_valid: deterministic fixed_plans (known-good compositions)
-    for bc in cases.values():
-        if not bc.fixed_plan or bc.fixed_plan.get("status") != "planned":
-            continue
-        if "success" not in (bc.expected.pipeline_status or ["success"]):
-            continue
-        plan = dict(bc.fixed_plan)
-        vkey = f"fixed::{bc.id}::{tuple(_ops(plan))}::{_grain(plan)}"
-        if vkey in seen_valid:
-            continue
-        # Skip if we already have this case+ops from live
-        live_key = f"{bc.id}::{tuple(_ops(plan))}::{_grain(plan)}"
-        if live_key in seen_valid:
-            continue
-        seen_valid.add(vkey)
-        # Ensure final_output_requirements for grain diversity when missing
-        if not plan.get("final_output_requirements"):
-            ops = _ops(plan)
-            grain = "group" if "aggregate" in ops else "detail"
-            plan = {
-                **plan,
-                "final_output_requirements": {
-                    "grain": grain,
-                    "required_columns": list(
-                        (bc.expected.result.required_columns or [])[:6]
-                    ),
-                    "one_row_represents": "benchmark fixed plan output",
-                },
-            }
-        valid.append(
-            {
-                "dataset_id": f"valid_fixed::{bc.id}",
-                "source_kind": "synthetic_valid",
-                "case_id_analysis_only": bc.id,
-                "domain_analysis_only": bc.domain,
-                "scenario_analysis_only": bc.scenario,
-                "user_prompt": bc.prompt,
-                "plan": plan,
-                "ops": list(_ops(plan)),
-                "grain": _grain(plan),
-                "label": "VALID_SUCCESS",
-            }
-        )
     return valid, type_c
+
+
+def _harvest_historical() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Deprecated alias — unit path must not use live harvest.
+
+    Kept for offline scripts; prefer harvest_live_historical_plans() or
+    load_canonical_historical_fixture().
+    """
+    return harvest_live_historical_plans()
+
+
+def build_generalization_dataset() -> dict[str, Any]:
+    """Deterministic unit/CI dataset from tracked fixtures only.
+
+    Does NOT overlay local live benchmark_results (local == CI counts).
+    """
+    hist_valid, type_c_hist = load_canonical_historical_fixture()
+    syn_valid = _load_synthetic_valid_from_cases()
+    # Deduplicate synthetic against historical case+ops+grain keys
+    seen = {
+        f"{v['case_id_analysis_only']}::{tuple(v.get('ops') or [])}::{v.get('grain')}"
+        for v in hist_valid
+    }
+    syn_filtered: list[dict[str, Any]] = []
+    for v in syn_valid:
+        live_key = (
+            f"{v['case_id_analysis_only']}::{tuple(v.get('ops') or [])}::{v.get('grain')}"
+        )
+        fixed_key = f"fixed::{v['case_id_analysis_only']}::{tuple(v.get('ops') or [])}::{v.get('grain')}"
+        if live_key in seen or fixed_key in seen:
+            continue
+        seen.add(fixed_key)
+        syn_filtered.append(v)
+
+    valid_all = list(hist_valid) + syn_filtered
+    valid_sel = _select_diverse_valid(valid_all, target=60)
+    type_c_syn = _synthetic_type_c_from_patterns(valid_all, type_c_hist)
+    type_c = list(type_c_hist) + type_c_syn
+
+    grains = Counter(v.get("grain") for v in valid_sel)
+    ops = Counter(tuple(v.get("ops") or []) for v in valid_sel)
+    domains = Counter(v.get("domain_analysis_only") for v in valid_sel)
+    n_hist_valid = sum(1 for v in valid_sel if v.get("source_kind") == "historical_real")
+    n_syn_valid = sum(1 for v in valid_sel if v.get("source_kind") == "synthetic_valid")
+
+    return {
+        "frozen_verifier": _prompt_fingerprint(),
+        "canonical_fixture": str(CANONICAL_HISTORICAL_FIXTURE),
+        "counts": {
+            "valid_count": len(valid_sel),
+            "type_c_count": len(type_c),
+            "historical_valid": n_hist_valid,
+            "synthetic_valid": n_syn_valid,
+            "historical_type_c": len(type_c_hist),
+            "synthetic_type_c": len(type_c_syn),
+            "historical_count": n_hist_valid + len(type_c_hist),
+            "synthetic_count": n_syn_valid + len(type_c_syn),
+            "valid_pool_before_select": len(valid_all),
+        },
+        "diversity": {
+            "valid_grains": dict(grains),
+            "valid_op_families": {str(k): v for k, v in ops.most_common()},
+            "valid_domains": dict(domains),
+            "legitimate_group_or_summary_aggregate": sum(
+                1
+                for v in valid_sel
+                if v.get("grain") in {"group", "summary"}
+                and "aggregate" in (v.get("ops") or [])
+            ),
+        },
+        "items": valid_sel + type_c,
+        "note": (
+            "Analysis-only fields (*_analysis_only, label, source_kind) are never "
+            "passed to the verifier. Verifier sees user_prompt + plan only. "
+            "Dataset is built from git-tracked canonical historical fixture + "
+            "case YAML fixed_plans; live benchmark_results are not consulted."
+        ),
+    }
 
 
 def _select_diverse_valid(valid: list[dict[str, Any]], *, target: int = 60) -> list[dict[str, Any]]:
@@ -265,50 +391,6 @@ def _synthetic_type_c_from_patterns(
             }
         )
     return out
-
-
-def build_generalization_dataset() -> dict[str, Any]:
-    valid_all, type_c_hist = _harvest_historical()
-    valid_sel = _select_diverse_valid(valid_all, target=60)
-    type_c_syn = _synthetic_type_c_from_patterns(valid_all, type_c_hist)
-    type_c = type_c_hist + type_c_syn
-
-    grains = Counter(v.get("grain") for v in valid_sel)
-    ops = Counter(tuple(v.get("ops") or []) for v in valid_sel)
-    domains = Counter(v.get("domain_analysis_only") for v in valid_sel)
-    n_hist_valid = sum(1 for v in valid_sel if v.get("source_kind") == "historical_real")
-    n_syn_valid = sum(1 for v in valid_sel if v.get("source_kind") == "synthetic_valid")
-
-    return {
-        "frozen_verifier": _prompt_fingerprint(),
-        "counts": {
-            "valid_count": len(valid_sel),
-            "type_c_count": len(type_c),
-            "historical_valid": n_hist_valid,
-            "synthetic_valid": n_syn_valid,
-            "historical_type_c": len(type_c_hist),
-            "synthetic_type_c": len(type_c_syn),
-            "historical_count": n_hist_valid + len(type_c_hist),
-            "synthetic_count": n_syn_valid + len(type_c_syn),
-            "valid_pool_before_select": len(valid_all),
-        },
-        "diversity": {
-            "valid_grains": dict(grains),
-            "valid_op_families": {str(k): v for k, v in ops.most_common()},
-            "valid_domains": dict(domains),
-            "legitimate_group_or_summary_aggregate": sum(
-                1
-                for v in valid_sel
-                if v.get("grain") in {"group", "summary"}
-                and "aggregate" in (v.get("ops") or [])
-            ),
-        },
-        "items": valid_sel + type_c,
-        "note": (
-            "Analysis-only fields (*_analysis_only, label, source_kind) are never "
-            "passed to the verifier. Verifier sees user_prompt + plan only."
-        ),
-    }
 
 
 def _score_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:

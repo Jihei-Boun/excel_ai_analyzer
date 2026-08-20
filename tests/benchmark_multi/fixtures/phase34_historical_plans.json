@@ -1,0 +1,2417 @@
+{
+  "fixture_id": "phase34_historical_plans_v1",
+  "description": "Canonical Phase 34 historical plans for hermetic unit/CI tests. Extracted from live benchmark JSON under benchmark_results/multi/phase27|28|30. Verifier must receive only user_prompt + plan; analysis-only fields are never verifier inputs.",
+  "provenance": {
+    "source_roots": [
+      "benchmark_results/multi/phase27/qwen2.5_7b/full_19",
+      "benchmark_results/multi/phase27/qwen3_32b/full_19",
+      "benchmark_results/multi/phase28/live_escalation",
+      "benchmark_results/multi/phase30/live_grain_hardening"
+    ],
+    "source_files": [
+      "benchmark_results/multi/phase27/qwen2.5_7b/full_19/20260818T082040Z_qwen2.5:7b.json",
+      "benchmark_results/multi/phase27/qwen2.5_7b/full_19/20260818T082853Z_qwen2.5:7b.json",
+      "benchmark_results/multi/phase27/qwen2.5_7b/full_19/20260818T083705Z_qwen2.5:7b.json",
+      "benchmark_results/multi/phase27/qwen3_32b/full_19/20260818T114916Z_qwen3:32b.json",
+      "benchmark_results/multi/phase28/live_escalation/20260819T013547Z_qwen2.5:7b.json",
+      "benchmark_results/multi/phase28/live_escalation/20260819T020755Z_qwen2.5:7b.json",
+      "benchmark_results/multi/phase28/live_escalation/20260819T024012Z_qwen2.5:7b.json",
+      "benchmark_results/multi/phase30/live_grain_hardening/20260819T051301Z_qwen2.5:7b.json",
+      "benchmark_results/multi/phase30/live_grain_hardening/20260819T054732Z_qwen2.5:7b.json",
+      "benchmark_results/multi/phase30/live_grain_hardening/20260819T062208Z_qwen2.5:7b.json"
+    ],
+    "extracted_historical_valid": 21,
+    "extracted_historical_type_c": 9
+  },
+  "historical_valid": [
+    {
+      "dataset_id": "valid::filter_union_aggregate_001::20260818T082040Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "filter_union_aggregate_001",
+      "domain_analysis_only": "inventory",
+      "scenario_analysis_only": "filter_union_aggregate",
+      "user_prompt": "동부 재고에서 qty가 5 이상인 행만 남기고 서부와 합친 뒤 sku별 합계를 구해줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "filter_rows",
+            "inputs": [
+              "inv_east"
+            ],
+            "output": "filtered_inv_east",
+            "params": {
+              "conditions": [
+                {
+                  "column": "qty",
+                  "operator": "gte",
+                  "value": 5
+                }
+              ]
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "union_rows",
+            "inputs": [
+              "filtered_inv_east",
+              "inv_west"
+            ],
+            "output": "combined_inventory",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "step_3",
+            "op": "aggregate",
+            "inputs": [
+              "combined_inventory"
+            ],
+            "output": "aggregated_inventory",
+            "params": {
+              "group_by": [
+                "sku"
+              ],
+              "metrics": [
+                {
+                  "column": "qty",
+                  "function": "sum",
+                  "alias": "total_qty"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "aggregated_inventory",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"aggregated_inventory\", \"final_output_requirements\": {\"grain\": \"summary\", \"one_row_represents\": \"sku total quantity summary\", \"required_columns\": [\"sku\", \"total_qty\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"inv_east\"], \"op\": \"filter_rows\", \"output\": \"filtered_inv_east\", \"params\": {\"conditions\": [{\"column\": \"qty\", \"operator\": \"gte\", \"value\": 5}]}}, {\"inputs\": [\"filtered_inv_east\", \"inv_west\"], \"op\": \"union_rows\", \"output\": \"combined_inventory\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_inventory\"], \"op\": \"aggregate\", \"output\": \"aggregated_inventory\", \"params\": {\"group_by\": [\"sku\"], \"metrics\": [{\"alias\": \"total_qty\", \"column\": \"qty\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "filter_union_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "summary",
+          "required_columns": [
+            "sku",
+            "total_qty"
+          ],
+          "one_row_represents": "sku total quantity summary"
+        }
+      },
+      "ops": [
+        "filter_rows",
+        "union_rows",
+        "aggregate"
+      ],
+      "grain": "summary",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::dirty_multifile_001::20260818T082040Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "dirty_multifile_001",
+      "domain_analysis_only": "dirty",
+      "scenario_analysis_only": "dirty_multifile",
+      "user_prompt": "두 파일을 상품 기준으로 행 합쳐줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "rename_columns",
+            "inputs": [
+              "dirty_a"
+            ],
+            "output": "renamed_a",
+            "params": {
+              "mapping": {
+                "Product ID": "product_id",
+                "QTY": "qty",
+                "Amount": "amount"
+              }
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "union_rows",
+            "inputs": [
+              "renamed_a",
+              "dirty_b"
+            ],
+            "output": "combined_data",
+            "params": {
+              "column_policy": "aligned"
+            }
+          }
+        ],
+        "final_output": "combined_data",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"combined_data\", \"final_output_requirements\": {\"grain\": \"detail\", \"one_row_represents\": \"combined product row\", \"required_columns\": [\"product_id\", \"qty\", \"amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"dirty_a\"], \"op\": \"rename_columns\", \"output\": \"renamed_a\", \"params\": {\"mapping\": {\"Amount\": \"amount\", \"Product ID\": \"product_id\", \"QTY\": \"qty\"}}}, {\"inputs\": [\"renamed_a\", \"dirty_b\"], \"op\": \"union_rows\", \"output\": \"combined_data\", \"params\": {\"column_policy\": \"aligned\"}}]}",
+          "operation_family": "union_only",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": [
+            "product_id",
+            "qty",
+            "amount"
+          ],
+          "one_row_represents": "combined product row"
+        }
+      },
+      "ops": [
+        "rename_columns",
+        "union_rows"
+      ],
+      "grain": "detail",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::master_detail_join_001::20260818T082040Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "master_detail_join_001",
+      "domain_analysis_only": "orders",
+      "scenario_analysis_only": "master_detail_join",
+      "user_prompt": "고객 정보와 주문 정보를 연결해줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "join",
+            "inputs": [
+              "customers",
+              "orders"
+            ],
+            "output": "joined_customers_orders",
+            "params": {
+              "left_keys": [
+                "customer_id"
+              ],
+              "right_keys": [
+                "customer_id"
+              ],
+              "how": "inner"
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "select_columns",
+            "inputs": [
+              "joined_customers_orders"
+            ],
+            "output": "final_output",
+            "params": {
+              "columns": [
+                "customer_id",
+                "customer_name",
+                "region",
+                "order_id",
+                "product_id",
+                "order_amount"
+              ]
+            }
+          }
+        ],
+        "final_output": "final_output",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"entity\", \"one_row_represents\": \"a customer with their orders\", \"required_columns\": [\"customer_id\", \"customer_name\", \"region\", \"order_id\", \"product_id\", \"order_amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"customers\", \"orders\"], \"op\": \"join\", \"output\": \"joined_customers_orders\", \"params\": {\"how\": \"inner\", \"left_keys\": [\"customer_id\"], \"right_keys\": [\"customer_id\"]}}, {\"inputs\": [\"joined_customers_orders\"], \"op\": \"select_columns\", \"output\": \"final_output\", \"params\": {\"columns\": [\"customer_id\", \"customer_name\", \"region\", \"order_id\", \"product_id\", \"order_amount\"]}}]}",
+          "operation_family": "join_only",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "customer_id",
+            "customer_name",
+            "region",
+            "order_id",
+            "product_id",
+            "order_amount"
+          ],
+          "one_row_represents": "a customer with their orders"
+        }
+      },
+      "ops": [
+        "join",
+        "select_columns"
+      ],
+      "grain": "entity",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::join_aggregate_001::20260818T082040Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "join_aggregate_001",
+      "domain_analysis_only": "orders",
+      "scenario_analysis_only": "join_aggregate",
+      "user_prompt": "고객 정보를 연결해서 지역별 주문금액 합계를 알려줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "join",
+            "inputs": [
+              "customers",
+              "orders"
+            ],
+            "output": "joined_customers_orders",
+            "params": {
+              "left_keys": [
+                "customer_id"
+              ],
+              "right_keys": [
+                "customer_id"
+              ],
+              "how": "inner"
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "aggregate",
+            "inputs": [
+              "joined_customers_orders"
+            ],
+            "output": "aggregated_data",
+            "params": {
+              "group_by": [
+                "region"
+              ],
+              "metrics": [
+                {
+                  "column": "order_amount",
+                  "function": "sum",
+                  "alias": "total_order_amount"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "aggregated_data",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"aggregated_data\", \"final_output_requirements\": {\"grain\": \"summary\", \"one_row_represents\": \"region-wise total order amount\", \"required_columns\": [\"region\", \"total_order_amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"customers\", \"orders\"], \"op\": \"join\", \"output\": \"joined_customers_orders\", \"params\": {\"how\": \"inner\", \"left_keys\": [\"customer_id\"], \"right_keys\": [\"customer_id\"]}}, {\"inputs\": [\"joined_customers_orders\"], \"op\": \"aggregate\", \"output\": \"aggregated_data\", \"params\": {\"group_by\": [\"region\"], \"metrics\": [{\"alias\": \"total_order_amount\", \"column\": \"order_amount\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "join_then_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "summary",
+          "required_columns": [
+            "region",
+            "total_order_amount"
+          ],
+          "one_row_represents": "region-wise total order amount"
+        }
+      },
+      "ops": [
+        "join",
+        "aggregate"
+      ],
+      "grain": "summary",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::partial_overlap_join_001::20260818T082040Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "partial_overlap_join_001",
+      "domain_analysis_only": "generic",
+      "scenario_analysis_only": "partial_overlap_join",
+      "user_prompt": "두 파일을 id로 연결해줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "join",
+            "inputs": [
+              "partial_left",
+              "partial_right"
+            ],
+            "output": "joined_output",
+            "params": {
+              "left_keys": [
+                "id"
+              ],
+              "right_keys": [
+                "id"
+              ],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "joined_output",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"joined_output\", \"final_output_requirements\": {\"grain\": \"entity\", \"one_row_represents\": \"one entity with id and attributes from both files\", \"required_columns\": [\"id\", \"v\", \"w\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"partial_left\", \"partial_right\"], \"op\": \"join\", \"output\": \"joined_output\", \"params\": {\"how\": \"inner\", \"left_keys\": [\"id\"], \"right_keys\": [\"id\"]}}]}",
+          "operation_family": "join_only",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "id",
+            "v",
+            "w"
+          ],
+          "one_row_represents": "one entity with id and attributes from both files"
+        }
+      },
+      "ops": [
+        "join"
+      ],
+      "grain": "entity",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::retry_recovery_001::20260818T082040Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "retry_recovery_001",
+      "domain_analysis_only": "orders",
+      "scenario_analysis_only": "retry_recovery",
+      "user_prompt": "고객과 주문을 연결해줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "join",
+            "inputs": [
+              "customers",
+              "orders"
+            ],
+            "output": "joined_customers_orders",
+            "params": {
+              "left_keys": [
+                "customer_id"
+              ],
+              "right_keys": [
+                "customer_id"
+              ],
+              "how": "inner"
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "select_columns",
+            "inputs": [
+              "joined_customers_orders"
+            ],
+            "output": "final_output",
+            "params": {
+              "columns": [
+                "customer_id",
+                "customer_name",
+                "region",
+                "order_id",
+                "product_id",
+                "order_amount"
+              ]
+            }
+          }
+        ],
+        "final_output": "final_output",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"entity\", \"one_row_represents\": \"a customer with their orders\", \"required_columns\": [\"customer_id\", \"customer_name\", \"region\", \"order_id\", \"product_id\", \"order_amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"customers\", \"orders\"], \"op\": \"join\", \"output\": \"joined_customers_orders\", \"params\": {\"how\": \"inner\", \"left_keys\": [\"customer_id\"], \"right_keys\": [\"customer_id\"]}}, {\"inputs\": [\"joined_customers_orders\"], \"op\": \"select_columns\", \"output\": \"final_output\", \"params\": {\"columns\": [\"customer_id\", \"customer_name\", \"region\", \"order_id\", \"product_id\", \"order_amount\"]}}]}",
+          "operation_family": "join_only",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "customer_id",
+            "customer_name",
+            "region",
+            "order_id",
+            "product_id",
+            "order_amount"
+          ],
+          "one_row_represents": "a customer with their orders"
+        }
+      },
+      "ops": [
+        "join",
+        "select_columns"
+      ],
+      "grain": "entity",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::compatible_schema_union_001::20260818T082040Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "compatible_schema_union_001",
+      "domain_analysis_only": "sales",
+      "scenario_analysis_only": "compatible_schema_union",
+      "user_prompt": "두 판매 파일을 행으로 합쳐줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "union_rows",
+            "inputs": [
+              "sales_a",
+              "sales_b"
+            ],
+            "output": "combined_sales",
+            "params": {
+              "column_policy": "aligned"
+            }
+          }
+        ],
+        "final_output": "combined_sales",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"combined_sales\", \"final_output_requirements\": {\"grain\": \"detail\", \"one_row_represents\": \"a combined sales row from either file\", \"required_columns\": [\"product_id\", \"qty\", \"amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"sales_a\", \"sales_b\"], \"op\": \"union_rows\", \"output\": \"combined_sales\", \"params\": {\"column_policy\": \"aligned\"}}]}",
+          "operation_family": "union_only",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": [
+            "product_id",
+            "qty",
+            "amount"
+          ],
+          "one_row_represents": "a combined sales row from either file"
+        }
+      },
+      "ops": [
+        "union_rows"
+      ],
+      "grain": "detail",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::union_aggregate_001::20260818T082040Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "union_aggregate_001",
+      "domain_analysis_only": "inventory",
+      "scenario_analysis_only": "union_aggregate",
+      "user_prompt": "두 창고 데이터를 합쳐 상품별 총 재고를 계산해줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "union_rows",
+            "inputs": [
+              "warehouse_a",
+              "warehouse_b"
+            ],
+            "output": "combined_data",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "aggregate",
+            "inputs": [
+              "combined_data"
+            ],
+            "output": "final_output",
+            "params": {
+              "group_by": [
+                "product_id"
+              ],
+              "metrics": [
+                {
+                  "column": "stock",
+                  "function": "sum",
+                  "alias": "total_stock"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final_output",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [
+          "The user requested to combine two warehouse data files and calculate the total stock by product.",
+          "Since the schema is compatible, we can use union_rows to stack the rows from both files.",
+          "We then aggregate by 'product_id' and sum up the 'stock' column to get the total stock for each product."
+        ],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"summary\", \"one_row_represents\": \"product total stock summary\", \"required_columns\": [\"product_id\", \"total_stock\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"warehouse_a\", \"warehouse_b\"], \"op\": \"union_rows\", \"output\": \"combined_data\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_data\"], \"op\": \"aggregate\", \"output\": \"final_output\", \"params\": {\"group_by\": [\"product_id\"], \"metrics\": [{\"alias\": \"total_stock\", \"column\": \"stock\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "union_then_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "summary",
+          "required_columns": [
+            "product_id",
+            "total_stock"
+          ],
+          "one_row_represents": "product total stock summary"
+        }
+      },
+      "ops": [
+        "union_rows",
+        "aggregate"
+      ],
+      "grain": "summary",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::multifile_budget_001::20260818T082040Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "multifile_budget_001",
+      "domain_analysis_only": "budget",
+      "scenario_analysis_only": "multifile_budget",
+      "user_prompt": "두 파일을 통합해 비용코드별 실행예산과 집행액을 합산해줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "union_rows",
+            "inputs": [
+              "budget_a",
+              "budget_b"
+            ],
+            "output": "combined_budgets",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "aggregate",
+            "inputs": [
+              "combined_budgets"
+            ],
+            "output": "aggregated_budgets",
+            "params": {
+              "group_by": [
+                "비용코드"
+              ],
+              "metrics": [
+                {
+                  "column": "실행예산",
+                  "function": "sum",
+                  "alias": "합계_실행예산"
+                },
+                {
+                  "column": "집행액",
+                  "function": "sum",
+                  "alias": "합계_집행액"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "aggregated_budgets",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"aggregated_budgets\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"비용코드별 합산된 실행예산과 집행액\", \"required_columns\": [\"비용코드\", \"합계_실행예산\", \"합계_집행액\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"budget_a\", \"budget_b\"], \"op\": \"union_rows\", \"output\": \"combined_budgets\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_budgets\"], \"op\": \"aggregate\", \"output\": \"aggregated_budgets\", \"params\": {\"group_by\": [\"비용코드\"], \"metrics\": [{\"alias\": \"합계_실행예산\", \"column\": \"실행예산\", \"function\": \"sum\"}, {\"alias\": \"합계_집행액\", \"column\": \"집행액\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "union_then_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "비용코드",
+            "합계_실행예산",
+            "합계_집행액"
+          ],
+          "one_row_represents": "비용코드별 합산된 실행예산과 집행액"
+        }
+      },
+      "ops": [
+        "union_rows",
+        "aggregate"
+      ],
+      "grain": "group",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::filter_union_aggregate_001::20260818T114916Z_qwen3:32b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "filter_union_aggregate_001",
+      "domain_analysis_only": "inventory",
+      "scenario_analysis_only": "filter_union_aggregate",
+      "user_prompt": "동부 재고에서 qty가 5 이상인 행만 남기고 서부와 합친 뒤 sku별 합계를 구해줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "filter_rows",
+            "inputs": [
+              "inv_east"
+            ],
+            "output": "east_filtered",
+            "params": {
+              "conditions": [
+                {
+                  "column": "qty",
+                  "operator": "gte",
+                  "value": 5
+                }
+              ]
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "union_rows",
+            "inputs": [
+              "east_filtered",
+              "inv_west"
+            ],
+            "output": "combined_inventory",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "step_3",
+            "op": "aggregate",
+            "inputs": [
+              "combined_inventory"
+            ],
+            "output": "sku_totals",
+            "params": {
+              "group_by": [
+                "sku"
+              ],
+              "metrics": [
+                {
+                  "column": "qty",
+                  "function": "sum",
+                  "alias": "total_qty"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "sku_totals",
+        "reason": "Filtered eastern inventory (qty≥5) was stacked with western inventory using aligned schema, then aggregated by SKU to calculate total quantities",
+        "ambiguities": [],
+        "notes": [
+          "Filtered eastern inventory retains only SKU S2 (qty=8) from original data",
+          "Western inventory contributes SKUs S1 (qty=2) and S4 (qty=9)",
+          "Final aggregation produces 3 unique SKUs with their combined quantities"
+        ],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"sku_totals\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"Each unique SKU's total quantity across filtered eastern and western inventories\", \"required_columns\": [\"sku\", \"total_qty\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"inv_east\"], \"op\": \"filter_rows\", \"output\": \"east_filtered\", \"params\": {\"conditions\": [{\"column\": \"qty\", \"operator\": \"gte\", \"value\": 5}]}}, {\"inputs\": [\"east_filtered\", \"inv_west\"], \"op\": \"union_rows\", \"output\": \"combined_inventory\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_inventory\"], \"op\": \"aggregate\", \"output\": \"sku_totals\", \"params\": {\"group_by\": [\"sku\"], \"metrics\": [{\"alias\": \"total_qty\", \"column\": \"qty\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "filter_union_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "sku",
+            "total_qty"
+          ],
+          "one_row_represents": "Each unique SKU's total quantity across filtered eastern and western inventories"
+        }
+      },
+      "ops": [
+        "filter_rows",
+        "union_rows",
+        "aggregate"
+      ],
+      "grain": "group",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::three_file_chain_001::20260818T114916Z_qwen3:32b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "three_file_chain_001",
+      "domain_analysis_only": "orders",
+      "scenario_analysis_only": "three_file_chain",
+      "user_prompt": "상품 정보를 주문에 연결하고 고객별 카테고리 주문금액을 계산해줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "join_orders_products",
+            "op": "join",
+            "inputs": [
+              "orders",
+              "products"
+            ],
+            "output": "orders_products",
+            "params": {
+              "left_keys": [
+                "product_id"
+              ],
+              "right_keys": [
+                "product_id"
+              ],
+              "how": "inner"
+            }
+          },
+          {
+            "id": "join_with_customers",
+            "op": "join",
+            "inputs": [
+              "orders_products",
+              "customers"
+            ],
+            "output": "joined_data",
+            "params": {
+              "left_keys": [
+                "customer_id"
+              ],
+              "right_keys": [
+                "customer_id"
+              ],
+              "how": "inner"
+            }
+          },
+          {
+            "id": "aggregate_by_customer_category",
+            "op": "aggregate",
+            "inputs": [
+              "joined_data"
+            ],
+            "output": "final_output",
+            "params": {
+              "group_by": [
+                "customer_id",
+                "customer_name",
+                "region",
+                "category_name"
+              ],
+              "metrics": [
+                {
+                  "column": "order_amount",
+                  "function": "sum",
+                  "alias": "total_order_amount"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final_output",
+        "reason": "고객-주문-상품 관계를 join 후 카테고리별 주문금액 집계",
+        "ambiguities": [],
+        "notes": [
+          "customer_id 기반 2단계 join 후 category_name으로 그룹화",
+          "order_amount 합산 시 string 컬럼 없이 수치형 컬럼만 사용됨"
+        ],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"고객별 카테고리 주문금액 집계\", \"required_columns\": [\"customer_id\", \"customer_name\", \"region\", \"category_name\", \"total_order_amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"orders\", \"products\"], \"op\": \"join\", \"output\": \"orders_products\", \"params\": {\"how\": \"inner\", \"left_keys\": [\"product_id\"], \"right_keys\": [\"product_id\"]}}, {\"inputs\": [\"orders_products\", \"customers\"], \"op\": \"join\", \"output\": \"joined_data\", \"params\": {\"how\": \"inner\", \"left_keys\": [\"customer_id\"], \"right_keys\": [\"customer_id\"]}}, {\"inputs\": [\"joined_data\"], \"op\": \"aggregate\", \"output\": \"final_output\", \"params\": {\"group_by\": [\"customer_id\", \"customer_name\", \"region\", \"category_name\"], \"metrics\": [{\"alias\": \"total_order_amount\", \"column\": \"order_amount\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "multi_join_then_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "customer_id",
+            "customer_name",
+            "region",
+            "category_name",
+            "total_order_amount"
+          ],
+          "one_row_represents": "고객별 카테고리 주문금액 집계"
+        }
+      },
+      "ops": [
+        "join",
+        "join",
+        "aggregate"
+      ],
+      "grain": "group",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::master_detail_join_001::20260818T114916Z_qwen3:32b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "master_detail_join_001",
+      "domain_analysis_only": "orders",
+      "scenario_analysis_only": "master_detail_join",
+      "user_prompt": "고객 정보와 주문 정보를 연결해줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "join_customers_orders",
+            "op": "join",
+            "inputs": [
+              "customers",
+              "orders"
+            ],
+            "output": "customers_orders_joined",
+            "params": {
+              "left_keys": [
+                "customer_id"
+              ],
+              "right_keys": [
+                "customer_id"
+              ],
+              "how": "left"
+            }
+          }
+        ],
+        "final_output": "customers_orders_joined",
+        "reason": "Clear singleton key relationship exists between customers.customer_id and orders.customer_id with 1.0 value overlap ratio and one-to-many cardinality. No key ambiguity detected.",
+        "ambiguities": [],
+        "notes": [
+          "Join preserves all order records with customer details",
+          "Customer_id appears in both tables but is treated as a single key column in output"
+        ],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"customers_orders_joined\", \"final_output_requirements\": {\"grain\": \"detail\", \"one_row_represents\": \"An order with associated customer information\", \"required_columns\": [\"order_id\", \"customer_id\", \"product_id\", \"order_amount\", \"customer_name\", \"region\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"customers\", \"orders\"], \"op\": \"join\", \"output\": \"customers_orders_joined\", \"params\": {\"how\": \"left\", \"left_keys\": [\"customer_id\"], \"right_keys\": [\"customer_id\"]}}]}",
+          "operation_family": "join_only",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": [
+            "order_id",
+            "customer_id",
+            "product_id",
+            "order_amount",
+            "customer_name",
+            "region"
+          ],
+          "one_row_represents": "An order with associated customer information"
+        }
+      },
+      "ops": [
+        "join"
+      ],
+      "grain": "detail",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::lookup_join_001::20260818T114916Z_qwen3:32b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "lookup_join_001",
+      "domain_analysis_only": "logistics",
+      "scenario_analysis_only": "lookup_join",
+      "user_prompt": "주문 데이터에 상품 카테고리 정보를 붙여줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "join_orders_products",
+            "op": "join",
+            "inputs": [
+              "orders_lookup",
+              "products"
+            ],
+            "output": "orders_with_categories",
+            "params": {
+              "left_keys": [
+                "product_id"
+              ],
+              "right_keys": [
+                "product_id"
+              ],
+              "how": "left"
+            }
+          }
+        ],
+        "final_output": "orders_with_categories",
+        "reason": "Clear join_candidate relationship between orders_lookup.product_id and products.product_id with 100% value overlap and many-to-one cardinality. The join will attach category_name to each order record as requested.",
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"orders_with_categories\", \"final_output_requirements\": {\"grain\": \"detail\", \"one_row_represents\": \"An order record with attached product category information\", \"required_columns\": [\"order_id\", \"product_id\", \"qty\", \"amount\", \"category_name\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"orders_lookup\", \"products\"], \"op\": \"join\", \"output\": \"orders_with_categories\", \"params\": {\"how\": \"left\", \"left_keys\": [\"product_id\"], \"right_keys\": [\"product_id\"]}}]}",
+          "operation_family": "join_only",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": [
+            "order_id",
+            "product_id",
+            "qty",
+            "amount",
+            "category_name"
+          ],
+          "one_row_represents": "An order record with attached product category information"
+        }
+      },
+      "ops": [
+        "join"
+      ],
+      "grain": "detail",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::join_aggregate_001::20260818T114916Z_qwen3:32b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "join_aggregate_001",
+      "domain_analysis_only": "orders",
+      "scenario_analysis_only": "join_aggregate",
+      "user_prompt": "고객 정보를 연결해서 지역별 주문금액 합계를 알려줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "join_customers_orders",
+            "op": "join",
+            "inputs": [
+              "customers",
+              "orders"
+            ],
+            "output": "joined_customers_orders",
+            "params": {
+              "left_keys": [
+                "customer_id"
+              ],
+              "right_keys": [
+                "customer_id"
+              ],
+              "how": "inner"
+            }
+          },
+          {
+            "id": "aggregate_by_region",
+            "op": "aggregate",
+            "inputs": [
+              "joined_customers_orders"
+            ],
+            "output": "region_order_totals",
+            "params": {
+              "group_by": [
+                "region"
+              ],
+              "metrics": [
+                {
+                  "column": "order_amount",
+                  "function": "sum",
+                  "alias": "total_order_amount"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "region_order_totals",
+        "reason": "Customers and orders can be joined on customer_id (one-to-many relationship). After joining, we can aggregate order_amount by region to get the requested totals.",
+        "ambiguities": [],
+        "notes": [
+          "Used customer_id as the join key since it's the only plausible singleton key with full value overlap and one-to-many cardinality",
+          "Aggregated on region from customers table and order_amount from orders table as requested"
+        ],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"region_order_totals\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"A region with its total order amount\", \"required_columns\": [\"region\", \"total_order_amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"customers\", \"orders\"], \"op\": \"join\", \"output\": \"joined_customers_orders\", \"params\": {\"how\": \"inner\", \"left_keys\": [\"customer_id\"], \"right_keys\": [\"customer_id\"]}}, {\"inputs\": [\"joined_customers_orders\"], \"op\": \"aggregate\", \"output\": \"region_order_totals\", \"params\": {\"group_by\": [\"region\"], \"metrics\": [{\"alias\": \"total_order_amount\", \"column\": \"order_amount\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "join_then_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "region",
+            "total_order_amount"
+          ],
+          "one_row_represents": "A region with its total order amount"
+        }
+      },
+      "ops": [
+        "join",
+        "aggregate"
+      ],
+      "grain": "group",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::rename_join_001::20260818T114916Z_qwen3:32b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "rename_join_001",
+      "domain_analysis_only": "orders",
+      "scenario_analysis_only": "rename_join",
+      "user_prompt": "고객 정보와 주문 데이터를 연결해줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "join_customers_orders",
+            "op": "join",
+            "inputs": [
+              "customers_cid",
+              "orders_cust_id"
+            ],
+            "output": "customers_orders_joined",
+            "params": {
+              "left_keys": [
+                "customer_id"
+              ],
+              "right_keys": [
+                "cust_id"
+              ],
+              "how": "left"
+            }
+          }
+        ],
+        "final_output": "customers_orders_joined",
+        "reason": "High-confidence join candidate exists between customers_cid.customer_id and orders_cust_id.cust_id with full value overlap and one-to-many cardinality. The user explicitly requested to connect customer information with order data.",
+        "ambiguities": [],
+        "notes": [
+          "Left join preserves all order records while adding customer information",
+          "customer_id from customers_cid and cust_id from orders_cust_id are semantically equivalent but named differently"
+        ],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"customers_orders_joined\", \"final_output_requirements\": {\"grain\": \"detail\", \"one_row_represents\": \"One order record enriched with customer information\", \"required_columns\": [\"customer_id\", \"name\", \"cust_id\", \"amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"customers_cid\", \"orders_cust_id\"], \"op\": \"join\", \"output\": \"customers_orders_joined\", \"params\": {\"how\": \"left\", \"left_keys\": [\"customer_id\"], \"right_keys\": [\"cust_id\"]}}]}",
+          "operation_family": "join_only",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": [
+            "customer_id",
+            "name",
+            "cust_id",
+            "amount"
+          ],
+          "one_row_represents": "One order record enriched with customer information"
+        }
+      },
+      "ops": [
+        "join"
+      ],
+      "grain": "detail",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::composite_key_join_001::20260818T114916Z_qwen3:32b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "composite_key_join_001",
+      "domain_analysis_only": "sales",
+      "scenario_analysis_only": "composite_key_join",
+      "user_prompt": "매장·상품 기준으로 판매와 가격을 연결해줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "join_sales_price",
+            "op": "join",
+            "inputs": [
+              "sales_store",
+              "price_store"
+            ],
+            "output": "joined_sales_price",
+            "params": {
+              "left_keys": [
+                "store_id",
+                "product_id"
+              ],
+              "right_keys": [
+                "store_id",
+                "product_id"
+              ],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "joined_sales_price",
+        "reason": "두 파일의 (store_id + product_id) 복합키로 1:1 조인 가능",
+        "ambiguities": [],
+        "notes": [
+          "복합키로 100% 유일성 보장",
+          "units와 unit_price는 각각 sales_store와 price_store에서 가져옴"
+        ],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"joined_sales_price\", \"final_output_requirements\": {\"grain\": \"detail\", \"one_row_represents\": \"매장-상품별 판매량과 가격의 조합\", \"required_columns\": [\"store_id\", \"product_id\", \"units\", \"unit_price\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"sales_store\", \"price_store\"], \"op\": \"join\", \"output\": \"joined_sales_price\", \"params\": {\"how\": \"inner\", \"left_keys\": [\"store_id\", \"product_id\"], \"right_keys\": [\"store_id\", \"product_id\"]}}]}",
+          "operation_family": "join_only",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": [
+            "store_id",
+            "product_id",
+            "units",
+            "unit_price"
+          ],
+          "one_row_represents": "매장-상품별 판매량과 가격의 조합"
+        }
+      },
+      "ops": [
+        "join"
+      ],
+      "grain": "detail",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::partial_overlap_join_001::20260818T114916Z_qwen3:32b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "partial_overlap_join_001",
+      "domain_analysis_only": "generic",
+      "scenario_analysis_only": "partial_overlap_join",
+      "user_prompt": "두 파일을 id로 연결해줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "join_on_id",
+            "op": "join",
+            "inputs": [
+              "partial_left",
+              "partial_right"
+            ],
+            "output": "joined_result",
+            "params": {
+              "left_keys": [
+                "id"
+              ],
+              "right_keys": [
+                "id"
+              ],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "joined_result",
+        "reason": "Both files share a unique numeric 'id' column with 50% value overlap and one-to-one cardinality. The join_candidate relationship with 0.85 confidence supports connecting via inner join on 'id'.",
+        "ambiguities": [],
+        "notes": [
+          "The join will produce 2 rows (matching 2/4 right 'id' values present in left)",
+          "No column name conflicts except for 'id' which is the join key"
+        ],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"joined_result\", \"final_output_requirements\": {\"grain\": \"detail\", \"one_row_represents\": \"A matched row from both files connected by the 'id' key\", \"required_columns\": [\"id\", \"v\", \"w\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"partial_left\", \"partial_right\"], \"op\": \"join\", \"output\": \"joined_result\", \"params\": {\"how\": \"inner\", \"left_keys\": [\"id\"], \"right_keys\": [\"id\"]}}]}",
+          "operation_family": "join_only",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": [
+            "id",
+            "v",
+            "w"
+          ],
+          "one_row_represents": "A matched row from both files connected by the 'id' key"
+        }
+      },
+      "ops": [
+        "join"
+      ],
+      "grain": "detail",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::retry_recovery_001::20260818T114916Z_qwen3:32b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "retry_recovery_001",
+      "domain_analysis_only": "orders",
+      "scenario_analysis_only": "retry_recovery",
+      "user_prompt": "고객과 주문을 연결해줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "join_customers_orders",
+            "op": "join",
+            "inputs": [
+              "customers",
+              "orders"
+            ],
+            "output": "customers_orders_joined",
+            "params": {
+              "left_keys": [
+                "customer_id"
+              ],
+              "right_keys": [
+                "customer_id"
+              ],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "customers_orders_joined",
+        "reason": "고객 테이블과 주문 테이블 간 customer_id 기반 1:N 조인 가능 (value_overlap_ratio=1.0, dtype_compatible=true, key_ambiguity=near_tied:false)",
+        "ambiguities": [],
+        "notes": [
+          "customer_id는 customers 테이블에서 고유(unique)하며 orders 테이블에서 중복 발생 (0.75 uniqueness)",
+          "조인 후 3명의 고객당 평균 1.33개의 주문 레코드가 생성됨 (4 orders / 3 customers)"
+        ],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"customers_orders_joined\", \"final_output_requirements\": {\"grain\": \"detail\", \"one_row_represents\": \"고객 주문 상세 레코드 (고객 정보 + 주문 정보)\", \"required_columns\": [\"customer_id\", \"customer_name\", \"region\", \"order_id\", \"product_id\", \"order_amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"customers\", \"orders\"], \"op\": \"join\", \"output\": \"customers_orders_joined\", \"params\": {\"how\": \"inner\", \"left_keys\": [\"customer_id\"], \"right_keys\": [\"customer_id\"]}}]}",
+          "operation_family": "join_only",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": [
+            "customer_id",
+            "customer_name",
+            "region",
+            "order_id",
+            "product_id",
+            "order_amount"
+          ],
+          "one_row_represents": "고객 주문 상세 레코드 (고객 정보 + 주문 정보)"
+        }
+      },
+      "ops": [
+        "join"
+      ],
+      "grain": "detail",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::same_schema_union_001::20260818T114916Z_qwen3:32b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "same_schema_union_001",
+      "domain_analysis_only": "sales",
+      "scenario_analysis_only": "same_schema_union",
+      "user_prompt": "1월과 2월 판매 데이터를 하나로 합쳐줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "union_sales_data",
+            "op": "union_rows",
+            "inputs": [
+              "sales_jan",
+              "sales_feb"
+            ],
+            "output": "combined_sales",
+            "params": {
+              "column_policy": "aligned"
+            }
+          }
+        ],
+        "final_output": "combined_sales",
+        "reason": "Two files with identical schema (product_id, qty, amount) can be directly stacked using union_rows. The user explicitly requested to combine January and February sales data into one dataset.",
+        "ambiguities": [],
+        "notes": [
+          "Schema compatibility confirmed with 100% column name overlap and identical data types",
+          "No key ambiguity detected (near_tied=false) allowing safe union operation"
+        ],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"combined_sales\", \"final_output_requirements\": {\"grain\": \"detail\", \"one_row_represents\": \"One sales record with product_id, quantity, and amount\", \"required_columns\": [\"product_id\", \"qty\", \"amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"sales_jan\", \"sales_feb\"], \"op\": \"union_rows\", \"output\": \"combined_sales\", \"params\": {\"column_policy\": \"aligned\"}}]}",
+          "operation_family": "union_only",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": [
+            "product_id",
+            "qty",
+            "amount"
+          ],
+          "one_row_represents": "One sales record with product_id, quantity, and amount"
+        }
+      },
+      "ops": [
+        "union_rows"
+      ],
+      "grain": "detail",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::union_aggregate_001::20260818T114916Z_qwen3:32b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "union_aggregate_001",
+      "domain_analysis_only": "inventory",
+      "scenario_analysis_only": "union_aggregate",
+      "user_prompt": "두 창고 데이터를 합쳐 상품별 총 재고를 계산해줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "union_warehouses",
+            "op": "union_rows",
+            "inputs": [
+              "warehouse_a",
+              "warehouse_b"
+            ],
+            "output": "combined_warehouses",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "sum_stock",
+            "op": "aggregate",
+            "inputs": [
+              "combined_warehouses"
+            ],
+            "output": "total_stock_per_product",
+            "params": {
+              "group_by": [
+                "product_id"
+              ],
+              "metrics": [
+                {
+                  "column": "stock",
+                  "function": "sum",
+                  "alias": "total_stock"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "total_stock_per_product",
+        "reason": "Two warehouse datasets with identical schema can be stacked via union_rows, then aggregated to calculate total stock per product_id. This avoids join-induced column duplication that caused the previous failure.",
+        "ambiguities": [
+          "P002 and P003 will only appear once in the union (no cross-warehouse matching)"
+        ],
+        "notes": [
+          "Union preserves original stock column as single field for aggregation",
+          "Outer join alternative would require handling dual stock columns via sum(stock_a + stock_b) which is not expressible in allowed operations"
+        ],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"total_stock_per_product\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"A product's total stock across both warehouses\", \"required_columns\": [\"product_id\", \"total_stock\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"warehouse_a\", \"warehouse_b\"], \"op\": \"union_rows\", \"output\": \"combined_warehouses\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_warehouses\"], \"op\": \"aggregate\", \"output\": \"total_stock_per_product\", \"params\": {\"group_by\": [\"product_id\"], \"metrics\": [{\"alias\": \"total_stock\", \"column\": \"stock\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "union_then_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "product_id",
+            "total_stock"
+          ],
+          "one_row_represents": "A product's total stock across both warehouses"
+        }
+      },
+      "ops": [
+        "union_rows",
+        "aggregate"
+      ],
+      "grain": "group",
+      "label": "VALID_SUCCESS"
+    },
+    {
+      "dataset_id": "valid::rename_join_001::20260819T013547Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "rename_join_001",
+      "domain_analysis_only": "orders",
+      "scenario_analysis_only": "rename_join",
+      "user_prompt": "고객 정보와 주문 데이터를 연결해줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "join_customers_orders",
+            "op": "join",
+            "inputs": [
+              "customers_cid",
+              "orders_cust_id"
+            ],
+            "output": "joined_customers_orders",
+            "params": {
+              "left_keys": [
+                "customer_id"
+              ],
+              "right_keys": [
+                "cust_id"
+              ],
+              "how": "left"
+            }
+          },
+          {
+            "id": "select_final_columns",
+            "op": "select_columns",
+            "inputs": [
+              "joined_customers_orders"
+            ],
+            "output": "final_output",
+            "params": {
+              "columns": [
+                "customer_id",
+                "name",
+                "amount",
+                "cust_id"
+              ]
+            }
+          }
+        ],
+        "final_output": "final_output",
+        "reason": "고객 ID 기준으로 1:N 조인 가능하며, 요구사항에 필요한 필드만 최종 노출",
+        "ambiguities": [],
+        "notes": [
+          "cust_id 컬럼은 조인 키로 사용되지만 중복된 customer_id와 동일한 값을 가지므로 최종 결과에서 제거",
+          "left join을 사용하여 모든 고객 정보를 보존"
+        ],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 2,
+          "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"detail\", \"one_row_represents\": \"고객의 주문 기록\", \"required_columns\": [\"customer_id\", \"name\", \"amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"customers_cid\", \"orders_cust_id\"], \"op\": \"join\", \"output\": \"joined_customers_orders\", \"params\": {\"how\": \"left\", \"left_keys\": [\"customer_id\"], \"right_keys\": [\"cust_id\"]}}, {\"inputs\": [\"joined_customers_orders\"], \"op\": \"select_columns\", \"output\": \"final_output\", \"params\": {\"columns\": [\"customer_id\", \"name\", \"amount\", \"cust_id\"]}}]}",
+          "operation_family": "join_only",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": [
+            "customer_id",
+            "name",
+            "amount"
+          ],
+          "one_row_represents": "고객의 주문 기록"
+        }
+      },
+      "ops": [
+        "join",
+        "select_columns"
+      ],
+      "grain": "detail",
+      "label": "VALID_SUCCESS"
+    }
+  ],
+  "historical_type_c": [
+    {
+      "dataset_id": "type_c::same_schema_union_001::20260818T082040Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "same_schema_union_001",
+      "domain_analysis_only": "sales",
+      "scenario_analysis_only": "same_schema_union",
+      "user_prompt": "1월과 2월 판매 데이터를 하나로 합쳐줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "union_rows",
+            "inputs": [
+              "sales_jan",
+              "sales_feb"
+            ],
+            "output": "combined_sales",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "aggregate",
+            "inputs": [
+              "combined_sales"
+            ],
+            "output": "final_output",
+            "params": {
+              "group_by": [
+                "product_id"
+              ],
+              "metrics": [
+                {
+                  "column": "qty",
+                  "function": "sum",
+                  "alias": "total_qty"
+                },
+                {
+                  "column": "amount",
+                  "function": "sum",
+                  "alias": "total_amount"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final_output",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"Summary of sales for all products across January and February\", \"required_columns\": [\"product_id\", \"total_qty\", \"total_amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"sales_jan\", \"sales_feb\"], \"op\": \"union_rows\", \"output\": \"combined_sales\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_sales\"], \"op\": \"aggregate\", \"output\": \"final_output\", \"params\": {\"group_by\": [\"product_id\"], \"metrics\": [{\"alias\": \"total_qty\", \"column\": \"qty\", \"function\": \"sum\"}, {\"alias\": \"total_amount\", \"column\": \"amount\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "union_then_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "product_id",
+            "total_qty",
+            "total_amount"
+          ],
+          "one_row_represents": "Summary of sales for all products across January and February"
+        }
+      },
+      "ops": [
+        "union_rows",
+        "aggregate"
+      ],
+      "grain": "group",
+      "label": "TYPE_C",
+      "type_c_family": "declared_collapsed_grain_wrong_user_intent"
+    },
+    {
+      "dataset_id": "type_c::same_schema_union_001::20260818T082853Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "same_schema_union_001",
+      "domain_analysis_only": "sales",
+      "scenario_analysis_only": "same_schema_union",
+      "user_prompt": "1월과 2월 판매 데이터를 하나로 합쳐줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "union_rows",
+            "inputs": [
+              "sales_jan",
+              "sales_feb"
+            ],
+            "output": "combined_sales",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "aggregate",
+            "inputs": [
+              "combined_sales"
+            ],
+            "output": "final_output",
+            "params": {
+              "group_by": [
+                "product_id"
+              ],
+              "metrics": [
+                {
+                  "column": "qty",
+                  "function": "sum",
+                  "alias": "total_qty"
+                },
+                {
+                  "column": "amount",
+                  "function": "sum",
+                  "alias": "total_amount"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final_output",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"Summary of sales for all products across January and February\", \"required_columns\": [\"product_id\", \"total_qty\", \"total_amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"sales_jan\", \"sales_feb\"], \"op\": \"union_rows\", \"output\": \"combined_sales\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_sales\"], \"op\": \"aggregate\", \"output\": \"final_output\", \"params\": {\"group_by\": [\"product_id\"], \"metrics\": [{\"alias\": \"total_qty\", \"column\": \"qty\", \"function\": \"sum\"}, {\"alias\": \"total_amount\", \"column\": \"amount\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "union_then_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "product_id",
+            "total_qty",
+            "total_amount"
+          ],
+          "one_row_represents": "Summary of sales for all products across January and February"
+        }
+      },
+      "ops": [
+        "union_rows",
+        "aggregate"
+      ],
+      "grain": "group",
+      "label": "TYPE_C",
+      "type_c_family": "declared_collapsed_grain_wrong_user_intent"
+    },
+    {
+      "dataset_id": "type_c::same_schema_union_001::20260818T083705Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "same_schema_union_001",
+      "domain_analysis_only": "sales",
+      "scenario_analysis_only": "same_schema_union",
+      "user_prompt": "1월과 2월 판매 데이터를 하나로 합쳐줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "union_rows",
+            "inputs": [
+              "sales_jan",
+              "sales_feb"
+            ],
+            "output": "combined_sales",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "aggregate",
+            "inputs": [
+              "combined_sales"
+            ],
+            "output": "final_output",
+            "params": {
+              "group_by": [
+                "product_id"
+              ],
+              "metrics": [
+                {
+                  "column": "qty",
+                  "function": "sum",
+                  "alias": "total_qty"
+                },
+                {
+                  "column": "amount",
+                  "function": "sum",
+                  "alias": "total_amount"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final_output",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"Summary of sales for all products across January and February\", \"required_columns\": [\"product_id\", \"total_qty\", \"total_amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"sales_jan\", \"sales_feb\"], \"op\": \"union_rows\", \"output\": \"combined_sales\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_sales\"], \"op\": \"aggregate\", \"output\": \"final_output\", \"params\": {\"group_by\": [\"product_id\"], \"metrics\": [{\"alias\": \"total_qty\", \"column\": \"qty\", \"function\": \"sum\"}, {\"alias\": \"total_amount\", \"column\": \"amount\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "union_then_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "product_id",
+            "total_qty",
+            "total_amount"
+          ],
+          "one_row_represents": "Summary of sales for all products across January and February"
+        }
+      },
+      "ops": [
+        "union_rows",
+        "aggregate"
+      ],
+      "grain": "group",
+      "label": "TYPE_C",
+      "type_c_family": "declared_collapsed_grain_wrong_user_intent"
+    },
+    {
+      "dataset_id": "type_c::same_schema_union_001::20260819T013547Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "same_schema_union_001",
+      "domain_analysis_only": "sales",
+      "scenario_analysis_only": "same_schema_union",
+      "user_prompt": "1월과 2월 판매 데이터를 하나로 합쳐줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "union_rows",
+            "inputs": [
+              "sales_jan",
+              "sales_feb"
+            ],
+            "output": "combined_sales",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "aggregate",
+            "inputs": [
+              "combined_sales"
+            ],
+            "output": "final_output",
+            "params": {
+              "group_by": [
+                "product_id"
+              ],
+              "metrics": [
+                {
+                  "column": "qty",
+                  "function": "sum",
+                  "alias": "total_qty"
+                },
+                {
+                  "column": "amount",
+                  "function": "sum",
+                  "alias": "total_amount"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final_output",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"Summary of sales for all products across January and February\", \"required_columns\": [\"product_id\", \"total_qty\", \"total_amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"sales_jan\", \"sales_feb\"], \"op\": \"union_rows\", \"output\": \"combined_sales\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_sales\"], \"op\": \"aggregate\", \"output\": \"final_output\", \"params\": {\"group_by\": [\"product_id\"], \"metrics\": [{\"alias\": \"total_qty\", \"column\": \"qty\", \"function\": \"sum\"}, {\"alias\": \"total_amount\", \"column\": \"amount\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "union_then_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "product_id",
+            "total_qty",
+            "total_amount"
+          ],
+          "one_row_represents": "Summary of sales for all products across January and February"
+        }
+      },
+      "ops": [
+        "union_rows",
+        "aggregate"
+      ],
+      "grain": "group",
+      "label": "TYPE_C",
+      "type_c_family": "declared_collapsed_grain_wrong_user_intent"
+    },
+    {
+      "dataset_id": "type_c::same_schema_union_001::20260819T020755Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "same_schema_union_001",
+      "domain_analysis_only": "sales",
+      "scenario_analysis_only": "same_schema_union",
+      "user_prompt": "1월과 2월 판매 데이터를 하나로 합쳐줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "union_rows",
+            "inputs": [
+              "sales_jan",
+              "sales_feb"
+            ],
+            "output": "combined_sales",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "aggregate",
+            "inputs": [
+              "combined_sales"
+            ],
+            "output": "final_output",
+            "params": {
+              "group_by": [
+                "product_id"
+              ],
+              "metrics": [
+                {
+                  "column": "qty",
+                  "function": "sum",
+                  "alias": "total_qty"
+                },
+                {
+                  "column": "amount",
+                  "function": "sum",
+                  "alias": "total_amount"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final_output",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"Summary of sales for all products across January and February\", \"required_columns\": [\"product_id\", \"total_qty\", \"total_amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"sales_jan\", \"sales_feb\"], \"op\": \"union_rows\", \"output\": \"combined_sales\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_sales\"], \"op\": \"aggregate\", \"output\": \"final_output\", \"params\": {\"group_by\": [\"product_id\"], \"metrics\": [{\"alias\": \"total_qty\", \"column\": \"qty\", \"function\": \"sum\"}, {\"alias\": \"total_amount\", \"column\": \"amount\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "union_then_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "product_id",
+            "total_qty",
+            "total_amount"
+          ],
+          "one_row_represents": "Summary of sales for all products across January and February"
+        }
+      },
+      "ops": [
+        "union_rows",
+        "aggregate"
+      ],
+      "grain": "group",
+      "label": "TYPE_C",
+      "type_c_family": "declared_collapsed_grain_wrong_user_intent"
+    },
+    {
+      "dataset_id": "type_c::same_schema_union_001::20260819T024012Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "same_schema_union_001",
+      "domain_analysis_only": "sales",
+      "scenario_analysis_only": "same_schema_union",
+      "user_prompt": "1월과 2월 판매 데이터를 하나로 합쳐줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "union_rows",
+            "inputs": [
+              "sales_jan",
+              "sales_feb"
+            ],
+            "output": "combined_sales",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "aggregate",
+            "inputs": [
+              "combined_sales"
+            ],
+            "output": "final_output",
+            "params": {
+              "group_by": [
+                "product_id"
+              ],
+              "metrics": [
+                {
+                  "column": "qty",
+                  "function": "sum",
+                  "alias": "total_qty"
+                },
+                {
+                  "column": "amount",
+                  "function": "sum",
+                  "alias": "total_amount"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final_output",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"Summary of sales for all products across January and February\", \"required_columns\": [\"product_id\", \"total_qty\", \"total_amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"sales_jan\", \"sales_feb\"], \"op\": \"union_rows\", \"output\": \"combined_sales\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_sales\"], \"op\": \"aggregate\", \"output\": \"final_output\", \"params\": {\"group_by\": [\"product_id\"], \"metrics\": [{\"alias\": \"total_qty\", \"column\": \"qty\", \"function\": \"sum\"}, {\"alias\": \"total_amount\", \"column\": \"amount\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "union_then_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "product_id",
+            "total_qty",
+            "total_amount"
+          ],
+          "one_row_represents": "Summary of sales for all products across January and February"
+        }
+      },
+      "ops": [
+        "union_rows",
+        "aggregate"
+      ],
+      "grain": "group",
+      "label": "TYPE_C",
+      "type_c_family": "declared_collapsed_grain_wrong_user_intent"
+    },
+    {
+      "dataset_id": "type_c::same_schema_union_001::20260819T051301Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "same_schema_union_001",
+      "domain_analysis_only": "sales",
+      "scenario_analysis_only": "same_schema_union",
+      "user_prompt": "1월과 2월 판매 데이터를 하나로 합쳐줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "union_rows",
+            "inputs": [
+              "sales_jan",
+              "sales_feb"
+            ],
+            "output": "combined_sales",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "aggregate",
+            "inputs": [
+              "combined_sales"
+            ],
+            "output": "final_output",
+            "params": {
+              "group_by": [
+                "product_id"
+              ],
+              "metrics": [
+                {
+                  "column": "qty",
+                  "function": "sum",
+                  "alias": "total_qty"
+                },
+                {
+                  "column": "amount",
+                  "function": "sum",
+                  "alias": "total_amount"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final_output",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"Summary of sales for all products across January and February\", \"required_columns\": [\"product_id\", \"total_qty\", \"total_amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"sales_jan\", \"sales_feb\"], \"op\": \"union_rows\", \"output\": \"combined_sales\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_sales\"], \"op\": \"aggregate\", \"output\": \"final_output\", \"params\": {\"group_by\": [\"product_id\"], \"metrics\": [{\"alias\": \"total_qty\", \"column\": \"qty\", \"function\": \"sum\"}, {\"alias\": \"total_amount\", \"column\": \"amount\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "union_then_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "product_id",
+            "total_qty",
+            "total_amount"
+          ],
+          "one_row_represents": "Summary of sales for all products across January and February"
+        }
+      },
+      "ops": [
+        "union_rows",
+        "aggregate"
+      ],
+      "grain": "group",
+      "label": "TYPE_C",
+      "type_c_family": "declared_collapsed_grain_wrong_user_intent"
+    },
+    {
+      "dataset_id": "type_c::same_schema_union_001::20260819T054732Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "same_schema_union_001",
+      "domain_analysis_only": "sales",
+      "scenario_analysis_only": "same_schema_union",
+      "user_prompt": "1월과 2월 판매 데이터를 하나로 합쳐줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "union_rows",
+            "inputs": [
+              "sales_jan",
+              "sales_feb"
+            ],
+            "output": "combined_sales",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "aggregate",
+            "inputs": [
+              "combined_sales"
+            ],
+            "output": "final_output",
+            "params": {
+              "group_by": [
+                "product_id"
+              ],
+              "metrics": [
+                {
+                  "column": "qty",
+                  "function": "sum",
+                  "alias": "total_qty"
+                },
+                {
+                  "column": "amount",
+                  "function": "sum",
+                  "alias": "total_amount"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final_output",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"Summary of sales for all products across January and February\", \"required_columns\": [\"product_id\", \"total_qty\", \"total_amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"sales_jan\", \"sales_feb\"], \"op\": \"union_rows\", \"output\": \"combined_sales\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_sales\"], \"op\": \"aggregate\", \"output\": \"final_output\", \"params\": {\"group_by\": [\"product_id\"], \"metrics\": [{\"alias\": \"total_qty\", \"column\": \"qty\", \"function\": \"sum\"}, {\"alias\": \"total_amount\", \"column\": \"amount\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "union_then_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "product_id",
+            "total_qty",
+            "total_amount"
+          ],
+          "one_row_represents": "Summary of sales for all products across January and February"
+        }
+      },
+      "ops": [
+        "union_rows",
+        "aggregate"
+      ],
+      "grain": "group",
+      "label": "TYPE_C",
+      "type_c_family": "declared_collapsed_grain_wrong_user_intent"
+    },
+    {
+      "dataset_id": "type_c::same_schema_union_001::20260819T062208Z_qwen2.5:7b",
+      "source_kind": "historical_real",
+      "case_id_analysis_only": "same_schema_union_001",
+      "domain_analysis_only": "sales",
+      "scenario_analysis_only": "same_schema_union",
+      "user_prompt": "1월과 2월 판매 데이터를 하나로 합쳐줘",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "union_rows",
+            "inputs": [
+              "sales_jan",
+              "sales_feb"
+            ],
+            "output": "combined_sales",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "aggregate",
+            "inputs": [
+              "combined_sales"
+            ],
+            "output": "final_output",
+            "params": {
+              "group_by": [
+                "product_id"
+              ],
+              "metrics": [
+                {
+                  "column": "qty",
+                  "function": "sum",
+                  "alias": "total_qty"
+                },
+                {
+                  "column": "amount",
+                  "function": "sum",
+                  "alias": "total_amount"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final_output",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"Summary of sales for all products across January and February\", \"required_columns\": [\"product_id\", \"total_qty\", \"total_amount\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"sales_jan\", \"sales_feb\"], \"op\": \"union_rows\", \"output\": \"combined_sales\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_sales\"], \"op\": \"aggregate\", \"output\": \"final_output\", \"params\": {\"group_by\": [\"product_id\"], \"metrics\": [{\"alias\": \"total_qty\", \"column\": \"qty\", \"function\": \"sum\"}, {\"alias\": \"total_amount\", \"column\": \"amount\", \"function\": \"sum\"}]}}]}",
+          "operation_family": "union_then_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "product_id",
+            "total_qty",
+            "total_amount"
+          ],
+          "one_row_represents": "Summary of sales for all products across January and February"
+        }
+      },
+      "ops": [
+        "union_rows",
+        "aggregate"
+      ],
+      "grain": "group",
+      "label": "TYPE_C",
+      "type_c_family": "declared_collapsed_grain_wrong_user_intent"
+    }
+  ]
+}

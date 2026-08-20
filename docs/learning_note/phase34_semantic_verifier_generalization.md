@@ -111,6 +111,19 @@ Semantic Verification-triggered Escalation Experiment
 
 Offline/live experimental: final success → 7B V1 → FAIL → strong replan → same deterministic layers. Still **no** `route_multi` / Shadow.
 
+## Hermetic unit fixture (CI)
+
+Unit/CI `build_generalization_dataset()` uses only:
+
+```text
+tests/benchmark_multi/fixtures/phase34_historical_plans.json
+  historical_valid = 21
+  historical_type_c = 9
+```
+
+plus tracked case YAML `fixed_plan` synthetics. It does **not** read gitignored `benchmark_results/`.  
+Live harvest (optional research): `harvest_live_historical_plans()` / `scripts/regenerate_phase34_historical_fixture.py`.
+
 ## Artifacts
 
 ```text
