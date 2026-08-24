@@ -470,6 +470,13 @@ def _validate_final_output_requirements(
             one_row_represents=req.one_row_represents,
         )
 
+    _validate_output_roles_structure(
+        req,
+        final_meta=final_meta,
+        err=err,
+        info=info,
+    )
+
     # Structural projection: detail/entity + select drops upstream join keys
     _check_join_keys_dropped_by_select(
         plan_obj,
@@ -477,6 +484,70 @@ def _validate_final_output_requirements(
         datasets=datasets,
         err=err,
     )
+
+
+def _validate_output_roles_structure(
+    req,
+    *,
+    final_meta: _DatasetMeta | None,
+    err,
+    info,
+) -> None:
+    """Declared output_roles consistency only — never infers intent from prompt."""
+    roles = list(req.output_roles or [])
+    if not roles:
+        return
+
+    side_ids: list[str] = []
+    declared_role_cols: list[str] = []
+    for i, role in enumerate(roles):
+        declared_role_cols.extend(list(role.columns or []))
+        if role.role == "comparison_side":
+            sid = str(role.side_id or "").strip()
+            if not sid:
+                err(
+                    "output_role_side_id_missing",
+                    "Declared comparison_side role is missing side_id",
+                    role_index=i,
+                )
+            else:
+                side_ids.append(sid)
+
+    if any(r.role == "comparison_side" for r in roles):
+        distinct = {s for s in side_ids if s}
+        if len(distinct) < 2:
+            err(
+                "output_role_comparison_sides_insufficient",
+                "Declared comparison_side roles require >=2 distinct side_id values",
+                side_ids=sorted(distinct),
+            )
+
+    if final_meta is not None:
+        missing = [c for c in declared_role_cols if c not in final_meta.columns]
+        if missing:
+            err(
+                "output_role_column_missing",
+                "Declared output_roles columns are not present in the simulated "
+                "final schema",
+                missing_columns=missing,
+                available_columns=sorted(final_meta.columns.keys())[:40],
+            )
+        else:
+            info(
+                "output_role_columns_present",
+                "Declared output_roles columns are present on simulated final schema",
+                columns=list(declared_role_cols),
+            )
+
+    if req.required_columns:
+        req_set = set(req.required_columns)
+        not_in_required = [c for c in declared_role_cols if c not in req_set]
+        if not_in_required:
+            err(
+                "output_role_not_in_required_columns",
+                "Declared output_roles columns must also appear in required_columns",
+                missing_from_required_columns=not_in_required,
+            )
 
 
 def _collect_upstream_join_keys(plan_obj: IntegrationPlan, final_id: str | None) -> set[str]:

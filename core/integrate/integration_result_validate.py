@@ -344,6 +344,26 @@ def _validate_declared_final_requirements(
             final_rows=int(len(final_df)),
             final_cols=int(final_df.shape[1]),
         )
+    roles = list(req.output_roles or [])
+    if roles:
+        role_cols: list[str] = []
+        for role in roles:
+            role_cols.extend(list(role.columns or []))
+        missing_roles = [c for c in role_cols if c not in final_df.columns]
+        if missing_roles:
+            err(
+                "final_output_role_column_missing",
+                "Actual final_output is missing columns declared in "
+                "final_output_requirements.output_roles",
+                missing_columns=missing_roles,
+                available_columns=[str(c) for c in final_df.columns][:40],
+            )
+        else:
+            info(
+                "final_output_role_columns_present",
+                "Declared output_roles columns are present on actual final_output",
+                columns=list(role_cols),
+            )
 
 
 def _validate_final_frame(df: pd.DataFrame, *, err, warn, info) -> None:
