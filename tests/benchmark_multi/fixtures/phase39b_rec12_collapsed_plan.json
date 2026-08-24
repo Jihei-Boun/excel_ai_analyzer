@@ -1,0 +1,94 @@
+{
+  "fixture_id": "rec12_c2_collapsed_union_aggregate",
+  "source": "data/shadow_telemetry/shadow_20260824.jsonl:11",
+  "prompt_hash": "74d2c4f592cac5cc7d3c572c7cf50bdb",
+  "prompt_text_reconstructed": "7월과 8월의 지역별 매출을 비교해서 어느 지역이 증가했는지 알려줘.",
+  "prompt_note": "Raw prompt not stored in telemetry (privacy); text reconstructed from Phase 38 investigation notes matching this plan/requirements.",
+  "source_names": [
+    "01_sales_july.xlsx",
+    "02_sales_august.xlsx"
+  ],
+  "observed_plan": {
+    "status": "planned",
+    "steps": [
+      {
+        "id": "step_1",
+        "op": "union_rows",
+        "inputs": [
+          "01_sales_july.xlsx",
+          "02_sales_august.xlsx"
+        ],
+        "output": "combined_sales",
+        "params": {
+          "column_policy": "aligned"
+        }
+      },
+      {
+        "id": "step_2",
+        "op": "aggregate",
+        "inputs": [
+          "combined_sales"
+        ],
+        "output": "aggregated_sales",
+        "params": {
+          "group_by": [
+            "region"
+          ],
+          "metrics": [
+            {
+              "column": "sales_amount",
+              "function": "sum",
+              "alias": "total_sales"
+            }
+          ]
+        }
+      },
+      {
+        "id": "step_3",
+        "op": "select_columns",
+        "inputs": [
+          "aggregated_sales"
+        ],
+        "output": "final_output",
+        "params": {
+          "columns": [
+            "region",
+            "total_sales"
+          ]
+        }
+      }
+    ],
+    "final_output": "final_output",
+    "reason": null,
+    "ambiguities": [],
+    "notes": [],
+    "meta": {
+      "phase": 15,
+      "parse_attempts": 1,
+      "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"sales comparison by region\", \"required_columns\": [\"region\", \"total_sales\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"01_sales_july.xlsx\", \"02_sales_august.xlsx\"], \"op\": \"union_rows\", \"output\": \"combined_sales\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_sales\"], \"op\": \"aggregate\", \"output\": \"aggregated_sales\", \"params\": {\"group_by\": [\"region\"], \"metrics\": [{\"alias\": \"total_sales\", \"column\": \"sales_amount\", \"function\": \"sum\"}]}}, {\"inputs\": [\"aggregated_sales\"], \"op\": \"select_columns\", \"output\": \"final_output\", \"params\": {\"columns\": [\"region\", \"total_sales\"]}}]}",
+      "operation_family": "union_then_aggregate",
+      "allowed_ops": [
+        "aggregate",
+        "filter_rows",
+        "join",
+        "rename_columns",
+        "select_columns",
+        "union_rows"
+      ]
+    },
+    "final_output_requirements": {
+      "grain": "group",
+      "required_columns": [
+        "region",
+        "total_sales"
+      ],
+      "one_row_represents": "sales comparison by region"
+    }
+  },
+  "observed_verifier_verdict": "pass",
+  "observed_verifier_reason": "satisfied",
+  "observed_verifier_evidence": [
+    "The integration plan combines sales data for July and August, aggregates the total sales by region, and selects columns that match the user's request."
+  ],
+  "baseline_git": "1bd720497a82462a9a434c267f0975333ae46515"
+}

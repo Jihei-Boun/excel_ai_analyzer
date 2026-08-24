@@ -1,0 +1,872 @@
+{
+  "description": "Phase 39B Type C2 offline fixtures (generic; no domain routing)",
+  "cases": [
+    {
+      "id": "C2-W1",
+      "family": "c2_wrong",
+      "expected_verdict_not": "pass",
+      "prompt": "Compare value by entity across the two periods and show both sides.",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "s1",
+            "op": "union_rows",
+            "inputs": [
+              "source_a.xlsx",
+              "source_b.xlsx"
+            ],
+            "output": "u",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "s2",
+            "op": "aggregate",
+            "inputs": [
+              "u"
+            ],
+            "output": "agg",
+            "params": {
+              "group_by": [
+                "entity_id"
+              ],
+              "metrics": [
+                {
+                  "column": "value",
+                  "function": "sum",
+                  "alias": "total_value"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s3",
+            "op": "select_columns",
+            "inputs": [
+              "agg"
+            ],
+            "output": "final",
+            "params": {
+              "columns": [
+                "entity_id",
+                "total_value"
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "entity_id",
+            "total_value"
+          ],
+          "one_row_represents": "value comparison by entity"
+        },
+        "reason": null,
+        "notes": [],
+        "ambiguities": []
+      }
+    },
+    {
+      "id": "C2-W2",
+      "family": "c2_wrong",
+      "expected_verdict_not": "pass",
+      "prompt": "Show before vs after amounts for each account so I can contrast them.",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "s1",
+            "op": "union_rows",
+            "inputs": [
+              "source_a.xlsx",
+              "source_b.xlsx"
+            ],
+            "output": "u",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "s2",
+            "op": "aggregate",
+            "inputs": [
+              "u"
+            ],
+            "output": "agg",
+            "params": {
+              "group_by": [
+                "account_id"
+              ],
+              "metrics": [
+                {
+                  "column": "value",
+                  "function": "sum",
+                  "alias": "total_value"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s3",
+            "op": "select_columns",
+            "inputs": [
+              "agg"
+            ],
+            "output": "final",
+            "params": {
+              "columns": [
+                "account_id",
+                "total_value"
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "account_id",
+            "total_value"
+          ],
+          "one_row_represents": "before/after comparison by account"
+        },
+        "reason": null,
+        "notes": [],
+        "ambiguities": []
+      }
+    },
+    {
+      "id": "C2-W3",
+      "family": "c2_wrong",
+      "expected_verdict_not": "pass",
+      "prompt": "I need actual and target amounts side by side for each product.",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "s1",
+            "op": "union_rows",
+            "inputs": [
+              "source_a.xlsx",
+              "source_b.xlsx"
+            ],
+            "output": "u",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "s2",
+            "op": "aggregate",
+            "inputs": [
+              "u"
+            ],
+            "output": "agg",
+            "params": {
+              "group_by": [
+                "product_id"
+              ],
+              "metrics": [
+                {
+                  "column": "value",
+                  "function": "sum",
+                  "alias": "total_value"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s3",
+            "op": "select_columns",
+            "inputs": [
+              "agg"
+            ],
+            "output": "final",
+            "params": {
+              "columns": [
+                "product_id",
+                "total_value"
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "product_id",
+            "total_value"
+          ],
+          "one_row_represents": "actual vs target comparison"
+        },
+        "reason": null,
+        "notes": [],
+        "ambiguities": []
+      }
+    },
+    {
+      "id": "C2-W4",
+      "family": "c2_wrong",
+      "expected_verdict_not": "pass",
+      "prompt": "Which entities increased from the first file to the second file?",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "s1",
+            "op": "union_rows",
+            "inputs": [
+              "source_a.xlsx",
+              "source_b.xlsx"
+            ],
+            "output": "u",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "s2",
+            "op": "aggregate",
+            "inputs": [
+              "u"
+            ],
+            "output": "agg",
+            "params": {
+              "group_by": [
+                "entity_id"
+              ],
+              "metrics": [
+                {
+                  "column": "value",
+                  "function": "sum",
+                  "alias": "total_value"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s3",
+            "op": "select_columns",
+            "inputs": [
+              "agg"
+            ],
+            "output": "final",
+            "params": {
+              "columns": [
+                "entity_id",
+                "total_value"
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "entity_id",
+            "total_value"
+          ],
+          "one_row_represents": "entities that increased"
+        },
+        "reason": null,
+        "notes": [],
+        "ambiguities": []
+      }
+    },
+    {
+      "id": "C2-W5",
+      "family": "c2_wrong",
+      "expected_verdict_not": "pass",
+      "prompt": "Compare system A and system B metrics per unit; keep both systems visible.",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "s1",
+            "op": "union_rows",
+            "inputs": [
+              "source_a.xlsx",
+              "source_b.xlsx"
+            ],
+            "output": "u",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "s2",
+            "op": "aggregate",
+            "inputs": [
+              "u"
+            ],
+            "output": "agg",
+            "params": {
+              "group_by": [
+                "unit_id"
+              ],
+              "metrics": [
+                {
+                  "column": "value",
+                  "function": "sum",
+                  "alias": "total_value"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s3",
+            "op": "select_columns",
+            "inputs": [
+              "agg"
+            ],
+            "output": "final",
+            "params": {
+              "columns": [
+                "unit_id",
+                "total_value"
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "unit_id",
+            "total_value"
+          ],
+          "one_row_represents": "system comparison by unit"
+        },
+        "reason": null,
+        "notes": [],
+        "ambiguities": []
+      }
+    },
+    {
+      "id": "REC12",
+      "family": "c2_wrong",
+      "expected_verdict_not": "pass",
+      "prompt": "7월과 8월의 지역별 매출을 비교해서 어느 지역이 증가했는지 알려줘.",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "step_1",
+            "op": "union_rows",
+            "inputs": [
+              "01_sales_july.xlsx",
+              "02_sales_august.xlsx"
+            ],
+            "output": "combined_sales",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "step_2",
+            "op": "aggregate",
+            "inputs": [
+              "combined_sales"
+            ],
+            "output": "aggregated_sales",
+            "params": {
+              "group_by": [
+                "region"
+              ],
+              "metrics": [
+                {
+                  "column": "sales_amount",
+                  "function": "sum",
+                  "alias": "total_sales"
+                }
+              ]
+            }
+          },
+          {
+            "id": "step_3",
+            "op": "select_columns",
+            "inputs": [
+              "aggregated_sales"
+            ],
+            "output": "final_output",
+            "params": {
+              "columns": [
+                "region",
+                "total_sales"
+              ]
+            }
+          }
+        ],
+        "final_output": "final_output",
+        "reason": null,
+        "ambiguities": [],
+        "notes": [],
+        "meta": {
+          "phase": 15,
+          "parse_attempts": 1,
+          "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"sales comparison by region\", \"required_columns\": [\"region\", \"total_sales\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"01_sales_july.xlsx\", \"02_sales_august.xlsx\"], \"op\": \"union_rows\", \"output\": \"combined_sales\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_sales\"], \"op\": \"aggregate\", \"output\": \"aggregated_sales\", \"params\": {\"group_by\": [\"region\"], \"metrics\": [{\"alias\": \"total_sales\", \"column\": \"sales_amount\", \"function\": \"sum\"}]}}, {\"inputs\": [\"aggregated_sales\"], \"op\": \"select_columns\", \"output\": \"final_output\", \"params\": {\"columns\": [\"region\", \"total_sales\"]}}]}",
+          "operation_family": "union_then_aggregate",
+          "allowed_ops": [
+            "aggregate",
+            "filter_rows",
+            "join",
+            "rename_columns",
+            "select_columns",
+            "union_rows"
+          ]
+        },
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "region",
+            "total_sales"
+          ],
+          "one_row_represents": "sales comparison by region"
+        }
+      }
+    },
+    {
+      "id": "VC1",
+      "family": "valid_control",
+      "expected_verdict": "pass",
+      "prompt": "Combine both files and show total value by entity.",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "s1",
+            "op": "union_rows",
+            "inputs": [
+              "source_a.xlsx",
+              "source_b.xlsx"
+            ],
+            "output": "u",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "s2",
+            "op": "aggregate",
+            "inputs": [
+              "u"
+            ],
+            "output": "agg",
+            "params": {
+              "group_by": [
+                "entity_id"
+              ],
+              "metrics": [
+                {
+                  "column": "value",
+                  "function": "sum",
+                  "alias": "total_value"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s3",
+            "op": "select_columns",
+            "inputs": [
+              "agg"
+            ],
+            "output": "final",
+            "params": {
+              "columns": [
+                "entity_id",
+                "total_value"
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "entity_id",
+            "total_value"
+          ],
+          "one_row_represents": "entity total across combined inputs"
+        },
+        "reason": null,
+        "notes": [],
+        "ambiguities": []
+      }
+    },
+    {
+      "id": "VC2",
+      "family": "valid_control",
+      "expected_verdict": "pass",
+      "prompt": "What is the total value across both files?",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "s1",
+            "op": "union_rows",
+            "inputs": [
+              "source_a.xlsx",
+              "source_b.xlsx"
+            ],
+            "output": "u",
+            "params": {
+              "column_policy": "aligned"
+            }
+          },
+          {
+            "id": "s2",
+            "op": "aggregate",
+            "inputs": [
+              "u"
+            ],
+            "output": "final",
+            "params": {
+              "group_by": [],
+              "metrics": [
+                {
+                  "column": "value",
+                  "function": "sum",
+                  "alias": "total_value"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "summary",
+          "required_columns": [
+            "total_value"
+          ],
+          "one_row_represents": "overall total across both files"
+        }
+      }
+    },
+    {
+      "id": "VC3",
+      "family": "valid_control",
+      "expected_verdict": "pass",
+      "prompt": "Combine the two tables into one table.",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "s1",
+            "op": "union_rows",
+            "inputs": [
+              "source_a.xlsx",
+              "source_b.xlsx"
+            ],
+            "output": "final",
+            "params": {
+              "column_policy": "aligned"
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": [
+            "entity_id",
+            "value"
+          ],
+          "one_row_represents": "one stacked row from either file"
+        }
+      }
+    },
+    {
+      "id": "VC4",
+      "family": "valid_control",
+      "expected_verdict": "pass",
+      "prompt": "From the single sales file, total value by entity.",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "s1",
+            "op": "aggregate",
+            "inputs": [
+              "source_a.xlsx"
+            ],
+            "output": "final",
+            "params": {
+              "group_by": [
+                "entity_id"
+              ],
+              "metrics": [
+                {
+                  "column": "value",
+                  "function": "sum",
+                  "alias": "total_value"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "entity_id",
+            "total_value"
+          ],
+          "one_row_represents": "entity total from one source"
+        }
+      }
+    },
+    {
+      "id": "VC5",
+      "family": "valid_control",
+      "expected_verdict": "pass",
+      "prompt": "Compare value by entity across the two periods and show both sides.",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "s1",
+            "op": "aggregate",
+            "inputs": [
+              "source_a.xlsx"
+            ],
+            "output": "a_agg",
+            "params": {
+              "group_by": [
+                "entity_id"
+              ],
+              "metrics": [
+                {
+                  "column": "value",
+                  "function": "sum",
+                  "alias": "side_a_value"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s2",
+            "op": "aggregate",
+            "inputs": [
+              "source_b.xlsx"
+            ],
+            "output": "b_agg",
+            "params": {
+              "group_by": [
+                "entity_id"
+              ],
+              "metrics": [
+                {
+                  "column": "value",
+                  "function": "sum",
+                  "alias": "side_b_value"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s3",
+            "op": "join",
+            "inputs": [
+              "a_agg",
+              "b_agg"
+            ],
+            "output": "joined",
+            "params": {
+              "left_keys": [
+                "entity_id"
+              ],
+              "right_keys": [
+                "entity_id"
+              ],
+              "how": "outer"
+            }
+          },
+          {
+            "id": "s4",
+            "op": "select_columns",
+            "inputs": [
+              "joined"
+            ],
+            "output": "final",
+            "params": {
+              "columns": [
+                "entity_id",
+                "side_a_value",
+                "side_b_value"
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "entity_id",
+            "side_a_value",
+            "side_b_value"
+          ],
+          "one_row_represents": "one entity with both contrast sides",
+          "output_roles": [
+            {
+              "role": "entity_key",
+              "columns": [
+                "entity_id"
+              ]
+            },
+            {
+              "role": "comparison_side",
+              "side_id": "A",
+              "columns": [
+                "side_a_value"
+              ]
+            },
+            {
+              "role": "comparison_side",
+              "side_id": "B",
+              "columns": [
+                "side_b_value"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "VC6",
+      "family": "valid_control",
+      "expected_verdict": "pass",
+      "prompt": "Which entities increased from the first file to the second file?",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "s1",
+            "op": "aggregate",
+            "inputs": [
+              "source_a.xlsx"
+            ],
+            "output": "a_agg",
+            "params": {
+              "group_by": [
+                "entity_id"
+              ],
+              "metrics": [
+                {
+                  "column": "value",
+                  "function": "sum",
+                  "alias": "side_a_value"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s2",
+            "op": "aggregate",
+            "inputs": [
+              "source_b.xlsx"
+            ],
+            "output": "b_agg",
+            "params": {
+              "group_by": [
+                "entity_id"
+              ],
+              "metrics": [
+                {
+                  "column": "value",
+                  "function": "sum",
+                  "alias": "side_b_value"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s3",
+            "op": "join",
+            "inputs": [
+              "a_agg",
+              "b_agg"
+            ],
+            "output": "joined",
+            "params": {
+              "left_keys": [
+                "entity_id"
+              ],
+              "right_keys": [
+                "entity_id"
+              ],
+              "how": "outer"
+            }
+          },
+          {
+            "id": "s4",
+            "op": "select_columns",
+            "inputs": [
+              "joined"
+            ],
+            "output": "final",
+            "params": {
+              "columns": [
+                "entity_id",
+                "side_a_value",
+                "side_b_value"
+              ]
+            }
+          },
+          {
+            "id": "s5",
+            "op": "filter_rows",
+            "inputs": [
+              "final"
+            ],
+            "output": "increased",
+            "params": {
+              "conditions": [
+                {
+                  "left_column": "side_b_value",
+                  "operator": "gt",
+                  "right_column": "side_a_value"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "increased",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": [
+            "entity_id",
+            "side_a_value",
+            "side_b_value"
+          ],
+          "one_row_represents": "one entity with both contrast sides",
+          "output_roles": [
+            {
+              "role": "entity_key",
+              "columns": [
+                "entity_id"
+              ]
+            },
+            {
+              "role": "comparison_side",
+              "side_id": "A",
+              "columns": [
+                "side_a_value"
+              ]
+            },
+            {
+              "role": "comparison_side",
+              "side_id": "B",
+              "columns": [
+                "side_b_value"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
