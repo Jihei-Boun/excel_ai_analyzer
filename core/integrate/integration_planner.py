@@ -107,6 +107,22 @@ final_output_requirements contract:
   user asks for named entities) PLUS metric aliases.
 - Use only observed/intermediate column names — never invent columns.
 
+Observable output_roles (Phase 39B — optional, additive):
+When answering the user requires preserving TWO OR MORE materially distinct
+sides until the final output (contrast / difference / which-side-changed),
+declare those sides in final_output_requirements.output_roles using ONLY:
+  - entity_key: columns that identify one compared unit
+  - comparison_side: one metric (or field set) for one side; set opaque side_id
+    (e.g. "A","B") — do NOT encode domain labels into role names
+output_roles must describe columns that the plan ACTUALLY materializes in the
+final output — never claim comparison_side roles for a single collapsed total.
+If the user asks only to combine/stack and compute an overall or by-entity
+TOTAL across sources, do NOT invent comparison_side roles; collapsing via
+union_rows then aggregate may be correct.
+If two sides are required to answer, do not collapse them into one metric
+before the requested relationship can be observed (prefer per-side aggregate
++ rename/alias + join; optional filter_rows with left_column/right_column).
+
 Backward dependency reasoning (Planner judgment — not Python rules):
 - For each required final field: where does it originate, which step creates/preserves it,
   and does it still exist on final_output?
@@ -257,7 +273,12 @@ JSON shape:
   "final_output_requirements": {
     "grain": "detail|entity|group|summary",
     "one_row_represents": "<short phrase>",
-    "required_columns": ["..."]
+    "required_columns": ["..."],
+    "output_roles": [
+      {"role": "entity_key", "columns": ["..."]},
+      {"role": "comparison_side", "side_id": "A", "columns": ["..."]},
+      {"role": "comparison_side", "side_id": "B", "columns": ["..."]}
+    ]
   },
   "reason": "<string or null>",
   "ambiguities": ["..."],
