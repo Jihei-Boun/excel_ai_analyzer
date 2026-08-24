@@ -68,6 +68,32 @@ class IntegrationStep:
         }
 
 
+# Phase 39B: minimal observable role vocabulary (opaque side_id; no domain enums).
+OUTPUT_ROLE_NAMES = frozenset({"entity_key", "comparison_side"})
+
+
+@dataclass
+class OutputRole:
+    """Planner-declared observable role binding (Phase 39B).
+
+    Python checks structure only (role name, columns present, distinct side_ids).
+    Does not interpret side_id meanings (A/B are opaque).
+    """
+
+    role: str
+    columns: list[str] = field(default_factory=list)
+    side_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "role": self.role,
+            "columns": list(self.columns),
+        }
+        if self.side_id is not None:
+            out["side_id"] = self.side_id
+        return out
+
+
 @dataclass
 class FinalOutputRequirements:
     """Planner-declared final intent (optional, Phase 24–26).
@@ -80,11 +106,16 @@ class FinalOutputRequirements:
     semantically — it is stored for observability / retry context only.
     identity_columns intentionally not added (probe: failures are wrong grain
     declaration / projection, not identity-vs-required ambiguity).
+
+    Phase 39B: optional ``output_roles`` binds declared columns to minimal
+    observable roles (entity_key / comparison_side). Optional and backward
+    compatible; absence must not fail parsing.
     """
 
     grain: str | None = None  # detail | entity | group | summary
     required_columns: list[str] = field(default_factory=list)
     one_row_represents: str | None = None
+    output_roles: list[OutputRole] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
@@ -94,11 +125,18 @@ class FinalOutputRequirements:
             out["required_columns"] = list(self.required_columns)
         if self.one_row_represents:
             out["one_row_represents"] = self.one_row_represents
+        if self.output_roles:
+            out["output_roles"] = [r.to_dict() for r in self.output_roles]
         return out
 
     @property
     def is_empty(self) -> bool:
-        return not self.grain and not self.required_columns and not self.one_row_represents
+        return (
+            not self.grain
+            and not self.required_columns
+            and not self.one_row_represents
+            and not self.output_roles
+        )
 
 
 FINAL_GRAIN_VALUES = frozenset({"detail", "entity", "group", "summary"})
@@ -605,10 +643,67 @@ def _parse_final_output_requirements(data: dict[str, Any]) -> FinalOutputRequire
     one = str(one_raw).strip() if one_raw is not None else None
     if one == "":
         one = None
+    roles = _parse_output_roles(raw.get("output_roles"))
     req = FinalOutputRequirements(
-        grain=grain, required_columns=cols, one_row_represents=one
+        grain=grain,
+        required_columns=cols,
+        one_row_represents=one,
+        output_roles=roles,
     )
     return None if req.is_empty else req
+
+
+def _parse_output_roles(raw: Any) -> list[OutputRole]:
+    """Structural parse only — no semantic interpretation of side_id."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise IntegrationPlanParseError(
+            "final_output_requirements.output_roles must be a list when present"
+        )
+    roles: list[OutputRole] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise IntegrationPlanParseError(
+                f"final_output_requirements.output_roles[{i}] must be an object"
+            )
+        role = str(item.get("role") or "").strip()
+        if not role:
+            raise IntegrationPlanParseError(
+                f"final_output_requirements.output_roles[{i}].role is required"
+            )
+        if role not in OUTPUT_ROLE_NAMES:
+            raise IntegrationPlanParseError(
+                f"final_output_requirements.output_roles[{i}].role {role!r} "
+                f"unsupported; allowed={sorted(OUTPUT_ROLE_NAMES)}"
+            )
+        cols_raw = item.get("columns")
+        if not isinstance(cols_raw, list) or not cols_raw:
+            raise IntegrationPlanParseError(
+                f"final_output_requirements.output_roles[{i}].columns "
+                "must be a non-empty list"
+            )
+        columns = [str(c).strip() for c in cols_raw if str(c).strip()]
+        if not columns:
+            raise IntegrationPlanParseError(
+                f"final_output_requirements.output_roles[{i}].columns empty"
+            )
+        side_raw = item.get("side_id")
+        side_id = str(side_raw).strip() if side_raw is not None else None
+        if side_id == "":
+            side_id = None
+        if role == "comparison_side" and not side_id:
+            raise IntegrationPlanParseError(
+                f"final_output_requirements.output_roles[{i}] "
+                "comparison_side requires side_id"
+            )
+        if role == "entity_key" and side_id is not None:
+            raise IntegrationPlanParseError(
+                f"final_output_requirements.output_roles[{i}] "
+                "entity_key must not set side_id"
+            )
+        roles.append(OutputRole(role=role, columns=columns, side_id=side_id))
+    return roles
 
 
 def _str_list(value: Any) -> list[str]:
