@@ -249,6 +249,7 @@ def _execute_job(
             legacy_success=legacy_ok,
             shadow_success=shadow_ok,
             structural=structural if legacy_ok and shadow_ok else None,
+            legacy_status=legacy_observation.get("legacy_status"),
         ),
         "structural": structural,
         "note": "Objective metadata only — not semantic correctness",

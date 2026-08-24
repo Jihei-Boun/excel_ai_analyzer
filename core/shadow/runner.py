@@ -28,6 +28,72 @@ def _safe_plan_dict(plan: Any) -> dict[str, Any] | None:
     return None
 
 
+def map_integration_result_telemetry(result: Any) -> dict[str, Any]:
+    """Map IntegrationPipelineResult → Shadow telemetry fields.
+
+    Uses Integration contracts only (no legacy ValidationReport.ok):
+      plan_validation     → .valid
+      execution           → .success
+      result_validation   → .valid
+    """
+    meta = dict(getattr(result, "metadata", None) or {})
+    plan_val = getattr(result, "plan_validation", None)
+    execution = getattr(result, "execution", None)
+    result_val = getattr(result, "result_validation", None)
+
+    if plan_val is None:
+        plan_validation_status = "ok"
+    else:
+        plan_validation_status = "ok" if bool(plan_val.valid) else "failed"
+
+    plan_validation_codes: list[str] | None = None
+    if plan_val is not None:
+        plan_validation_codes = [
+            getattr(e, "code", str(e)) for e in (plan_val.errors or [])
+        ]
+
+    executor_status = None if execution is None else bool(execution.success)
+
+    if result_val is None:
+        result_validation_status = None
+    else:
+        result_validation_status = bool(result_val.valid)
+
+    ver = meta.get("semantic_verifier") or {}
+    out: dict[str, Any] = {
+        "shadow_status": getattr(result, "status", None),
+        "planner_status": getattr(result, "status", None),
+        "plan_validation_status": plan_validation_status,
+        "plan_validation_codes": plan_validation_codes,
+        "executor_status": executor_status,
+        "result_validation_status": result_validation_status,
+        "cannot_plan": getattr(result, "status", None) == "cannot_plan",
+        "retry_exhausted": bool(meta.get("fast_path_status") == "retry_exhausted"),
+        "fast_attempt_count": meta.get("fast_attempt_count"),
+        "fast_retry_count": meta.get("fast_retry_count"),
+        "semantic_verifier_invoked": bool(meta.get("semantic_verifier_invoked")),
+        "semantic_verifier_verdict": ver.get("verdict"),
+        "semantic_verifier_reason": ver.get("reason_code"),
+        "semantic_verifier_evidence": ver.get("evidence"),
+        "failure_32b_invoked": bool(meta.get("failure_escalation_32b")),
+        "semantic_32b_invoked": bool(meta.get("semantic_escalation_32b")),
+        "final_path": meta.get("final_path"),
+        "escalation_source": meta.get("escalation_source"),
+        "semantic_verifier_elapsed_s": meta.get("semantic_verifier_elapsed_s"),
+        "semantic_strong_elapsed_s": meta.get("semantic_strong_elapsed_s"),
+        "model_calls": _model_calls_from_meta(meta),
+        "final_plan": _safe_plan_dict(getattr(result, "plan", None)),
+        "result_fingerprint": dataframe_fingerprint(
+            getattr(result, "final_output", None)
+        ),
+        "shadow_success": getattr(result, "status", None) == "success",
+    }
+    out["total_32b_calls"] = int(out["failure_32b_invoked"]) + int(
+        out["semantic_32b_invoked"]
+    )
+    return out
+
+
 def run_shadow_pipeline(
     snapshot: ShadowRequestSnapshot,
     *,
@@ -86,50 +152,7 @@ def run_shadow_pipeline(
         )
         out["latency_by_stage_s"]["pipeline"] = round(time.time() - t_pipe, 3)
 
-        meta = dict(result.metadata or {})
-        out["shadow_status"] = result.status
-        out["planner_status"] = result.status
-        out["plan_validation_status"] = (
-            "ok"
-            if result.plan_validation is None or result.plan_validation.ok
-            else "failed"
-        )
-        if result.plan_validation is not None and hasattr(
-            result.plan_validation, "errors"
-        ):
-            out["plan_validation_codes"] = [
-                getattr(e, "code", str(e)) for e in (result.plan_validation.errors or [])
-            ]
-        out["executor_status"] = (
-            None if result.execution is None else getattr(result.execution, "ok", None)
-        )
-        out["result_validation_status"] = (
-            None
-            if result.result_validation is None
-            else getattr(result.result_validation, "ok", None)
-        )
-        out["cannot_plan"] = result.status == "cannot_plan"
-        out["retry_exhausted"] = bool(meta.get("fast_path_status") == "retry_exhausted")
-        out["fast_attempt_count"] = meta.get("fast_attempt_count")
-        out["fast_retry_count"] = meta.get("fast_retry_count")
-        out["semantic_verifier_invoked"] = bool(meta.get("semantic_verifier_invoked"))
-        ver = meta.get("semantic_verifier") or {}
-        out["semantic_verifier_verdict"] = ver.get("verdict")
-        out["semantic_verifier_reason"] = ver.get("reason_code")
-        out["semantic_verifier_evidence"] = ver.get("evidence")
-        out["failure_32b_invoked"] = bool(meta.get("failure_escalation_32b"))
-        out["semantic_32b_invoked"] = bool(meta.get("semantic_escalation_32b"))
-        out["total_32b_calls"] = int(out["failure_32b_invoked"]) + int(
-            out["semantic_32b_invoked"]
-        )
-        out["final_path"] = meta.get("final_path")
-        out["escalation_source"] = meta.get("escalation_source")
-        out["semantic_verifier_elapsed_s"] = meta.get("semantic_verifier_elapsed_s")
-        out["semantic_strong_elapsed_s"] = meta.get("semantic_strong_elapsed_s")
-        out["model_calls"] = _model_calls_from_meta(meta)
-        out["final_plan"] = _safe_plan_dict(result.plan)
-        out["result_fingerprint"] = dataframe_fingerprint(result.final_output)
-        out["shadow_success"] = result.status == "success"
+        out.update(map_integration_result_telemetry(result))
         out["shadow_completed"] = True
     except Exception as exc:  # noqa: BLE001
         out["shadow_status"] = "shadow_pipeline_exception"

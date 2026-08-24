@@ -65,7 +65,14 @@ def outcome_category(
     legacy_success: bool,
     shadow_success: bool,
     structural: str | None = None,
+    legacy_status: str | None = None,
 ) -> str:
+    # Additive telemetry categories for exception-path observation (not correctness).
+    if legacy_status == "exception":
+        if shadow_success:
+            return "legacy_exception_shadow_success"
+        # cannot_plan / failure both map here at comparison layer; runner status is separate
+        return "legacy_exception_shadow_failure"
     if legacy_success and shadow_success:
         base = "legacy_success_shadow_success"
         if structural:
