@@ -1,0 +1,116 @@
+{
+  "id": "LIVE-C2-finance-FP",
+  "family": "live_false_pass",
+  "expected_verdict_not": "pass",
+  "manual_label": "aspirational_dual_metrics — aggregate refs actuals.xlsx.amount / budget.xlsx.amount are not join-materialized column names",
+  "prompt": "Show actual spend and budgeted spend side by side for each cost_center.",
+  "source_schemas": {
+    "actuals.xlsx": [
+      "cost_center",
+      "amount"
+    ],
+    "budget.xlsx": [
+      "cost_center",
+      "amount"
+    ]
+  },
+  "plan": {
+    "status": "planned",
+    "steps": [
+      {
+        "id": "step_1",
+        "op": "join",
+        "inputs": [
+          "actuals.xlsx",
+          "budget.xlsx"
+        ],
+        "output": "joined_data",
+        "params": {
+          "left_keys": [
+            "cost_center"
+          ],
+          "right_keys": [
+            "cost_center"
+          ],
+          "how": "inner"
+        }
+      },
+      {
+        "id": "step_2",
+        "op": "aggregate",
+        "inputs": [
+          "joined_data"
+        ],
+        "output": "aggregated_data",
+        "params": {
+          "group_by": [
+            "cost_center"
+          ],
+          "metrics": [
+            {
+              "column": "actuals.xlsx.amount",
+              "function": "sum",
+              "alias": "actual_spend"
+            },
+            {
+              "column": "budget.xlsx.amount",
+              "function": "sum",
+              "alias": "budgeted_spend"
+            }
+          ]
+        }
+      },
+      {
+        "id": "step_3",
+        "op": "select_columns",
+        "inputs": [
+          "aggregated_data"
+        ],
+        "output": "final_output",
+        "params": {
+          "columns": [
+            "cost_center",
+            "actual_spend",
+            "budgeted_spend"
+          ]
+        }
+      }
+    ],
+    "final_output": "final_output",
+    "reason": null,
+    "ambiguities": [],
+    "notes": [],
+    "meta": {
+      "phase": 15,
+      "parse_attempts": 1,
+      "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"entity\", \"one_row_represents\": \"a cost center with its actual and budgeted spend side by side\", \"required_columns\": [\"cost_center\", \"actual_spend\", \"budgeted_spend\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"actuals.xlsx\", \"budget.xlsx\"], \"op\": \"join\", \"output\": \"joined_data\", \"params\": {\"how\": \"inner\", \"left_keys\": [\"cost_center\"], \"right_keys\": [\"cost_center\"]}}, {\"inputs\": [\"joined_data\"], \"op\": \"aggregate\", \"output\": \"aggregated_data\", \"params\": {\"group_by\": [\"cost_center\"], \"metrics\": [{\"alias\": \"actual_spend\", \"column\": \"actuals.xlsx.amount\", \"function\": \"sum\"}, {\"alias\": \"budgeted_spend\", \"column\": \"budget.xlsx.amount\", \"function\": \"sum\"}]}}, {\"inputs\": [\"aggregated_data\"], \"op\": \"select_columns\", \"output\": \"final_output\", \"params\": {\"columns\": [\"cost_center\", \"actual_spend\", \"budgeted_spend\"]}}]}",
+      "operation_family": "join_then_aggregate",
+      "allowed_ops": [
+        "aggregate",
+        "filter_rows",
+        "join",
+        "rename_columns",
+        "select_columns",
+        "union_rows"
+      ]
+    },
+    "final_output_requirements": {
+      "grain": "entity",
+      "required_columns": [
+        "cost_center",
+        "actual_spend",
+        "budgeted_spend"
+      ],
+      "one_row_represents": "a cost center with its actual and budgeted spend side by side"
+    }
+  },
+  "baseline_verifier_C": {
+    "verdict": "pass",
+    "reason_code": "satisfied",
+    "evidence": [
+      "The plan joins the 'actuals.xlsx' and 'budget.xlsx' files on cost_center, aggregates them to sum up actual and budgeted spend for each cost center, and selects the required columns. This directly satisfies the user's request."
+    ],
+    "elapsed_s": 3.211,
+    "strip_roles": false
+  }
+}

@@ -1,0 +1,321 @@
+{
+  "description": "Phase 39F valid non-comparison controls. Expected PASS. FP target 0.",
+  "cases": [
+    {
+      "id": "C1-union-total",
+      "family": "valid_non_comparison",
+      "expected_verdict": "pass",
+      "prompt": "Combine both ledger files and calculate the overall amount total.",
+      "source_schemas": {
+        "ledger_a.xlsx": [
+          "amount"
+        ],
+        "ledger_b.xlsx": [
+          "amount"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "u",
+            "op": "union_rows",
+            "inputs": [
+              "ledger_a.xlsx",
+              "ledger_b.xlsx"
+            ],
+            "output": "u"
+          },
+          {
+            "id": "agg",
+            "op": "aggregate",
+            "inputs": [
+              "u"
+            ],
+            "output": "final",
+            "params": {
+              "group_by": [],
+              "metrics": [
+                {
+                  "column": "amount",
+                  "function": "sum",
+                  "alias": "amount_total"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "scalar",
+          "required_columns": [
+            "amount_total"
+          ]
+        }
+      }
+    },
+    {
+      "id": "C2-overall-total",
+      "family": "valid_non_comparison",
+      "expected_verdict": "pass",
+      "prompt": "What is the overall qty total across both shipment files?",
+      "source_schemas": {
+        "ship_east.xlsx": [
+          "qty"
+        ],
+        "ship_west.xlsx": [
+          "qty"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "u",
+            "op": "union_rows",
+            "inputs": [
+              "ship_east.xlsx",
+              "ship_west.xlsx"
+            ],
+            "output": "u"
+          },
+          {
+            "id": "agg",
+            "op": "aggregate",
+            "inputs": [
+              "u"
+            ],
+            "output": "final",
+            "params": {
+              "group_by": [],
+              "metrics": [
+                {
+                  "column": "qty",
+                  "function": "sum",
+                  "alias": "overall_qty"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "scalar",
+          "required_columns": [
+            "overall_qty"
+          ]
+        }
+      }
+    },
+    {
+      "id": "C3-append-detail",
+      "family": "valid_non_comparison",
+      "expected_verdict": "pass",
+      "prompt": "Append the two same-schema event logs into one detail table.",
+      "source_schemas": {
+        "events_a.xlsx": [
+          "event_id",
+          "ts"
+        ],
+        "events_b.xlsx": [
+          "event_id",
+          "ts"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "u",
+            "op": "union_rows",
+            "inputs": [
+              "events_a.xlsx",
+              "events_b.xlsx"
+            ],
+            "output": "final"
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": [
+            "event_id",
+            "ts"
+          ]
+        }
+      }
+    },
+    {
+      "id": "C4-single-source-groupby",
+      "family": "valid_non_comparison",
+      "expected_verdict": "pass",
+      "prompt": "Total sales by region from the sales file.",
+      "source_schemas": {
+        "sales.xlsx": [
+          "region",
+          "sales"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "agg",
+            "op": "aggregate",
+            "inputs": [
+              "sales.xlsx"
+            ],
+            "output": "final",
+            "params": {
+              "group_by": [
+                "region"
+              ],
+              "metrics": [
+                {
+                  "column": "sales",
+                  "function": "sum",
+                  "alias": "sales_sum"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "region",
+            "sales_sum"
+          ]
+        }
+      }
+    },
+    {
+      "id": "C5-join-enrichment",
+      "family": "valid_non_comparison",
+      "expected_verdict": "pass",
+      "prompt": "Join orders to customers on customer_id and list order_id, customer_name, amount.",
+      "source_schemas": {
+        "orders.xlsx": [
+          "order_id",
+          "customer_id",
+          "amount"
+        ],
+        "customers.xlsx": [
+          "customer_id",
+          "customer_name"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": [
+              "orders.xlsx",
+              "customers.xlsx"
+            ],
+            "output": "joined",
+            "params": {
+              "left_keys": [
+                "customer_id"
+              ],
+              "right_keys": [
+                "customer_id"
+              ],
+              "how": "inner"
+            }
+          },
+          {
+            "id": "sel",
+            "op": "select_columns",
+            "inputs": [
+              "joined"
+            ],
+            "output": "final",
+            "params": {
+              "columns": [
+                "order_id",
+                "customer_id",
+                "customer_name",
+                "amount"
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": [
+            "order_id",
+            "customer_name",
+            "amount"
+          ]
+        }
+      }
+    },
+    {
+      "id": "C6-filter-after-agg",
+      "family": "valid_non_comparison",
+      "expected_verdict": "pass",
+      "prompt": "Sum amount by warehouse_id then keep warehouses with total above 100.",
+      "source_schemas": {
+        "inv.xlsx": [
+          "warehouse_id",
+          "amount"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "agg",
+            "op": "aggregate",
+            "inputs": [
+              "inv.xlsx"
+            ],
+            "output": "agg",
+            "params": {
+              "group_by": [
+                "warehouse_id"
+              ],
+              "metrics": [
+                {
+                  "column": "amount",
+                  "function": "sum",
+                  "alias": "amount_sum"
+                }
+              ]
+            }
+          },
+          {
+            "id": "f",
+            "op": "filter_rows",
+            "inputs": [
+              "agg"
+            ],
+            "output": "final",
+            "params": {
+              "conditions": [
+                {
+                  "column": "amount_sum",
+                  "op": "gt",
+                  "value": 100
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "warehouse_id",
+            "amount_sum"
+          ]
+        }
+      }
+    }
+  ]
+}

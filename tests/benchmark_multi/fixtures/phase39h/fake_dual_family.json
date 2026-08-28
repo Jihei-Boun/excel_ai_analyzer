@@ -1,0 +1,294 @@
+{
+  "description": "Phase 39H fake dual-side family. Expected NON-PASS. Domain-neutral.",
+  "cases": [
+    {
+      "id": "FD1",
+      "family": "fake_dual_same_agg_aliases",
+      "expected_verdict_not": "pass",
+      "prompt": "Compare value totals for side A versus side B and keep both side totals visible by entity_id.",
+      "source_schemas": {
+        "src.xlsx": ["entity_id", "value"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "agg",
+            "op": "aggregate",
+            "inputs": ["src.xlsx"],
+            "output": "final",
+            "params": {
+              "group_by": ["entity_id"],
+              "metrics": [
+                {"column": "value", "function": "sum", "alias": "side_a"},
+                {"column": "value", "function": "sum", "alias": "side_b"}
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": ["entity_id", "side_a", "side_b"],
+          "output_roles": [
+            {"role": "entity_key", "columns": ["entity_id"]},
+            {"role": "comparison_side", "columns": ["side_a"], "side_id": "A"},
+            {"role": "comparison_side", "columns": ["side_b"], "side_id": "B"}
+          ]
+        }
+      }
+    },
+    {
+      "id": "FD2",
+      "family": "fake_dual_union_double_agg",
+      "expected_verdict_not": "pass",
+      "prompt": "Compare value totals for side A versus side B and keep both side totals visible by entity_id.",
+      "source_schemas": {
+        "src_a.xlsx": ["entity_id", "value"],
+        "src_b.xlsx": ["entity_id", "value"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "u",
+            "op": "union_rows",
+            "inputs": ["src_a.xlsx", "src_b.xlsx"],
+            "output": "combined",
+            "params": {"column_policy": "aligned"}
+          },
+          {
+            "id": "agg",
+            "op": "aggregate",
+            "inputs": ["combined"],
+            "output": "final",
+            "params": {
+              "group_by": ["entity_id"],
+              "metrics": [
+                {"column": "value", "function": "sum", "alias": "side_a"},
+                {"column": "value", "function": "sum", "alias": "side_b"}
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": ["entity_id", "side_a", "side_b"],
+          "output_roles": [
+            {"role": "entity_key", "columns": ["entity_id"]},
+            {"role": "comparison_side", "columns": ["side_a"], "side_id": "A"},
+            {"role": "comparison_side", "columns": ["side_b"], "side_id": "B"}
+          ]
+        }
+      }
+    },
+    {
+      "id": "FD3",
+      "family": "fake_dual_duplicate_rename",
+      "expected_verdict_not": "pass",
+      "prompt": "Compare metric values for side A versus side B and keep both side values visible by entity_id.",
+      "source_schemas": {
+        "src.xlsx": ["entity_id", "metric"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "r1",
+            "op": "rename_columns",
+            "inputs": ["src.xlsx"],
+            "output": "tmp",
+            "params": {"mapping": {"metric": "side_a"}}
+          },
+          {
+            "id": "r2",
+            "op": "rename_columns",
+            "inputs": ["tmp"],
+            "output": "final",
+            "params": {"mapping": {"side_a": "side_a"}}
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": ["entity_id", "side_a", "side_b"],
+          "output_roles": [
+            {"role": "comparison_side", "columns": ["side_a"], "side_id": "A"},
+            {"role": "comparison_side", "columns": ["side_b"], "side_id": "B"}
+          ]
+        },
+        "notes": ["Claims side_b without materializing a second independent column."]
+      }
+    },
+    {
+      "id": "FD4",
+      "family": "fake_dual_same_expr_join_select",
+      "expected_verdict_not": "pass",
+      "prompt": "Compare value totals for side A versus side B and keep both side totals visible by entity_id.",
+      "source_schemas": {
+        "src.xlsx": ["entity_id", "value"],
+        "keys.xlsx": ["entity_id"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "agg",
+            "op": "aggregate",
+            "inputs": ["src.xlsx"],
+            "output": "agg",
+            "params": {
+              "group_by": ["entity_id"],
+              "metrics": [
+                {"column": "value", "function": "sum", "alias": "side_a"},
+                {"column": "value", "function": "sum", "alias": "side_b"}
+              ]
+            }
+          },
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": ["keys.xlsx", "agg"],
+            "output": "joined",
+            "params": {
+              "left_keys": ["entity_id"],
+              "right_keys": ["entity_id"],
+              "how": "inner"
+            }
+          },
+          {
+            "id": "sel",
+            "op": "select_columns",
+            "inputs": ["joined"],
+            "output": "final",
+            "params": {"columns": ["entity_id", "side_a", "side_b"]}
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": ["entity_id", "side_a", "side_b"],
+          "output_roles": [
+            {"role": "comparison_side", "columns": ["side_a"], "side_id": "A"},
+            {"role": "comparison_side", "columns": ["side_b"], "side_id": "B"}
+          ]
+        }
+      }
+    },
+    {
+      "id": "FD5",
+      "family": "fake_dual_roles_overtrust",
+      "expected_verdict_not": "pass",
+      "prompt": "Compare value totals for side A versus side B and keep both side totals visible by entity_id.",
+      "source_schemas": {
+        "src.xlsx": ["entity_id", "value"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "agg",
+            "op": "aggregate",
+            "inputs": ["src.xlsx"],
+            "output": "final",
+            "params": {
+              "group_by": ["entity_id"],
+              "metrics": [
+                {"column": "value", "function": "sum", "alias": "total_a"},
+                {"column": "value", "function": "sum", "alias": "total_b"}
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "reason": "Roles declare independent sides A/B.",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": ["entity_id", "total_a", "total_b"],
+          "one_row_represents": "both comparison sides",
+          "output_roles": [
+            {"role": "entity_key", "columns": ["entity_id"]},
+            {"role": "comparison_side", "columns": ["total_a"], "side_id": "A"},
+            {"role": "comparison_side", "columns": ["total_b"], "side_id": "B"}
+          ]
+        }
+      }
+    },
+    {
+      "id": "FD6",
+      "family": "fake_dual_identical_lineage_names",
+      "expected_verdict_not": "pass",
+      "prompt": "Compare metric values for side A versus side B and keep both side values visible by entity_id.",
+      "source_schemas": {
+        "src.xlsx": ["entity_id", "metric"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "agg",
+            "op": "aggregate",
+            "inputs": ["src.xlsx"],
+            "output": "final",
+            "params": {
+              "group_by": ["entity_id"],
+              "metrics": [
+                {"column": "metric", "function": "sum", "alias": "alpha_metric"},
+                {"column": "metric", "function": "sum", "alias": "beta_metric"}
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "required_columns": ["entity_id", "alpha_metric", "beta_metric"]
+        }
+      }
+    },
+    {
+      "id": "FD7",
+      "family": "fake_dual_intermediate_duplicate",
+      "expected_verdict_not": "pass",
+      "prompt": "Compare value totals for side A versus side B and keep both side totals visible by entity_id.",
+      "source_schemas": {
+        "src.xlsx": ["entity_id", "value"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "agg",
+            "op": "aggregate",
+            "inputs": ["src.xlsx"],
+            "output": "mid",
+            "params": {
+              "group_by": ["entity_id"],
+              "metrics": [
+                {"column": "value", "function": "sum", "alias": "dup_a"},
+                {"column": "value", "function": "sum", "alias": "dup_b"}
+              ]
+            }
+          },
+          {
+            "id": "r",
+            "op": "rename_columns",
+            "inputs": ["mid"],
+            "output": "final",
+            "params": {
+              "mapping": {"dup_a": "side_a", "dup_b": "side_b"}
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "required_columns": ["entity_id", "side_a", "side_b"],
+          "output_roles": [
+            {"role": "comparison_side", "columns": ["side_a"], "side_id": "A"},
+            {"role": "comparison_side", "columns": ["side_b"], "side_id": "B"}
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,510 @@
+{
+  "description": "Phase 39C Tier-1 offline generalization: new C2 collapses + expanded valid controls (neutral schemas).",
+  "cases": [
+    {
+      "id": "C2A-01",
+      "family": "c2_wrong",
+      "pattern": "C2-A",
+      "domain": "energy",
+      "roles_required": true,
+      "prompt": "Compare site electricity use for period P1 versus period P2 and keep both period totals visible.",
+      "expected_verdict_not": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["p1_usage.xlsx", "p2_usage.xlsx"], "output": "u", "params": {"column_policy": "aligned"}},
+          {"id": "s2", "op": "aggregate", "inputs": ["u"], "output": "final", "params": {"group_by": ["site_id"], "metrics": [{"column": "kwh", "function": "sum", "alias": "total_kwh"}]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["site_id", "total_kwh"],
+          "one_row_represents": "period comparison of electricity by site"
+        }
+      }
+    },
+    {
+      "id": "C2B-01",
+      "family": "c2_wrong",
+      "pattern": "C2-B",
+      "domain": "ml_eval",
+      "roles_required": true,
+      "prompt": "Contrast baseline run metrics with experiment run metrics per model_id; I need both sides.",
+      "expected_verdict_not": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["baseline_metrics.xlsx", "experiment_metrics.xlsx"], "output": "u", "params": {"column_policy": "aligned"}},
+          {"id": "s2", "op": "aggregate", "inputs": ["u"], "output": "final", "params": {"group_by": ["model_id"], "metrics": [{"column": "score", "function": "mean", "alias": "avg_score"}]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["model_id", "avg_score"],
+          "one_row_represents": "baseline vs experiment comparison"
+        }
+      }
+    },
+    {
+      "id": "C2C-01",
+      "family": "c2_wrong",
+      "pattern": "C2-C",
+      "domain": "finance",
+      "roles_required": true,
+      "prompt": "Show actual spend and budgeted spend side by side for each cost_center.",
+      "expected_verdict_not": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["actuals.xlsx", "budget.xlsx"], "output": "u", "params": {"column_policy": "aligned"}},
+          {"id": "s2", "op": "aggregate", "inputs": ["u"], "output": "final", "params": {"group_by": ["cost_center"], "metrics": [{"column": "amount", "function": "sum", "alias": "total_amount"}]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["cost_center", "total_amount"],
+          "one_row_represents": "actual vs budget comparison"
+        }
+      }
+    },
+    {
+      "id": "C2D-01",
+      "family": "c2_wrong",
+      "pattern": "C2-D",
+      "domain": "ops",
+      "roles_required": true,
+      "prompt": "Compare ticket volume before the change and after the change for each queue.",
+      "expected_verdict_not": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["before_tickets.xlsx", "after_tickets.xlsx"], "output": "u", "params": {"column_policy": "aligned"}},
+          {"id": "s2", "op": "aggregate", "inputs": ["u"], "output": "final", "params": {"group_by": ["queue"], "metrics": [{"column": "tickets", "function": "sum", "alias": "ticket_count"}]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["queue", "ticket_count"],
+          "one_row_represents": "before/after ticket comparison"
+        }
+      }
+    },
+    {
+      "id": "C2E-01",
+      "family": "c2_wrong",
+      "pattern": "C2-E",
+      "domain": "hr",
+      "roles_required": true,
+      "prompt": "Compare cohort Alpha completion rates with cohort Beta completion rates by course_id.",
+      "expected_verdict_not": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["cohort_alpha.xlsx", "cohort_beta.xlsx"], "output": "u", "params": {"column_policy": "aligned"}},
+          {"id": "s2", "op": "aggregate", "inputs": ["u"], "output": "final", "params": {"group_by": ["course_id"], "metrics": [{"column": "completed", "function": "sum", "alias": "completions"}]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["course_id", "completions"],
+          "one_row_represents": "cohort alpha vs beta comparison"
+        }
+      }
+    },
+    {
+      "id": "C2F-01",
+      "family": "c2_wrong",
+      "pattern": "C2-F",
+      "domain": "inventory",
+      "roles_required": true,
+      "prompt": "Compare warehouse WMS stock counts with ERP stock counts per sku; keep both systems visible.",
+      "expected_verdict_not": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["wms_stock.xlsx", "erp_stock.xlsx"], "output": "u", "params": {"column_policy": "aligned"}},
+          {"id": "s2", "op": "aggregate", "inputs": ["u"], "output": "final", "params": {"group_by": ["sku"], "metrics": [{"column": "qty", "function": "sum", "alias": "total_qty"}]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["sku", "total_qty"],
+          "one_row_represents": "WMS vs ERP stock comparison"
+        }
+      }
+    },
+    {
+      "id": "C2G-01",
+      "family": "c2_wrong",
+      "pattern": "C2-G",
+      "domain": "retail",
+      "roles_required": true,
+      "prompt": "Which store changed the most between wave1 units and wave2 units? I need both waves to judge change.",
+      "expected_verdict_not": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["wave1.xlsx", "wave2.xlsx"], "output": "u", "params": {"column_policy": "aligned"}},
+          {"id": "s2", "op": "aggregate", "inputs": ["u"], "output": "final", "params": {"group_by": ["store_id"], "metrics": [{"column": "units", "function": "sum", "alias": "total_units"}]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["store_id", "total_units"],
+          "one_row_represents": "stores ranked by change"
+        }
+      }
+    },
+    {
+      "id": "C2H-01",
+      "family": "c2_wrong",
+      "pattern": "C2-H",
+      "domain": "saas",
+      "roles_required": true,
+      "prompt": "Which accounts increased active_users from snapshot_old to snapshot_new?",
+      "expected_verdict_not": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["snapshot_old.xlsx", "snapshot_new.xlsx"], "output": "u", "params": {"column_policy": "aligned"}},
+          {"id": "s2", "op": "aggregate", "inputs": ["u"], "output": "final", "params": {"group_by": ["account_id"], "metrics": [{"column": "active_users", "function": "sum", "alias": "users_total"}]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["account_id", "users_total"],
+          "one_row_represents": "accounts that increased"
+        }
+      }
+    },
+    {
+      "id": "C2A-02",
+      "family": "c2_wrong",
+      "pattern": "C2-A",
+      "domain": "logistics",
+      "roles_required": true,
+      "prompt": "Keep morning shipment counts and evening shipment counts separate per lane_id for contrast.",
+      "expected_verdict_not": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["morning.xlsx", "evening.xlsx"], "output": "u", "params": {"column_policy": "aligned"}},
+          {"id": "s2", "op": "aggregate", "inputs": ["u"], "output": "agg", "params": {"group_by": ["lane_id"], "metrics": [{"column": "shipments", "function": "sum", "alias": "shipments_total"}]}},
+          {"id": "s3", "op": "select_columns", "inputs": ["agg"], "output": "final", "params": {"columns": ["lane_id", "shipments_total"]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["lane_id", "shipments_total"],
+          "one_row_represents": "morning vs evening contrast by lane",
+          "output_roles": [
+            {"role": "entity_key", "columns": ["lane_id"]},
+            {"role": "comparison_side", "side_id": "A", "columns": ["shipments_total"]},
+            {"role": "comparison_side", "side_id": "B", "columns": ["shipments_total"]}
+          ]
+        }
+      }
+    },
+    {
+      "id": "C2C-02",
+      "family": "c2_wrong",
+      "pattern": "C2-C",
+      "domain": "manufacturing",
+      "roles_required": true,
+      "prompt": "I need planned output and actual output for each line_id so I can see the gap.",
+      "expected_verdict_not": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["planned_output.xlsx", "actual_output.xlsx"], "output": "u", "params": {"column_policy": "aligned"}},
+          {"id": "s2", "op": "aggregate", "inputs": ["u"], "output": "final", "params": {"group_by": ["line_id"], "metrics": [{"column": "units", "function": "sum", "alias": "units_combined"}]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["line_id", "units_combined"],
+          "one_row_represents": "planned vs actual gap analysis"
+        }
+      }
+    },
+    {
+      "id": "VC-N01",
+      "family": "valid_control",
+      "pattern": "union_aggregate_total",
+      "domain": "energy",
+      "roles_required": false,
+      "prompt": "Combine both usage files and show total kwh by site_id.",
+      "expected_verdict": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["p1_usage.xlsx", "p2_usage.xlsx"], "output": "u", "params": {"column_policy": "aligned"}},
+          {"id": "s2", "op": "aggregate", "inputs": ["u"], "output": "final", "params": {"group_by": ["site_id"], "metrics": [{"column": "kwh", "function": "sum", "alias": "total_kwh"}]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["site_id", "total_kwh"],
+          "one_row_represents": "combined site total across both files"
+        }
+      }
+    },
+    {
+      "id": "VC-N02",
+      "family": "valid_control",
+      "pattern": "overall_total",
+      "domain": "finance",
+      "roles_required": false,
+      "prompt": "What is the overall amount total across both files?",
+      "expected_verdict": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["actuals.xlsx", "budget.xlsx"], "output": "u", "params": {"column_policy": "aligned"}},
+          {"id": "s2", "op": "aggregate", "inputs": ["u"], "output": "final", "params": {"group_by": [], "metrics": [{"column": "amount", "function": "sum", "alias": "grand_total"}]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "summary",
+          "required_columns": ["grand_total"],
+          "one_row_represents": "single overall total"
+        }
+      }
+    },
+    {
+      "id": "VC-N03",
+      "family": "valid_control",
+      "pattern": "append_only",
+      "domain": "ops",
+      "roles_required": false,
+      "prompt": "Append the two ticket tables into one detail table.",
+      "expected_verdict": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["before_tickets.xlsx", "after_tickets.xlsx"], "output": "final", "params": {"column_policy": "aligned"}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": ["queue", "tickets"],
+          "one_row_represents": "one stacked ticket aggregate row"
+        }
+      }
+    },
+    {
+      "id": "VC-N04",
+      "family": "valid_control",
+      "pattern": "single_source_agg",
+      "domain": "hr",
+      "roles_required": false,
+      "prompt": "From the alpha file only, total completions by course_id.",
+      "expected_verdict": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "aggregate", "inputs": ["cohort_alpha.xlsx"], "output": "final", "params": {"group_by": ["course_id"], "metrics": [{"column": "completed", "function": "sum", "alias": "completions"}]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["course_id", "completions"],
+          "one_row_represents": "course total from one source"
+        }
+      }
+    },
+    {
+      "id": "VC-N05",
+      "family": "valid_control",
+      "pattern": "multi_source_total_no_contrast",
+      "domain": "inventory",
+      "roles_required": false,
+      "prompt": "Sum qty by sku across both warehouse extracts; a single combined total per sku is fine.",
+      "expected_verdict": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["wms_stock.xlsx", "erp_stock.xlsx"], "output": "u", "params": {"column_policy": "aligned"}},
+          {"id": "s2", "op": "aggregate", "inputs": ["u"], "output": "final", "params": {"group_by": ["sku"], "metrics": [{"column": "qty", "function": "sum", "alias": "total_qty"}]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["sku", "total_qty"],
+          "one_row_represents": "combined stock total by sku"
+        }
+      }
+    },
+    {
+      "id": "VC-N06",
+      "family": "valid_control",
+      "pattern": "valid_dual_side",
+      "domain": "ml_eval",
+      "roles_required": true,
+      "prompt": "Contrast baseline run metrics with experiment run metrics per model_id; I need both sides.",
+      "expected_verdict": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "aggregate", "inputs": ["baseline_metrics.xlsx"], "output": "b", "params": {"group_by": ["model_id"], "metrics": [{"column": "score", "function": "mean", "alias": "baseline_score"}]}},
+          {"id": "s2", "op": "aggregate", "inputs": ["experiment_metrics.xlsx"], "output": "e", "params": {"group_by": ["model_id"], "metrics": [{"column": "score", "function": "mean", "alias": "experiment_score"}]}},
+          {"id": "s3", "op": "join", "inputs": ["b", "e"], "output": "final", "params": {"left_keys": ["model_id"], "right_keys": ["model_id"], "how": "outer"}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["model_id", "baseline_score", "experiment_score"],
+          "one_row_represents": "model with both baseline and experiment scores",
+          "output_roles": [
+            {"role": "entity_key", "columns": ["model_id"]},
+            {"role": "comparison_side", "side_id": "A", "columns": ["baseline_score"]},
+            {"role": "comparison_side", "side_id": "B", "columns": ["experiment_score"]}
+          ]
+        }
+      }
+    },
+    {
+      "id": "VC-N07",
+      "family": "valid_control",
+      "pattern": "valid_dual_filter",
+      "domain": "saas",
+      "roles_required": true,
+      "prompt": "Which accounts increased active_users from snapshot_old to snapshot_new?",
+      "expected_verdict": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "aggregate", "inputs": ["snapshot_old.xlsx"], "output": "old", "params": {"group_by": ["account_id"], "metrics": [{"column": "active_users", "function": "sum", "alias": "users_old"}]}},
+          {"id": "s2", "op": "aggregate", "inputs": ["snapshot_new.xlsx"], "output": "new", "params": {"group_by": ["account_id"], "metrics": [{"column": "active_users", "function": "sum", "alias": "users_new"}]}},
+          {"id": "s3", "op": "join", "inputs": ["old", "new"], "output": "j", "params": {"left_keys": ["account_id"], "right_keys": ["account_id"], "how": "inner"}},
+          {"id": "s4", "op": "filter_rows", "inputs": ["j"], "output": "final", "params": {"conditions": [{"left_column": "users_new", "operator": "gt", "right_column": "users_old"}]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["account_id", "users_old", "users_new"],
+          "one_row_represents": "account where new users exceed old users",
+          "output_roles": [
+            {"role": "entity_key", "columns": ["account_id"]},
+            {"role": "comparison_side", "side_id": "A", "columns": ["users_old"]},
+            {"role": "comparison_side", "side_id": "B", "columns": ["users_new"]}
+          ]
+        }
+      }
+    },
+    {
+      "id": "VC-N08",
+      "family": "valid_control",
+      "pattern": "join_enrichment",
+      "domain": "retail",
+      "roles_required": false,
+      "prompt": "Attach store region labels to the units file using store_id.",
+      "expected_verdict": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "join", "inputs": ["wave1.xlsx", "store_dim.xlsx"], "output": "final", "params": {"left_keys": ["store_id"], "right_keys": ["store_id"], "how": "left"}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": ["store_id", "units", "region"],
+          "one_row_represents": "store units row enriched with region"
+        }
+      }
+    },
+    {
+      "id": "VC-N09",
+      "family": "valid_control",
+      "pattern": "summary_after_union",
+      "domain": "logistics",
+      "roles_required": false,
+      "prompt": "After stacking morning and evening shipments, report total shipments overall.",
+      "expected_verdict": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["morning.xlsx", "evening.xlsx"], "output": "u", "params": {"column_policy": "aligned"}},
+          {"id": "s2", "op": "aggregate", "inputs": ["u"], "output": "final", "params": {"group_by": [], "metrics": [{"column": "shipments", "function": "sum", "alias": "all_shipments"}]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "summary",
+          "required_columns": ["all_shipments"],
+          "one_row_represents": "overall shipment total after stack"
+        }
+      }
+    },
+    {
+      "id": "VC-N10",
+      "family": "valid_control",
+      "pattern": "detail_union",
+      "domain": "manufacturing",
+      "roles_required": false,
+      "prompt": "Stack planned and actual row-level outputs into one detail table without summarizing.",
+      "expected_verdict": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["planned_output.xlsx", "actual_output.xlsx"], "output": "final", "params": {"column_policy": "aligned"}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": ["line_id", "units"],
+          "one_row_represents": "one stacked production row"
+        }
+      }
+    },
+    {
+      "id": "VC-N11",
+      "family": "valid_control",
+      "pattern": "union_aggregate_irrelevant_distinction",
+      "domain": "finance",
+      "roles_required": false,
+      "prompt": "Integrate the two ledgers and give amount totals by cost_center; no need to keep file identity.",
+      "expected_verdict": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "union_rows", "inputs": ["actuals.xlsx", "budget.xlsx"], "output": "u", "params": {"column_policy": "aligned"}},
+          {"id": "s2", "op": "aggregate", "inputs": ["u"], "output": "final", "params": {"group_by": ["cost_center"], "metrics": [{"column": "amount", "function": "sum", "alias": "amount_total"}]}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["cost_center", "amount_total"],
+          "one_row_represents": "cost center total after integration"
+        }
+      }
+    },
+    {
+      "id": "VC-N12",
+      "family": "valid_control",
+      "pattern": "valid_dual_side_finance",
+      "domain": "finance",
+      "roles_required": true,
+      "prompt": "Show actual spend and budgeted spend side by side for each cost_center.",
+      "expected_verdict": "pass",
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {"id": "s1", "op": "aggregate", "inputs": ["actuals.xlsx"], "output": "a", "params": {"group_by": ["cost_center"], "metrics": [{"column": "amount", "function": "sum", "alias": "actual_amount"}]}},
+          {"id": "s2", "op": "aggregate", "inputs": ["budget.xlsx"], "output": "b", "params": {"group_by": ["cost_center"], "metrics": [{"column": "amount", "function": "sum", "alias": "budget_amount"}]}},
+          {"id": "s3", "op": "join", "inputs": ["a", "b"], "output": "final", "params": {"left_keys": ["cost_center"], "right_keys": ["cost_center"], "how": "outer"}}
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["cost_center", "actual_amount", "budget_amount"],
+          "one_row_represents": "cost center with actual and budget amounts",
+          "output_roles": [
+            {"role": "entity_key", "columns": ["cost_center"]},
+            {"role": "comparison_side", "side_id": "A", "columns": ["actual_amount"]},
+            {"role": "comparison_side", "side_id": "B", "columns": ["budget_amount"]}
+          ]
+        }
+      }
+    }
+  ]
+}

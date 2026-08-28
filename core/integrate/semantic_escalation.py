@@ -191,15 +191,30 @@ def run_integration_pipeline_semantic_experimental(
         return base
 
     t_ver0 = time.time()
+    # Phase 39D-V1: ground verifier with source schemas from live frames.
+    # Must be active in Shadow path; without this, final_schema mode is a no-op.
+    und_dict = (
+        understanding.to_dict()
+        if hasattr(understanding, "to_dict")
+        else understanding
+        if isinstance(understanding, dict)
+        else None
+    )
+    source_schemas = {
+        str(name): [str(c) for c in df.columns]
+        for name, df in sources.items()
+    }
     verification = run_semantic_verification(
         user_prompt=user_prompt,
         plan=base.plan.to_dict(),
         result=None,
-        understanding=None,
+        understanding=und_dict,
         variant=SEMANTIC_VERIFIER_VARIANT,
         model=cfg.verifier_model,
         base_url=base_url,
         chat_json_fn=verifier_chat_json_fn,
+        source_schemas=source_schemas,
+        materialization_mode="final_schema_expr_partition",
     )
     verifier_elapsed_s = round(time.time() - t_ver0, 3)
     trace.verifier = verification.to_dict()

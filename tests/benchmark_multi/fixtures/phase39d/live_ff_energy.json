@@ -1,0 +1,111 @@
+{
+  "id": "LIVE-C2-energy-FF",
+  "family": "live_false_fail",
+  "expected_verdict": "pass",
+  "manual_label": "valid dual-side join materializes kwh_left/kwh_right; verifier falsely treated join suffixes as collapse",
+  "prompt": "Compare site electricity use for period P1 versus period P2 and keep both period totals visible by site_id.",
+  "source_schemas": {
+    "p1_usage.xlsx": [
+      "site_id",
+      "kwh"
+    ],
+    "p2_usage.xlsx": [
+      "site_id",
+      "kwh"
+    ]
+  },
+  "plan": {
+    "status": "planned",
+    "steps": [
+      {
+        "id": "join_p1_p2",
+        "op": "join",
+        "inputs": [
+          "p1_usage.xlsx",
+          "p2_usage.xlsx"
+        ],
+        "output": "p1_p2_joined",
+        "params": {
+          "left_keys": [
+            "site_id"
+          ],
+          "right_keys": [
+            "site_id"
+          ],
+          "how": "inner"
+        }
+      }
+    ],
+    "final_output": "p1_p2_joined",
+    "reason": "The user requested to compare site electricity use for period P1 vs P2 while keeping both totals visible. The join on site_id preserves distinct kwh values from each source (kwh_left for P1, kwh_right for P2) at the entity grain (one site per row).",
+    "ambiguities": [],
+    "notes": [
+      "The join preserves both period-specific kwh values without aggregation, satisfying the requirement to 'keep both period totals visible by site_id'.",
+      "The output schema explicitly distinguishes P1 and P2 values via _left/_right suffixes from the join operation."
+    ],
+    "meta": {
+      "phase": 15,
+      "parse_attempts": 1,
+      "plan_signature": "{\"final_output\": \"p1_p2_joined\", \"final_output_requirements\": {\"grain\": \"entity\", \"one_row_represents\": \"One site with its electricity usage in both periods P1 and P2\", \"output_roles\": [{\"columns\": [\"site_id\"], \"role\": \"entity_key\"}, {\"columns\": [\"kwh_left\"], \"role\": \"comparison_side\", \"side_id\": \"P1\"}, {\"columns\": [\"kwh_right\"], \"role\": \"comparison_side\", \"side_id\": \"P2\"}], \"required_columns\": [\"site_id\", \"kwh_left\", \"kwh_right\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"p1_usage.xlsx\", \"p2_usage.xlsx\"], \"op\": \"join\", \"output\": \"p1_p2_joined\", \"params\": {\"how\": \"inner\", \"left_keys\": [\"site_id\"], \"right_keys\": [\"site_id\"]}}]}",
+      "operation_family": "join_only",
+      "allowed_ops": [
+        "aggregate",
+        "filter_rows",
+        "join",
+        "rename_columns",
+        "select_columns",
+        "union_rows"
+      ]
+    },
+    "final_output_requirements": {
+      "grain": "entity",
+      "required_columns": [
+        "site_id",
+        "kwh_left",
+        "kwh_right"
+      ],
+      "one_row_represents": "One site with its electricity usage in both periods P1 and P2",
+      "output_roles": [
+        {
+          "role": "entity_key",
+          "columns": [
+            "site_id"
+          ]
+        },
+        {
+          "role": "comparison_side",
+          "columns": [
+            "kwh_left"
+          ],
+          "side_id": "P1"
+        },
+        {
+          "role": "comparison_side",
+          "columns": [
+            "kwh_right"
+          ],
+          "side_id": "P2"
+        }
+      ]
+    }
+  },
+  "baseline_semantic_verifier": {
+    "verdict": "fail",
+    "reason_code": "wrong_output_grain",
+    "evidence": [
+      "The plan joins the two files on site_id, but aggregates the kwh values into a single metric (kwh_left and kwh_right) rather than keeping both period totals visible by site_id."
+    ],
+    "raw": {
+      "verdict": "fail",
+      "reason_code": "wrong_output_grain",
+      "evidence": [
+        "The plan joins the two files on site_id, but aggregates the kwh values into a single metric (kwh_left and kwh_right) rather than keeping both period totals visible by site_id."
+      ]
+    },
+    "parse_ok": true,
+    "model": "qwen2.5:7b",
+    "variant": "V1",
+    "elapsed_s": 4.07,
+    "error": null
+  }
+}

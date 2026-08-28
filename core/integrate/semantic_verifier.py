@@ -65,6 +65,52 @@ Independence protocol (CRITICAL — Phase 39B):
    "comparison" or list only the collapsed columns.
 7) Never justify pass by quoting planner_claims.one_row_represents, notes,
    reason, or output_roles alone. Those fields cannot rescue a collapsing plan.
+8) Materialization grounding (Phase 39D — CRITICAL when materialization_evidence
+   is present):
+   - Treat materialization_evidence as deterministic structural fact about which
+     columns exist after each op (and which referenced columns do NOT exist).
+   - Claims / narrative / role labels that name columns absent from
+     final_schema, or listed in unresolved_column_refs /
+     claimed_columns_absent_from_final, are NOT proof those values exist.
+   - Join producing side-specific surviving columns (e.g. metric_left and
+     metric_right) PRESERVES distinction; it is NOT aggregation collapse.
+   - Rename then join that yields distinct final metric columns (e.g. metric_a
+     and metric_b) also PRESERVES distinction when those columns appear in
+     final_schema — _left/_right suffixes are NOT required.
+   - Entity grain (one row per key) with multiple distinct side metric columns
+     is NOT wrong_output_grain / collapse. Collapse means a required side is
+     absent from final_schema or merged into a single combined metric.
+   - When final_schema contains two side metric columns with DIFFERENT
+     evidence_signatures (especially different row_population.filters), those
+     are independently partitioned sides even if they share a source file.
+     One row per entity_id that still carries both side columns PRESERVES
+     distinction — do not call that collapse / wrong_output_grain.
+   - When materialization_evidence.final_column_origins shows two final metric
+     columns deriving from different source inputs, treat them as independently
+     surviving columns — not one collapsed total — UNLESS evidence signatures
+     show they are identical expressions over the same row population.
+   - Shared source origin alone does NOT prove fake dual sides. Independent
+     partition/filter ancestry (different row_population.filters) can create
+     genuine comparison sides from the same source file/column.
+   - CRITICAL (Phase 39H provenance independence): If the user request needs
+     independently grounded comparison sides, and
+     identical_evidence_signature_column_sets / equivalent_evidence_signature_groups
+     places those claimed side metrics in the SAME set (identical aggregate
+     function + input column + group_by + row_population/filters), you MUST
+     fail. Two aliases of the same expression over the same row population are
+     NOT two sides. Distinct column names, suffixes, or output_roles do NOT
+     create independence.
+   - Conversely, different evidence_signatures (especially different filters
+     or different source lineages) may be independent even when source files
+     overlap. Do NOT fail merely because origins share a source file.
+   - Deterministic materialization_evidence outranks planner narrative about
+     "collapse" when final_schema objectively retains the required sides.
+   - Do NOT invent an aggregation step that is not in plan_structure.
+   - Conceptual levels (reasoning aid only, not taxonomy routing):
+     L1 distinction preserved (both sides observable) vs L3 requested relation
+     (increase/filter/rank) — if the request only needs side-by-side contrast,
+     L1/L2 can suffice; do not demand an explicit delta unless the request
+     clearly needs that relation.
 
 Rules:
 - Judge only. Do NOT rewrite the plan, choose keys, change aggregations,
@@ -232,13 +278,28 @@ def build_verifier_payload(
     understanding: dict[str, Any] | None = None,
     variant: str = "V2",
     independent: bool = True,
+    source_schemas: dict[str, list[str]] | None = None,
+    materialization_mode: str = "none",
+    separate_claims: bool | None = None,
 ) -> dict[str, Any]:
     """Build golden-free verifier input. variant: V1 | V2 | V3.
 
     Phase 39B: independent=True (default) splits plan_structure vs planner_claims
     so narrative labels are not mixed into structural evidence.
+
+    Phase 39D/39F/39H materialization_mode:
+      - none: baseline (V0)
+      - final_schema: final columns only (39D V1)
+      - final_schema_origins: final + column origins (39F V2)
+      - final_schema_expr: V2 + metric expression ancestry (39H V2.1)
+      - final_schema_expr_partition: V2.1 + partition/filter ancestry (39H V2.2)
+      - lineage_origins: final + step/events + origins (39F V3)
+      - full_lineage: richest deterministic lineage (39F V4)
+      - lineage / lineage_claims_separated: legacy 39D V2/V3 aliases
     """
-    if independent:
+    if separate_claims is None:
+        separate_claims = independent
+    if independent or separate_claims:
         payload: dict[str, Any] = {
             "user_prompt": user_prompt,
             "plan_structure": _plan_structure_only(plan),
@@ -249,6 +310,230 @@ def build_verifier_payload(
             "user_prompt": user_prompt,
             "integration_plan": _compact_plan(plan),
         }
+
+    mode = (materialization_mode or "none").strip().lower()
+    # Phase 39F/39H ablation modes:
+    #   none / final_schema (V1) / final_schema_origins (V2)
+    #   final_schema_expr (V2.1) / final_schema_expr_partition (V2.2)
+    #   lineage_origins (V3) / full_lineage (V4)
+    # legacy aliases: lineage, lineage_claims_separated
+    if mode not in {
+        "none",
+        "final_schema",
+        "final_schema_origins",
+        "final_schema_expr",
+        "final_schema_expr_partition",
+        "lineage",
+        "lineage_origins",
+        "lineage_claims_separated",
+        "full_lineage",
+    }:
+        mode = "none"
+    if mode != "none":
+        from core.integrate.schema_lineage import (
+            build_schema_lineage,
+            extract_source_schemas_from_understanding,
+        )
+
+        schemas = source_schemas or extract_source_schemas_from_understanding(
+            understanding
+        )
+        # Without source schemas, lineage is not grounded — omit rather than
+        # invent empty step schemas (preserves Phase 39C offline behavior).
+        if schemas:
+            include_intermediates = mode in {
+                "lineage",
+                "lineage_origins",
+                "lineage_claims_separated",
+                "full_lineage",
+            }
+            evidence = build_schema_lineage(
+                plan, schemas, include_intermediates=include_intermediates
+            )
+
+            def _strip_filters(sigs: dict[str, Any]) -> dict[str, Any]:
+                """V2.1: expression ancestry without partition/filter detail."""
+                out: dict[str, Any] = {}
+                for col, sig in (sigs or {}).items():
+                    if not isinstance(sig, dict):
+                        continue
+                    s = dict(sig)
+                    pop = dict(s.get("row_population") or {})
+                    pop["filters"] = []
+                    s["row_population"] = pop
+                    out[col] = s
+                return out
+
+            def _equiv_from_sigs(sigs: dict[str, Any]) -> list[dict[str, Any]]:
+                groups: dict[str, list[str]] = {}
+                for col, sig in (sigs or {}).items():
+                    key = json.dumps(sig, sort_keys=True, ensure_ascii=False, default=str)
+                    groups.setdefault(key, []).append(col)
+                return [
+                    {"evidence_signature": json.loads(k), "final_columns": cols}
+                    for k, cols in sorted(groups.items(), key=lambda kv: kv[0])
+                    if len(cols) >= 2
+                ]
+
+            if mode == "final_schema":
+                # V1 — Phase 39D default
+                payload["materialization_evidence"] = {
+                    "final_schema": evidence.get("final_schema") or [],
+                    "unresolved_column_refs": evidence.get(
+                        "unresolved_column_refs"
+                    )
+                    or [],
+                    "claimed_columns_absent_from_final": evidence.get(
+                        "claimed_columns_absent_from_final"
+                    )
+                    or [],
+                    "notes": evidence.get("notes") or [],
+                }
+            elif mode == "final_schema_origins":
+                # V2 — final schema + source-aware final column origins
+                payload["materialization_evidence"] = {
+                    "final_schema": evidence.get("final_schema") or [],
+                    "final_column_origins": evidence.get("final_column_origins")
+                    or {},
+                    "source_files_represented_in_final": evidence.get(
+                        "source_files_represented_in_final"
+                    )
+                    or [],
+                    "shared_singleton_origin_groups": evidence.get(
+                        "shared_singleton_origin_groups"
+                    )
+                    or [],
+                    "unresolved_column_refs": evidence.get(
+                        "unresolved_column_refs"
+                    )
+                    or [],
+                    "claimed_columns_absent_from_final": evidence.get(
+                        "claimed_columns_absent_from_final"
+                    )
+                    or [],
+                    "notes": evidence.get("notes") or [],
+                }
+            elif mode == "final_schema_expr":
+                # V2.1 — origins + expression ancestry (filters stripped)
+                sigs = _strip_filters(
+                    evidence.get("final_column_evidence_signatures") or {}
+                )
+                equiv = _equiv_from_sigs(sigs)
+                payload["materialization_evidence"] = {
+                    "final_schema": evidence.get("final_schema") or [],
+                    "final_column_origins": evidence.get("final_column_origins")
+                    or {},
+                    "final_column_evidence_signatures": sigs,
+                    "equivalent_evidence_signature_groups": equiv,
+                    "identical_evidence_signature_column_sets": [
+                        list(g.get("final_columns") or []) for g in equiv
+                    ],
+                    "source_files_represented_in_final": evidence.get(
+                        "source_files_represented_in_final"
+                    )
+                    or [],
+                    "shared_singleton_origin_groups": evidence.get(
+                        "shared_singleton_origin_groups"
+                    )
+                    or [],
+                    "unresolved_column_refs": evidence.get(
+                        "unresolved_column_refs"
+                    )
+                    or [],
+                    "claimed_columns_absent_from_final": evidence.get(
+                        "claimed_columns_absent_from_final"
+                    )
+                    or [],
+                    "notes": evidence.get("notes") or [],
+                }
+            elif mode == "final_schema_expr_partition":
+                # V2.2 — expression + partition/filter ancestry (Phase 39H default candidate)
+                payload["materialization_evidence"] = {
+                    "final_schema": evidence.get("final_schema") or [],
+                    "final_column_origins": evidence.get("final_column_origins")
+                    or {},
+                    "final_column_evidence_signatures": evidence.get(
+                        "final_column_evidence_signatures"
+                    )
+                    or {},
+                    "equivalent_evidence_signature_groups": evidence.get(
+                        "equivalent_evidence_signature_groups"
+                    )
+                    or [],
+                    "identical_evidence_signature_column_sets": evidence.get(
+                        "identical_evidence_signature_column_sets"
+                    )
+                    or [
+                        list(g.get("final_columns") or [])
+                        for g in (
+                            evidence.get("equivalent_evidence_signature_groups")
+                            or []
+                        )
+                    ],
+                    "source_files_represented_in_final": evidence.get(
+                        "source_files_represented_in_final"
+                    )
+                    or [],
+                    "shared_singleton_origin_groups": evidence.get(
+                        "shared_singleton_origin_groups"
+                    )
+                    or [],
+                    "unresolved_column_refs": evidence.get(
+                        "unresolved_column_refs"
+                    )
+                    or [],
+                    "claimed_columns_absent_from_final": evidence.get(
+                        "claimed_columns_absent_from_final"
+                    )
+                    or [],
+                    "notes": evidence.get("notes") or [],
+                }
+            elif mode == "lineage_origins":
+                # V3 — final + rename/join structural events + origins
+                payload["materialization_evidence"] = {
+                    "final_schema": evidence.get("final_schema") or [],
+                    "final_column_origins": evidence.get("final_column_origins")
+                    or {},
+                    "final_column_evidence_signatures": evidence.get(
+                        "final_column_evidence_signatures"
+                    )
+                    or {},
+                    "equivalent_evidence_signature_groups": evidence.get(
+                        "equivalent_evidence_signature_groups"
+                    )
+                    or [],
+                    "source_files_represented_in_final": evidence.get(
+                        "source_files_represented_in_final"
+                    )
+                    or [],
+                    "shared_singleton_origin_groups": evidence.get(
+                        "shared_singleton_origin_groups"
+                    )
+                    or [],
+                    "step_outputs": evidence.get("step_outputs") or {},
+                    "structural_events": evidence.get("structural_events") or [],
+                    "unresolved_column_refs": evidence.get(
+                        "unresolved_column_refs"
+                    )
+                    or [],
+                    "claimed_columns_absent_from_final": evidence.get(
+                        "claimed_columns_absent_from_final"
+                    )
+                    or [],
+                    "notes": evidence.get("notes") or [],
+                }
+            elif mode == "full_lineage":
+                # V4 — richest deterministic lineage
+                payload["materialization_evidence"] = evidence
+            else:
+                # lineage / lineage_claims_separated (legacy 39D V2/V3)
+                payload["materialization_evidence"] = evidence
+            if mode in {"lineage_claims_separated", "full_lineage"}:
+                payload["planner_claims_authority"] = (
+                    "NON_AUTHORITATIVE — claims may be aspirational; "
+                    "only materialization_evidence proves column existence."
+                )
+
     if variant in {"V2", "V3"}:
         payload["observed_result"] = _compact_result(result)
     if variant == "V3":
@@ -344,10 +629,14 @@ def run_semantic_verification(
     base_url: str = "http://localhost:11434",
     chat_json_fn=None,
     independent: bool = True,
+    source_schemas: dict[str, list[str]] | None = None,
+    materialization_mode: str = "final_schema_expr_partition",
 ) -> SemanticVerificationResult:
     """Offline research entry. Never mutates plan/result.
 
     independent=True (Phase 39B default): split plan_structure vs planner_claims.
+    materialization_mode default (Phase 39H): final_schema_expr_partition
+    (expression + partition ancestry; Python exposes signatures, LLM judges).
     """
     import time
 
@@ -358,6 +647,8 @@ def run_semantic_verification(
         understanding=understanding,
         variant=variant,
         independent=independent,
+        source_schemas=source_schemas,
+        materialization_mode=materialization_mode,
     )
     assert_no_golden_leakage(payload)
     user = (
@@ -366,8 +657,30 @@ def run_semantic_verification(
         + " directly satisfy all material requirements in the user's request.\n"
         "Step order (mandatory):\n"
         "  (1) Reconstruct material requirements from user_prompt only.\n"
-        "  (2) Decide from plan_structure whether those requirements survive.\n"
+        "  (2) Decide from plan_structure + materialization_evidence (if present)\n"
+        "      whether those requirements are actually materialized.\n"
         "  (3) Optionally glance at planner_claims — never as proof of success.\n"
+        "If materialization_evidence lists unresolved_column_refs or\n"
+        "claimed_columns_absent_from_final for columns needed by the request,\n"
+        "do not treat those claimed metrics as present.\n"
+        "If join (without collapsing aggregate) retains side-specific columns\n"
+        "in final_schema, treat that as preserved distinction — not collapse.\n"
+        "Renamed distinct metric columns present in final_schema also preserve\n"
+        "distinction; _left/_right suffixes are not required.\n"
+        "Entity grain (one row per key) with multiple side metrics is not collapse.\n"
+        "If two side metrics have DIFFERENT evidence_signatures (especially\n"
+        "different filters/partitions), treat them as independent sides even when\n"
+        "they share a source file — one row carrying both columns is NOT collapse.\n"
+        "Prefer materialization_evidence over narrative collapse claims when\n"
+        "final_schema retains required sides.\n"
+        "CRITICAL: if the request needs independent comparison sides and\n"
+        "identical_evidence_signature_column_sets (or\n"
+        "equivalent_evidence_signature_groups) puts those side metrics in one\n"
+        "set, return fail — same expression over the same row population is not\n"
+        "two sides. Names/roles/suffixes do not create independence.\n"
+        "Different evidence_signatures (different filters/partitions or different\n"
+        "source lineages) may be independent even with overlapping origins.\n"
+        "Do not fail merely because sides share a source file when filters differ.\n"
         "If the request needs multiple distinct sides observable, and the ops\n"
         "collapse them into one total before contrast is possible, return fail.\n"
         "If the request only asks to combine/stack tables or compute an overall\n"

@@ -1,0 +1,269 @@
+{
+  "id": "P39E-14",
+  "family": "live_false_fail_rename_join",
+  "expected_verdict": "pass",
+  "manual_label": "valid rename×2 + join; both kwh_p1/kwh_p2 materialized; verifier FAIL wrong_output_grain",
+  "prompt": "Compare site electricity use for period P1 versus period P2 and keep both period totals visible by site_id.",
+  "source_schemas": {
+    "p1_usage.xlsx": [
+      "site_id",
+      "kwh"
+    ],
+    "p2_usage.xlsx": [
+      "site_id",
+      "kwh"
+    ]
+  },
+  "plan": {
+    "status": "planned",
+    "steps": [
+      {
+        "id": "step_rename_p1",
+        "op": "rename_columns",
+        "inputs": [
+          "p1_usage.xlsx"
+        ],
+        "output": "p1_renamed",
+        "params": {
+          "mapping": {
+            "kwh": "kwh_p1"
+          }
+        }
+      },
+      {
+        "id": "step_rename_p2",
+        "op": "rename_columns",
+        "inputs": [
+          "p2_usage.xlsx"
+        ],
+        "output": "p2_renamed",
+        "params": {
+          "mapping": {
+            "kwh": "kwh_p2"
+          }
+        }
+      },
+      {
+        "id": "step_join",
+        "op": "join",
+        "inputs": [
+          "p1_renamed",
+          "p2_renamed"
+        ],
+        "output": "joined_p1_p2",
+        "params": {
+          "left_keys": [
+            "site_id"
+          ],
+          "right_keys": [
+            "site_id"
+          ],
+          "how": "inner"
+        }
+      }
+    ],
+    "final_output": "joined_p1_p2",
+    "reason": "The user requested to compare site electricity use for period P1 versus period P2 and keep both period totals visible by site_id. A left/right join on site_id with renamed kWh columns for each period satisfies this requirement, preserving both period totals per site.",
+    "ambiguities": [],
+    "notes": [],
+    "meta": {
+      "phase": 15,
+      "parse_attempts": 1,
+      "plan_signature": "{\"final_output\": \"joined_p1_p2\", \"final_output_requirements\": {\"grain\": \"entity\", \"one_row_represents\": \"a site with its electricity use in both periods P1 and P2\", \"output_roles\": [{\"columns\": [\"site_id\"], \"role\": \"entity_key\"}, {\"columns\": [\"kwh_p1\"], \"role\": \"comparison_side\", \"side_id\": \"P1\"}, {\"columns\": [\"kwh_p2\"], \"role\": \"comparison_side\", \"side_id\": \"P2\"}], \"required_columns\": [\"site_id\", \"kwh_p1\", \"kwh_p2\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"p1_usage.xlsx\"], \"op\": \"rename_columns\", \"output\": \"p1_renamed\", \"params\": {\"mapping\": {\"kwh\": \"kwh_p1\"}}}, {\"inputs\": [\"p2_usage.xlsx\"], \"op\": \"rename_columns\", \"output\": \"p2_renamed\", \"params\": {\"mapping\": {\"kwh\": \"kwh_p2\"}}}, {\"inputs\": [\"p1_renamed\", \"p2_renamed\"], \"op\": \"join\", \"output\": \"joined_p1_p2\", \"params\": {\"how\": \"inner\", \"left_keys\": [\"site_id\"], \"right_keys\": [\"site_id\"]}}]}",
+      "operation_family": "join_only",
+      "allowed_ops": [
+        "aggregate",
+        "filter_rows",
+        "join",
+        "rename_columns",
+        "select_columns",
+        "union_rows"
+      ]
+    },
+    "final_output_requirements": {
+      "grain": "entity",
+      "required_columns": [
+        "site_id",
+        "kwh_p1",
+        "kwh_p2"
+      ],
+      "one_row_represents": "a site with its electricity use in both periods P1 and P2",
+      "output_roles": [
+        {
+          "role": "entity_key",
+          "columns": [
+            "site_id"
+          ]
+        },
+        {
+          "role": "comparison_side",
+          "columns": [
+            "kwh_p1"
+          ],
+          "side_id": "P1"
+        },
+        {
+          "role": "comparison_side",
+          "columns": [
+            "kwh_p2"
+          ],
+          "side_id": "P2"
+        }
+      ]
+    }
+  },
+  "observed_final_columns": [
+    "site_id",
+    "kwh_p1",
+    "kwh_p2"
+  ],
+  "observed_shape": [
+    2,
+    3
+  ],
+  "phase39e_verdict": "fail",
+  "phase39e_reason": "wrong_output_grain",
+  "phase39e_evidence": [
+    "The plan collapses the two periods into a single row per site_id, which does not keep both period totals visible by site_id as required."
+  ],
+  "lineage_at_freeze": {
+    "source_schemas": {
+      "p1_usage.xlsx": [
+        "site_id",
+        "kwh"
+      ],
+      "p2_usage.xlsx": [
+        "site_id",
+        "kwh"
+      ]
+    },
+    "final_schema": [
+      "site_id",
+      "kwh_p1",
+      "kwh_p2"
+    ],
+    "unresolved_column_refs": [],
+    "claimed_columns_absent_from_final": [],
+    "notes": [
+      "Structural schema evidence only. Column presence ≠ semantic adequacy.",
+      "Join name collisions become *_left / *_right by executor contract.",
+      "Do not treat planner_claims as proof that claimed columns exist."
+    ],
+    "step_outputs": {
+      "p1_renamed": [
+        "site_id",
+        "kwh_p1"
+      ],
+      "p2_renamed": [
+        "site_id",
+        "kwh_p2"
+      ],
+      "joined_p1_p2": [
+        "site_id",
+        "kwh_p1",
+        "kwh_p2"
+      ]
+    }
+  },
+  "verifier_payload_v1_at_freeze": {
+    "user_prompt": "Compare site electricity use for period P1 versus period P2 and keep both period totals visible by site_id.",
+    "plan_structure": {
+      "status": "planned",
+      "steps": [
+        {
+          "id": "step_rename_p1",
+          "op": "rename_columns",
+          "inputs": [
+            "p1_usage.xlsx"
+          ],
+          "output": "p1_renamed",
+          "params": {
+            "mapping": {
+              "kwh": "kwh_p1"
+            }
+          }
+        },
+        {
+          "id": "step_rename_p2",
+          "op": "rename_columns",
+          "inputs": [
+            "p2_usage.xlsx"
+          ],
+          "output": "p2_renamed",
+          "params": {
+            "mapping": {
+              "kwh": "kwh_p2"
+            }
+          }
+        },
+        {
+          "id": "step_join",
+          "op": "join",
+          "inputs": [
+            "p1_renamed",
+            "p2_renamed"
+          ],
+          "output": "joined_p1_p2",
+          "params": {
+            "left_keys": [
+              "site_id"
+            ],
+            "right_keys": [
+              "site_id"
+            ],
+            "how": "inner"
+          }
+        }
+      ],
+      "final_output": "joined_p1_p2"
+    },
+    "planner_claims": {
+      "final_output_requirements": {
+        "grain": "entity",
+        "required_columns": [
+          "site_id",
+          "kwh_p1",
+          "kwh_p2"
+        ],
+        "one_row_represents": "a site with its electricity use in both periods P1 and P2",
+        "output_roles": [
+          {
+            "role": "entity_key",
+            "columns": [
+              "site_id"
+            ]
+          },
+          {
+            "role": "comparison_side",
+            "columns": [
+              "kwh_p1"
+            ],
+            "side_id": "P1"
+          },
+          {
+            "role": "comparison_side",
+            "columns": [
+              "kwh_p2"
+            ],
+            "side_id": "P2"
+          }
+        ]
+      },
+      "reason": "The user requested to compare site electricity use for period P1 versus period P2 and keep both period totals visible by site_id. A left/right join on site_id with renamed kWh columns for each period satisfies this requirement, preserving both period totals per site."
+    },
+    "materialization_evidence": {
+      "final_schema": [
+        "site_id",
+        "kwh_p1",
+        "kwh_p2"
+      ],
+      "unresolved_column_refs": [],
+      "claimed_columns_absent_from_final": [],
+      "notes": [
+        "Structural schema evidence only. Column presence ≠ semantic adequacy.",
+        "Join name collisions become *_left / *_right by executor contract.",
+        "Do not treat planner_claims as proof that claimed columns exist."
+      ]
+    }
+  }
+}

@@ -70,7 +70,9 @@ def test_verifier_input_is_prompt_plus_plan_only() -> None:
         variant=FROZEN_VARIANT,
     )
     assert "user_prompt" in payload
-    assert "integration_plan" in payload
+    # Phase 39B+: independent verifier splits plan_structure vs planner_claims
+    # (legacy key integration_plan is no longer the default payload shape).
+    assert "plan_structure" in payload or "integration_plan" in payload
     assert "observed_result" not in payload
     assert "cross_file_understanding" not in payload
     assert_no_golden_leakage(payload)

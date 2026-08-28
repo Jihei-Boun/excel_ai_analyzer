@@ -1,0 +1,364 @@
+{
+  "description": "Phase 39H genuine same-origin partitioned dual-side. Expected PASS. Critical counterexamples to same-origin==invalid.",
+  "cases": [
+    {
+      "id": "GS1",
+      "family": "genuine_filter_partition_dual",
+      "expected_verdict": "pass",
+      "prompt": "Compare value totals for period A versus period B and keep both period totals visible by entity_id.",
+      "source_schemas": {
+        "data.xlsx": ["entity_id", "period", "value"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "fA",
+            "op": "filter_rows",
+            "inputs": ["data.xlsx"],
+            "output": "rows_a",
+            "params": {
+              "conditions": [{"column": "period", "op": "eq", "value": "A"}]
+            }
+          },
+          {
+            "id": "fB",
+            "op": "filter_rows",
+            "inputs": ["data.xlsx"],
+            "output": "rows_b",
+            "params": {
+              "conditions": [{"column": "period", "op": "eq", "value": "B"}]
+            }
+          },
+          {
+            "id": "aggA",
+            "op": "aggregate",
+            "inputs": ["rows_a"],
+            "output": "side_a_tbl",
+            "params": {
+              "group_by": ["entity_id"],
+              "metrics": [{"column": "value", "function": "sum", "alias": "side_a"}]
+            }
+          },
+          {
+            "id": "aggB",
+            "op": "aggregate",
+            "inputs": ["rows_b"],
+            "output": "side_b_tbl",
+            "params": {
+              "group_by": ["entity_id"],
+              "metrics": [{"column": "value", "function": "sum", "alias": "side_b"}]
+            }
+          },
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": ["side_a_tbl", "side_b_tbl"],
+            "output": "final",
+            "params": {
+              "left_keys": ["entity_id"],
+              "right_keys": ["entity_id"],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": ["entity_id", "side_a", "side_b"],
+          "output_roles": [
+            {"role": "entity_key", "columns": ["entity_id"]},
+            {"role": "comparison_side", "columns": ["side_a"], "side_id": "A"},
+            {"role": "comparison_side", "columns": ["side_b"], "side_id": "B"}
+          ]
+        }
+      }
+    },
+    {
+      "id": "GS2",
+      "family": "genuine_status_partition_dual",
+      "expected_verdict": "pass",
+      "prompt": "Compare value totals for status before versus after and keep both status totals visible by entity_id.",
+      "source_schemas": {
+        "events.xlsx": ["entity_id", "status", "value"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "fb",
+            "op": "filter_rows",
+            "inputs": ["events.xlsx"],
+            "output": "before_rows",
+            "params": {
+              "conditions": [{"column": "status", "op": "eq", "value": "before"}]
+            }
+          },
+          {
+            "id": "fa",
+            "op": "filter_rows",
+            "inputs": ["events.xlsx"],
+            "output": "after_rows",
+            "params": {
+              "conditions": [{"column": "status", "op": "eq", "value": "after"}]
+            }
+          },
+          {
+            "id": "aggB",
+            "op": "aggregate",
+            "inputs": ["before_rows"],
+            "output": "before_agg",
+            "params": {
+              "group_by": ["entity_id"],
+              "metrics": [{"column": "value", "function": "sum", "alias": "before_total"}]
+            }
+          },
+          {
+            "id": "aggA",
+            "op": "aggregate",
+            "inputs": ["after_rows"],
+            "output": "after_agg",
+            "params": {
+              "group_by": ["entity_id"],
+              "metrics": [{"column": "value", "function": "sum", "alias": "after_total"}]
+            }
+          },
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": ["before_agg", "after_agg"],
+            "output": "final",
+            "params": {
+              "left_keys": ["entity_id"],
+              "right_keys": ["entity_id"],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "required_columns": ["entity_id", "before_total", "after_total"]
+        }
+      }
+    },
+    {
+      "id": "GS3",
+      "family": "genuine_union_discriminator_note",
+      "expected_verdict": "pass",
+      "dsl_support": "partial",
+      "note": "True pivot after union retaining discriminator is not a first-class DSL op. Approximate with filter-after-union on a retained discriminator column if present in sources; otherwise document limitation.",
+      "prompt": "Compare value totals for group X versus group Y and keep both group totals visible by entity_id.",
+      "source_schemas": {
+        "part_x.xlsx": ["entity_id", "group_label", "value"],
+        "part_y.xlsx": ["entity_id", "group_label", "value"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "u",
+            "op": "union_rows",
+            "inputs": ["part_x.xlsx", "part_y.xlsx"],
+            "output": "stacked",
+            "params": {"column_policy": "aligned"}
+          },
+          {
+            "id": "fx",
+            "op": "filter_rows",
+            "inputs": ["stacked"],
+            "output": "x_rows",
+            "params": {
+              "conditions": [{"column": "group_label", "op": "eq", "value": "X"}]
+            }
+          },
+          {
+            "id": "fy",
+            "op": "filter_rows",
+            "inputs": ["stacked"],
+            "output": "y_rows",
+            "params": {
+              "conditions": [{"column": "group_label", "op": "eq", "value": "Y"}]
+            }
+          },
+          {
+            "id": "ax",
+            "op": "aggregate",
+            "inputs": ["x_rows"],
+            "output": "x_agg",
+            "params": {
+              "group_by": ["entity_id"],
+              "metrics": [{"column": "value", "function": "sum", "alias": "side_x"}]
+            }
+          },
+          {
+            "id": "ay",
+            "op": "aggregate",
+            "inputs": ["y_rows"],
+            "output": "y_agg",
+            "params": {
+              "group_by": ["entity_id"],
+              "metrics": [{"column": "value", "function": "sum", "alias": "side_y"}]
+            }
+          },
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": ["x_agg", "y_agg"],
+            "output": "final",
+            "params": {
+              "left_keys": ["entity_id"],
+              "right_keys": ["entity_id"],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "required_columns": ["entity_id", "side_x", "side_y"]
+        }
+      }
+    },
+    {
+      "id": "GS4",
+      "family": "genuine_disjoint_filters",
+      "expected_verdict": "pass",
+      "prompt": "Compare value totals for category left versus category right and keep both category totals visible by entity_id.",
+      "source_schemas": {
+        "data.xlsx": ["entity_id", "category", "value"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "fl",
+            "op": "filter_rows",
+            "inputs": ["data.xlsx"],
+            "output": "left_rows",
+            "params": {
+              "conditions": [{"column": "category", "op": "eq", "value": "left"}]
+            }
+          },
+          {
+            "id": "fr",
+            "op": "filter_rows",
+            "inputs": ["data.xlsx"],
+            "output": "right_rows",
+            "params": {
+              "conditions": [{"column": "category", "op": "eq", "value": "right"}]
+            }
+          },
+          {
+            "id": "al",
+            "op": "aggregate",
+            "inputs": ["left_rows"],
+            "output": "left_agg",
+            "params": {
+              "group_by": ["entity_id"],
+              "metrics": [{"column": "value", "function": "sum", "alias": "left_total"}]
+            }
+          },
+          {
+            "id": "ar",
+            "op": "aggregate",
+            "inputs": ["right_rows"],
+            "output": "right_agg",
+            "params": {
+              "group_by": ["entity_id"],
+              "metrics": [{"column": "value", "function": "sum", "alias": "right_total"}]
+            }
+          },
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": ["left_agg", "right_agg"],
+            "output": "final",
+            "params": {
+              "left_keys": ["entity_id"],
+              "right_keys": ["entity_id"],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "required_columns": ["entity_id", "left_total", "right_total"]
+        }
+      }
+    },
+    {
+      "id": "GS5",
+      "family": "genuine_same_origin_after_union_partition",
+      "expected_verdict": "pass",
+      "prompt": "Compare value totals for tag P versus tag Q and keep both tag totals visible by entity_id.",
+      "source_schemas": {
+        "file1.xlsx": ["entity_id", "tag", "value"],
+        "file2.xlsx": ["entity_id", "tag", "value"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "u",
+            "op": "union_rows",
+            "inputs": ["file1.xlsx", "file2.xlsx"],
+            "output": "all_rows",
+            "params": {"column_policy": "aligned"}
+          },
+          {
+            "id": "fp",
+            "op": "filter_rows",
+            "inputs": ["all_rows"],
+            "output": "p_rows",
+            "params": {
+              "conditions": [{"column": "tag", "op": "eq", "value": "P"}]
+            }
+          },
+          {
+            "id": "fq",
+            "op": "filter_rows",
+            "inputs": ["all_rows"],
+            "output": "q_rows",
+            "params": {
+              "conditions": [{"column": "tag", "op": "eq", "value": "Q"}]
+            }
+          },
+          {
+            "id": "ap",
+            "op": "aggregate",
+            "inputs": ["p_rows"],
+            "output": "p_agg",
+            "params": {
+              "group_by": ["entity_id"],
+              "metrics": [{"column": "value", "function": "sum", "alias": "tag_p"}]
+            }
+          },
+          {
+            "id": "aq",
+            "op": "aggregate",
+            "inputs": ["q_rows"],
+            "output": "q_agg",
+            "params": {
+              "group_by": ["entity_id"],
+              "metrics": [{"column": "value", "function": "sum", "alias": "tag_q"}]
+            }
+          },
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": ["p_agg", "q_agg"],
+            "output": "final",
+            "params": {
+              "left_keys": ["entity_id"],
+              "right_keys": ["entity_id"],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "required_columns": ["entity_id", "tag_p", "tag_q"]
+        }
+      }
+    }
+  ]
+}

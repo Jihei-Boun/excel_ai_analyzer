@@ -1,0 +1,551 @@
+{
+  "description": "Phase 39F matched WRONG plans. Expected non-pass.",
+  "cases": [
+    {
+      "id": "W1-rename-one-side-survives",
+      "family": "wrong_collapse",
+      "expected_verdict_not": "pass",
+      "prompt": "Compare metric values for side A versus side B and keep both side values visible by entity_id.",
+      "source_schemas": {
+        "src_a.xlsx": [
+          "entity_id",
+          "metric"
+        ],
+        "src_b.xlsx": [
+          "entity_id",
+          "metric"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "r_a",
+            "op": "rename_columns",
+            "inputs": [
+              "src_a.xlsx"
+            ],
+            "output": "a_renamed",
+            "params": {
+              "mapping": {
+                "metric": "metric_a"
+              }
+            }
+          },
+          {
+            "id": "r_b",
+            "op": "rename_columns",
+            "inputs": [
+              "src_b.xlsx"
+            ],
+            "output": "b_renamed",
+            "params": {
+              "mapping": {
+                "metric": "metric_b"
+              }
+            }
+          },
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": [
+              "a_renamed",
+              "b_renamed"
+            ],
+            "output": "joined",
+            "params": {
+              "left_keys": [
+                "entity_id"
+              ],
+              "right_keys": [
+                "entity_id"
+              ],
+              "how": "inner"
+            }
+          },
+          {
+            "id": "sel",
+            "op": "select_columns",
+            "inputs": [
+              "joined"
+            ],
+            "output": "final",
+            "params": {
+              "columns": [
+                "entity_id",
+                "metric_a"
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "entity_id",
+            "metric_a",
+            "metric_b"
+          ],
+          "output_roles": [
+            {
+              "role": "entity_key",
+              "columns": [
+                "entity_id"
+              ]
+            },
+            {
+              "role": "comparison_side",
+              "columns": [
+                "metric_a"
+              ],
+              "side_id": "A"
+            },
+            {
+              "role": "comparison_side",
+              "columns": [
+                "metric_b"
+              ],
+              "side_id": "B"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "W2-join-then-agg-both-sides",
+      "family": "wrong_collapse",
+      "expected_verdict_not": "pass",
+      "prompt": "Compare metric values for side A versus side B and keep both side values visible by entity_id.",
+      "source_schemas": {
+        "src_a.xlsx": [
+          "entity_id",
+          "metric"
+        ],
+        "src_b.xlsx": [
+          "entity_id",
+          "metric"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": [
+              "src_a.xlsx",
+              "src_b.xlsx"
+            ],
+            "output": "joined",
+            "params": {
+              "left_keys": [
+                "entity_id"
+              ],
+              "right_keys": [
+                "entity_id"
+              ],
+              "how": "inner"
+            }
+          },
+          {
+            "id": "agg",
+            "op": "aggregate",
+            "inputs": [
+              "joined"
+            ],
+            "output": "final",
+            "params": {
+              "group_by": [
+                "entity_id"
+              ],
+              "metrics": [
+                {
+                  "column": "metric_left",
+                  "function": "sum",
+                  "alias": "metric_total"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "entity_id",
+            "metric_total"
+          ],
+          "one_row_represents": "entity with combined total"
+        }
+      }
+    },
+    {
+      "id": "W3-aspirational-aliases",
+      "family": "aspirational",
+      "expected_verdict_not": "pass",
+      "prompt": "Show side A metric and side B metric together by entity_id.",
+      "source_schemas": {
+        "src_a.xlsx": [
+          "entity_id",
+          "metric"
+        ],
+        "src_b.xlsx": [
+          "entity_id",
+          "metric"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": [
+              "src_a.xlsx",
+              "src_b.xlsx"
+            ],
+            "output": "joined",
+            "params": {
+              "left_keys": [
+                "entity_id"
+              ],
+              "right_keys": [
+                "entity_id"
+              ],
+              "how": "inner"
+            }
+          },
+          {
+            "id": "agg",
+            "op": "aggregate",
+            "inputs": [
+              "joined"
+            ],
+            "output": "final",
+            "params": {
+              "group_by": [
+                "entity_id"
+              ],
+              "metrics": [
+                {
+                  "column": "src_a.xlsx.metric",
+                  "function": "sum",
+                  "alias": "metric_a"
+                },
+                {
+                  "column": "src_b.xlsx.metric",
+                  "function": "sum",
+                  "alias": "metric_b"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "entity_id",
+            "metric_a",
+            "metric_b"
+          ]
+        }
+      }
+    },
+    {
+      "id": "W4-combined-metric-only",
+      "family": "wrong_collapse",
+      "expected_verdict_not": "pass",
+      "prompt": "Compare metric values for side A versus side B and keep both side values visible by entity_id.",
+      "source_schemas": {
+        "src_a.xlsx": [
+          "entity_id",
+          "metric"
+        ],
+        "src_b.xlsx": [
+          "entity_id",
+          "metric"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "u",
+            "op": "union_rows",
+            "inputs": [
+              "src_a.xlsx",
+              "src_b.xlsx"
+            ],
+            "output": "u"
+          },
+          {
+            "id": "agg",
+            "op": "aggregate",
+            "inputs": [
+              "u"
+            ],
+            "output": "final",
+            "params": {
+              "group_by": [
+                "entity_id"
+              ],
+              "metrics": [
+                {
+                  "column": "metric",
+                  "function": "sum",
+                  "alias": "metric_combined"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "entity_id",
+            "metric_combined"
+          ],
+          "one_row_represents": "comparison of A vs B"
+        }
+      }
+    },
+    {
+      "id": "W5-roles-claim-missing-sides",
+      "family": "wrong_collapse",
+      "expected_verdict_not": "pass",
+      "prompt": "Keep both side metrics visible by entity_id.",
+      "source_schemas": {
+        "src_a.xlsx": [
+          "entity_id",
+          "metric"
+        ],
+        "src_b.xlsx": [
+          "entity_id",
+          "metric"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "u",
+            "op": "union_rows",
+            "inputs": [
+              "src_a.xlsx",
+              "src_b.xlsx"
+            ],
+            "output": "u"
+          },
+          {
+            "id": "agg",
+            "op": "aggregate",
+            "inputs": [
+              "u"
+            ],
+            "output": "final",
+            "params": {
+              "group_by": [
+                "entity_id"
+              ],
+              "metrics": [
+                {
+                  "column": "metric",
+                  "function": "sum",
+                  "alias": "metric_sum"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "entity_id",
+            "metric_a",
+            "metric_b"
+          ],
+          "output_roles": [
+            {
+              "role": "comparison_side",
+              "columns": [
+                "metric_a"
+              ],
+              "side_id": "A"
+            },
+            {
+              "role": "comparison_side",
+              "columns": [
+                "metric_b"
+              ],
+              "side_id": "B"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "W6-duplicated-mislabeled",
+      "family": "wrong_collapse",
+      "expected_verdict_not": "pass",
+      "prompt": "Compare metric values for side A versus side B and keep both side values visible by entity_id.",
+      "source_schemas": {
+        "src_a.xlsx": [
+          "entity_id",
+          "metric"
+        ],
+        "src_b.xlsx": [
+          "entity_id",
+          "metric"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "r1",
+            "op": "rename_columns",
+            "inputs": [
+              "src_a.xlsx"
+            ],
+            "output": "a1",
+            "params": {
+              "mapping": {
+                "metric": "metric_a"
+              }
+            }
+          },
+          {
+            "id": "r2",
+            "op": "rename_columns",
+            "inputs": [
+              "src_a.xlsx"
+            ],
+            "output": "a2",
+            "params": {
+              "mapping": {
+                "metric": "metric_b"
+              }
+            }
+          },
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": [
+              "a1",
+              "a2"
+            ],
+            "output": "final",
+            "params": {
+              "left_keys": [
+                "entity_id"
+              ],
+              "right_keys": [
+                "entity_id"
+              ],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "entity_id",
+            "metric_a",
+            "metric_b"
+          ],
+          "output_roles": [
+            {
+              "role": "comparison_side",
+              "columns": [
+                "metric_a"
+              ],
+              "side_id": "A"
+            },
+            {
+              "role": "comparison_side",
+              "columns": [
+                "metric_b"
+              ],
+              "side_id": "B"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "W7-same-source-both-labels",
+      "family": "wrong_collapse",
+      "expected_verdict_not": "pass",
+      "prompt": "Compare metric from source A versus source B by entity_id; keep both sides.",
+      "source_schemas": {
+        "src_a.xlsx": [
+          "entity_id",
+          "metric"
+        ],
+        "src_b.xlsx": [
+          "entity_id",
+          "metric"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "r1",
+            "op": "rename_columns",
+            "inputs": [
+              "src_a.xlsx"
+            ],
+            "output": "x",
+            "params": {
+              "mapping": {
+                "metric": "metric_a"
+              }
+            }
+          },
+          {
+            "id": "r2",
+            "op": "rename_columns",
+            "inputs": [
+              "x"
+            ],
+            "output": "y",
+            "params": {
+              "mapping": {
+                "metric_a": "metric_b"
+              }
+            }
+          },
+          {
+            "id": "sel",
+            "op": "select_columns",
+            "inputs": [
+              "y"
+            ],
+            "output": "final",
+            "params": {
+              "columns": [
+                "entity_id",
+                "metric_b"
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "reason": "Both sides labeled from the same stream.",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "entity_id",
+            "metric_a",
+            "metric_b"
+          ]
+        }
+      }
+    }
+  ]
+}

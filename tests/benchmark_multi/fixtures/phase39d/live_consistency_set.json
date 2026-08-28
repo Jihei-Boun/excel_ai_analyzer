@@ -1,0 +1,538 @@
+{
+  "description": "Phase 39D live-consistency plans (canonical; labels not shown to verifier).",
+  "cases": [
+    {
+      "id": "DS-01-join-sides",
+      "family": "dual_side_correct",
+      "expected_verdict": "pass",
+      "prompt": "Show metric_a and metric_b side by side for each entity_id.",
+      "source_schemas": {
+        "side_a.xlsx": ["entity_id", "metric"],
+        "side_b.xlsx": ["entity_id", "metric"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "j1",
+            "op": "join",
+            "inputs": ["side_a.xlsx", "side_b.xlsx"],
+            "output": "final",
+            "params": {
+              "left_keys": ["entity_id"],
+              "right_keys": ["entity_id"],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": ["entity_id", "metric_left", "metric_right"],
+          "one_row_represents": "entity with both side metrics"
+        }
+      }
+    },
+    {
+      "id": "DS-02-rename-join",
+      "family": "dual_side_correct",
+      "expected_verdict": "pass",
+      "prompt": "Keep actual and plan amounts visible together by cost_center.",
+      "source_schemas": {
+        "actual.xlsx": ["cost_center", "amount"],
+        "plan.xlsx": ["cost_center", "amount"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "r1",
+            "op": "rename_columns",
+            "inputs": ["actual.xlsx"],
+            "output": "a",
+            "params": {"mapping": {"amount": "actual_amount"}}
+          },
+          {
+            "id": "r2",
+            "op": "rename_columns",
+            "inputs": ["plan.xlsx"],
+            "output": "p",
+            "params": {"mapping": {"amount": "plan_amount"}}
+          },
+          {
+            "id": "j1",
+            "op": "join",
+            "inputs": ["a", "p"],
+            "output": "final",
+            "params": {
+              "left_keys": ["cost_center"],
+              "right_keys": ["cost_center"],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": ["cost_center", "actual_amount", "plan_amount"]
+        }
+      }
+    },
+    {
+      "id": "DS-03-dual-agg-join",
+      "family": "dual_side_correct",
+      "expected_verdict": "pass",
+      "prompt": "Compare period totals by site_id and keep both period totals visible.",
+      "source_schemas": {
+        "p1.xlsx": ["site_id", "kwh"],
+        "p2.xlsx": ["site_id", "kwh"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "a1",
+            "op": "aggregate",
+            "inputs": ["p1.xlsx"],
+            "output": "p1a",
+            "params": {
+              "group_by": ["site_id"],
+              "metrics": [{"column": "kwh", "function": "sum", "alias": "kwh_p1"}]
+            }
+          },
+          {
+            "id": "a2",
+            "op": "aggregate",
+            "inputs": ["p2.xlsx"],
+            "output": "p2a",
+            "params": {
+              "group_by": ["site_id"],
+              "metrics": [{"column": "kwh", "function": "sum", "alias": "kwh_p2"}]
+            }
+          },
+          {
+            "id": "j1",
+            "op": "join",
+            "inputs": ["p1a", "p2a"],
+            "output": "final",
+            "params": {
+              "left_keys": ["site_id"],
+              "right_keys": ["site_id"],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": ["site_id", "kwh_p1", "kwh_p2"]
+        }
+      }
+    },
+    {
+      "id": "DS-04-join-filter",
+      "family": "dual_side_correct",
+      "expected_verdict": "pass",
+      "prompt": "Which entities have a higher metric in side B than side A? Keep both metrics.",
+      "source_schemas": {
+        "a.xlsx": ["entity_id", "metric"],
+        "b.xlsx": ["entity_id", "metric"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "j1",
+            "op": "join",
+            "inputs": ["a.xlsx", "b.xlsx"],
+            "output": "joined",
+            "params": {
+              "left_keys": ["entity_id"],
+              "right_keys": ["entity_id"],
+              "how": "inner"
+            }
+          },
+          {
+            "id": "f1",
+            "op": "filter_rows",
+            "inputs": ["joined"],
+            "output": "final",
+            "params": {
+              "conditions": [
+                {
+                  "left_column": "metric_right",
+                  "operator": "gt",
+                  "right_column": "metric_left"
+                }
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": ["entity_id", "metric_left", "metric_right"]
+        }
+      }
+    },
+    {
+      "id": "AS-01-aspirational-metric-refs",
+      "family": "aspirational_ungrounded",
+      "expected_verdict_not": "pass",
+      "prompt": "Show actual spend and budgeted spend side by side for each cost_center.",
+      "source_schemas": {
+        "actuals.xlsx": ["cost_center", "amount"],
+        "budget.xlsx": ["cost_center", "amount"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "j1",
+            "op": "join",
+            "inputs": ["actuals.xlsx", "budget.xlsx"],
+            "output": "joined",
+            "params": {
+              "left_keys": ["cost_center"],
+              "right_keys": ["cost_center"],
+              "how": "inner"
+            }
+          },
+          {
+            "id": "a1",
+            "op": "aggregate",
+            "inputs": ["joined"],
+            "output": "agg",
+            "params": {
+              "group_by": ["cost_center"],
+              "metrics": [
+                {
+                  "column": "actuals.xlsx.amount",
+                  "function": "sum",
+                  "alias": "actual_spend"
+                },
+                {
+                  "column": "budget.xlsx.amount",
+                  "function": "sum",
+                  "alias": "budgeted_spend"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s1",
+            "op": "select_columns",
+            "inputs": ["agg"],
+            "output": "final",
+            "params": {
+              "columns": ["cost_center", "actual_spend", "budgeted_spend"]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": ["cost_center", "actual_spend", "budgeted_spend"],
+          "one_row_represents": "cost center with actual and budget side by side"
+        }
+      }
+    },
+    {
+      "id": "AS-02-role-nonexistent-cols",
+      "family": "aspirational_ungrounded",
+      "expected_verdict_not": "pass",
+      "prompt": "Contrast baseline and experiment scores per model_id with both sides visible.",
+      "source_schemas": {
+        "base.xlsx": ["model_id", "score"],
+        "exp.xlsx": ["model_id", "score"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "u1",
+            "op": "union_rows",
+            "inputs": ["base.xlsx", "exp.xlsx"],
+            "output": "u",
+            "params": {"column_policy": "aligned"}
+          },
+          {
+            "id": "a1",
+            "op": "aggregate",
+            "inputs": ["u"],
+            "output": "final",
+            "params": {
+              "group_by": ["model_id"],
+              "metrics": [
+                {"column": "score", "function": "mean", "alias": "avg_score"}
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": ["model_id", "baseline_score", "experiment_score"],
+          "output_roles": [
+            {"role": "entity_key", "columns": ["model_id"]},
+            {
+              "role": "comparison_side",
+              "side_id": "baseline",
+              "columns": ["baseline_score"]
+            },
+            {
+              "role": "comparison_side",
+              "side_id": "experiment",
+              "columns": ["experiment_score"]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "AS-03-one-side-collapsed",
+      "family": "aspirational_ungrounded",
+      "expected_verdict_not": "pass",
+      "prompt": "Compare P1 versus P2 kwh by site_id; keep both period totals visible.",
+      "source_schemas": {
+        "p1.xlsx": ["site_id", "kwh"],
+        "p2.xlsx": ["site_id", "kwh"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "u1",
+            "op": "union_rows",
+            "inputs": ["p1.xlsx", "p2.xlsx"],
+            "output": "u",
+            "params": {"column_policy": "aligned"}
+          },
+          {
+            "id": "a1",
+            "op": "aggregate",
+            "inputs": ["u"],
+            "output": "final",
+            "params": {
+              "group_by": ["site_id"],
+              "metrics": [
+                {"column": "kwh", "function": "sum", "alias": "total_kwh"}
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["site_id", "total_kwh"],
+          "one_row_represents": "period comparison by site"
+        }
+      }
+    },
+    {
+      "id": "AS-04-select-drops-side",
+      "family": "aspirational_ungrounded",
+      "expected_verdict_not": "pass",
+      "prompt": "Keep both period kwh values visible by site_id.",
+      "source_schemas": {
+        "p1.xlsx": ["site_id", "kwh"],
+        "p2.xlsx": ["site_id", "kwh"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "j1",
+            "op": "join",
+            "inputs": ["p1.xlsx", "p2.xlsx"],
+            "output": "joined",
+            "params": {
+              "left_keys": ["site_id"],
+              "right_keys": ["site_id"],
+              "how": "inner"
+            }
+          },
+          {
+            "id": "s1",
+            "op": "select_columns",
+            "inputs": ["joined"],
+            "output": "final",
+            "params": {"columns": ["site_id", "kwh_left"]}
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": ["site_id", "kwh_left", "kwh_right"]
+        }
+      }
+    },
+    {
+      "id": "VC-01-union-aggregate-total",
+      "family": "valid_non_comparison",
+      "expected_verdict": "pass",
+      "prompt": "Combine both files and show total amount by cost_center.",
+      "source_schemas": {
+        "a.xlsx": ["cost_center", "amount"],
+        "b.xlsx": ["cost_center", "amount"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "u1",
+            "op": "union_rows",
+            "inputs": ["a.xlsx", "b.xlsx"],
+            "output": "u",
+            "params": {"column_policy": "aligned"}
+          },
+          {
+            "id": "a1",
+            "op": "aggregate",
+            "inputs": ["u"],
+            "output": "final",
+            "params": {
+              "group_by": ["cost_center"],
+              "metrics": [
+                {"column": "amount", "function": "sum", "alias": "total_amount"}
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["cost_center", "total_amount"]
+        }
+      }
+    },
+    {
+      "id": "VC-02-overall-total",
+      "family": "valid_non_comparison",
+      "expected_verdict": "pass",
+      "prompt": "What is the overall amount total across both files?",
+      "source_schemas": {
+        "a.xlsx": ["amount"],
+        "b.xlsx": ["amount"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "u1",
+            "op": "union_rows",
+            "inputs": ["a.xlsx", "b.xlsx"],
+            "output": "u",
+            "params": {"column_policy": "aligned"}
+          },
+          {
+            "id": "a1",
+            "op": "aggregate",
+            "inputs": ["u"],
+            "output": "final",
+            "params": {
+              "group_by": [],
+              "metrics": [
+                {"column": "amount", "function": "sum", "alias": "overall_total"}
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "summary",
+          "required_columns": ["overall_total"]
+        }
+      }
+    },
+    {
+      "id": "VC-03-append",
+      "family": "valid_non_comparison",
+      "expected_verdict": "pass",
+      "prompt": "Append the two tables into one detail table.",
+      "source_schemas": {
+        "a.xlsx": ["entity_id", "value"],
+        "b.xlsx": ["entity_id", "value"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "u1",
+            "op": "union_rows",
+            "inputs": ["a.xlsx", "b.xlsx"],
+            "output": "final",
+            "params": {"column_policy": "aligned"}
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "detail",
+          "required_columns": ["entity_id", "value"]
+        }
+      }
+    },
+    {
+      "id": "VC-04-single-source-group",
+      "family": "valid_non_comparison",
+      "expected_verdict": "pass",
+      "prompt": "Sum amount by cost_center from the ledger.",
+      "source_schemas": {
+        "ledger.xlsx": ["cost_center", "amount"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "a1",
+            "op": "aggregate",
+            "inputs": ["ledger.xlsx"],
+            "output": "final",
+            "params": {
+              "group_by": ["cost_center"],
+              "metrics": [
+                {"column": "amount", "function": "sum", "alias": "total_amount"}
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "group",
+          "required_columns": ["cost_center", "total_amount"]
+        }
+      }
+    },
+    {
+      "id": "NR-01-roles-absent-valid-dual",
+      "family": "roles_absent_valid",
+      "expected_verdict": "pass",
+      "prompt": "Show both period kwh values by site_id.",
+      "source_schemas": {
+        "p1.xlsx": ["site_id", "kwh"],
+        "p2.xlsx": ["site_id", "kwh"]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "j1",
+            "op": "join",
+            "inputs": ["p1.xlsx", "p2.xlsx"],
+            "output": "final",
+            "params": {
+              "left_keys": ["site_id"],
+              "right_keys": ["site_id"],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": ["site_id", "kwh_left", "kwh_right"]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,151 @@
+{
+  "id": "P39G-11",
+  "family": "silent_wrong_fake_dual_union_double_agg",
+  "expected_verdict_not": "pass",
+  "prompt": "Compare node electricity use for window W1 versus window W2 and keep both window totals visible by node_id.",
+  "source_schemas": {
+    "w1_usage.xlsx": [
+      "node_id",
+      "kwh"
+    ],
+    "w2_usage.xlsx": [
+      "node_id",
+      "kwh"
+    ]
+  },
+  "plan": {
+    "status": "planned",
+    "steps": [
+      {
+        "id": "step_1",
+        "op": "union_rows",
+        "inputs": [
+          "w1_usage.xlsx",
+          "w2_usage.xlsx"
+        ],
+        "output": "combined_usage",
+        "params": {
+          "column_policy": "aligned"
+        }
+      },
+      {
+        "id": "step_2",
+        "op": "aggregate",
+        "inputs": [
+          "combined_usage"
+        ],
+        "output": "aggregated_usage",
+        "params": {
+          "group_by": [
+            "node_id"
+          ],
+          "metrics": [
+            {
+              "column": "kwh",
+              "function": "sum",
+              "alias": "total_kwh_w1"
+            },
+            {
+              "column": "kwh",
+              "function": "sum",
+              "alias": "total_kwh_w2"
+            }
+          ]
+        }
+      },
+      {
+        "id": "step_3",
+        "op": "select_columns",
+        "inputs": [
+          "aggregated_usage"
+        ],
+        "output": "final_output",
+        "params": {
+          "columns": [
+            "node_id",
+            "total_kwh_w1",
+            "total_kwh_w2"
+          ]
+        }
+      }
+    ],
+    "final_output": "final_output",
+    "reason": null,
+    "ambiguities": [],
+    "notes": [],
+    "meta": {
+      "phase": 15,
+      "parse_attempts": 1,
+      "plan_signature": "{\"final_output\": \"final_output\", \"final_output_requirements\": {\"grain\": \"group\", \"one_row_represents\": \"Total electricity usage by node_id for both windows\", \"output_roles\": [{\"columns\": [\"node_id\"], \"role\": \"entity_key\"}, {\"columns\": [\"total_kwh_w1\"], \"role\": \"comparison_side\", \"side_id\": \"A\"}, {\"columns\": [\"total_kwh_w2\"], \"role\": \"comparison_side\", \"side_id\": \"B\"}], \"required_columns\": [\"node_id\", \"total_kwh_w1\", \"total_kwh_w2\"]}, \"status\": \"planned\", \"steps\": [{\"inputs\": [\"w1_usage.xlsx\", \"w2_usage.xlsx\"], \"op\": \"union_rows\", \"output\": \"combined_usage\", \"params\": {\"column_policy\": \"aligned\"}}, {\"inputs\": [\"combined_usage\"], \"op\": \"aggregate\", \"output\": \"aggregated_usage\", \"params\": {\"group_by\": [\"node_id\"], \"metrics\": [{\"alias\": \"total_kwh_w1\", \"column\": \"kwh\", \"function\": \"sum\"}, {\"alias\": \"total_kwh_w2\", \"column\": \"kwh\", \"function\": \"sum\"}]}}, {\"inputs\": [\"aggregated_usage\"], \"op\": \"select_columns\", \"output\": \"final_output\", \"params\": {\"columns\": [\"node_id\", \"total_kwh_w1\", \"total_kwh_w2\"]}}]}",
+      "operation_family": "union_then_aggregate",
+      "allowed_ops": [
+        "aggregate",
+        "filter_rows",
+        "join",
+        "rename_columns",
+        "select_columns",
+        "union_rows"
+      ]
+    },
+    "final_output_requirements": {
+      "grain": "group",
+      "required_columns": [
+        "node_id",
+        "total_kwh_w1",
+        "total_kwh_w2"
+      ],
+      "one_row_represents": "Total electricity usage by node_id for both windows",
+      "output_roles": [
+        {
+          "role": "entity_key",
+          "columns": [
+            "node_id"
+          ]
+        },
+        {
+          "role": "comparison_side",
+          "columns": [
+            "total_kwh_w1"
+          ],
+          "side_id": "A"
+        },
+        {
+          "role": "comparison_side",
+          "columns": [
+            "total_kwh_w2"
+          ],
+          "side_id": "B"
+        }
+      ]
+    }
+  },
+  "phase39g_verdict": "pass",
+  "phase39g_reason": "satisfied",
+  "phase39g_evidence": [
+    "The plan combines the usage data from both windows and aggregates it by node_id, keeping separate totals for each window.",
+    "The final schema includes 'node_id', 'total_kwh_w1', and 'total_kwh_w2', which are required to satisfy the request.",
+    "Distinct metric columns ('total_kwh_w1' and 'total_kwh_w2') from different sources (w1_usage.xlsx and w2_usage.xlsx) are independently surviving in final_column_origins."
+  ],
+  "result_fingerprint": {
+    "shape": [
+      2,
+      3
+    ],
+    "columns": [
+      "node_id",
+      "total_kwh_w1",
+      "total_kwh_w2"
+    ],
+    "dtypes": {
+      "node_id": "object",
+      "total_kwh_w1": "int64",
+      "total_kwh_w2": "int64"
+    },
+    "null_counts": {
+      "node_id": 0,
+      "total_kwh_w1": 0,
+      "total_kwh_w2": 0
+    },
+    "content_hash_head50": "168286ab98e5635b8cc27b39"
+  }
+}

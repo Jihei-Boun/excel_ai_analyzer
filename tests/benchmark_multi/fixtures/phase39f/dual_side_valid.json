@@ -1,0 +1,647 @@
+{
+  "description": "Phase 39F generic VALID dual-side false-fail family (neutral schemas). Expected PASS.",
+  "cases": [
+    {
+      "id": "FF1-rename-rename-join",
+      "family": "valid_dual_side",
+      "expected_verdict": "pass",
+      "prompt": "Compare metric values for side A versus side B and keep both side values visible by entity_id.",
+      "source_schemas": {
+        "src_a.xlsx": [
+          "entity_id",
+          "metric"
+        ],
+        "src_b.xlsx": [
+          "entity_id",
+          "metric"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "r_a",
+            "op": "rename_columns",
+            "inputs": [
+              "src_a.xlsx"
+            ],
+            "output": "a_renamed",
+            "params": {
+              "mapping": {
+                "metric": "metric_a"
+              }
+            }
+          },
+          {
+            "id": "r_b",
+            "op": "rename_columns",
+            "inputs": [
+              "src_b.xlsx"
+            ],
+            "output": "b_renamed",
+            "params": {
+              "mapping": {
+                "metric": "metric_b"
+              }
+            }
+          },
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": [
+              "a_renamed",
+              "b_renamed"
+            ],
+            "output": "final",
+            "params": {
+              "left_keys": [
+                "entity_id"
+              ],
+              "right_keys": [
+                "entity_id"
+              ],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "final",
+        "reason": "Rename then join keeps both side metrics.",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "entity_id",
+            "metric_a",
+            "metric_b"
+          ],
+          "one_row_represents": "one entity with both side metrics",
+          "output_roles": [
+            {
+              "role": "entity_key",
+              "columns": [
+                "entity_id"
+              ]
+            },
+            {
+              "role": "comparison_side",
+              "columns": [
+                "metric_a"
+              ],
+              "side_id": "A"
+            },
+            {
+              "role": "comparison_side",
+              "columns": [
+                "metric_b"
+              ],
+              "side_id": "B"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "FF2-direct-join-suffixes",
+      "family": "valid_dual_side",
+      "expected_verdict": "pass",
+      "prompt": "Show both input metrics side by side for each entity_id.",
+      "source_schemas": {
+        "src_a.xlsx": [
+          "entity_id",
+          "metric"
+        ],
+        "src_b.xlsx": [
+          "entity_id",
+          "metric"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": [
+              "src_a.xlsx",
+              "src_b.xlsx"
+            ],
+            "output": "final",
+            "params": {
+              "left_keys": [
+                "entity_id"
+              ],
+              "right_keys": [
+                "entity_id"
+              ],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "entity_id",
+            "metric_left",
+            "metric_right"
+          ],
+          "one_row_represents": "one entity with left and right metrics"
+        }
+      }
+    },
+    {
+      "id": "FF3-agg-agg-join",
+      "family": "valid_dual_side",
+      "expected_verdict": "pass",
+      "prompt": "Compare total metric by entity_id for window A versus window B; keep both totals visible.",
+      "source_schemas": {
+        "win_a.xlsx": [
+          "entity_id",
+          "metric",
+          "detail_id"
+        ],
+        "win_b.xlsx": [
+          "entity_id",
+          "metric",
+          "detail_id"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "agg_a",
+            "op": "aggregate",
+            "inputs": [
+              "win_a.xlsx"
+            ],
+            "output": "a_tot",
+            "params": {
+              "group_by": [
+                "entity_id"
+              ],
+              "metrics": [
+                {
+                  "column": "metric",
+                  "alias": "metric_a_total",
+                  "function": "sum"
+                }
+              ]
+            }
+          },
+          {
+            "id": "agg_b",
+            "op": "aggregate",
+            "inputs": [
+              "win_b.xlsx"
+            ],
+            "output": "b_tot",
+            "params": {
+              "group_by": [
+                "entity_id"
+              ],
+              "metrics": [
+                {
+                  "column": "metric",
+                  "alias": "metric_b_total",
+                  "function": "sum"
+                }
+              ]
+            }
+          },
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": [
+              "a_tot",
+              "b_tot"
+            ],
+            "output": "final",
+            "params": {
+              "left_keys": [
+                "entity_id"
+              ],
+              "right_keys": [
+                "entity_id"
+              ],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "entity_id",
+            "metric_a_total",
+            "metric_b_total"
+          ]
+        }
+      }
+    },
+    {
+      "id": "FF4-select-rename-join",
+      "family": "valid_dual_side",
+      "expected_verdict": "pass",
+      "prompt": "Keep value_a and value_b visible together by key_id.",
+      "source_schemas": {
+        "left.xlsx": [
+          "key_id",
+          "value",
+          "noise"
+        ],
+        "right.xlsx": [
+          "key_id",
+          "value",
+          "noise"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "s1",
+            "op": "select_columns",
+            "inputs": [
+              "left.xlsx"
+            ],
+            "output": "l1",
+            "params": {
+              "columns": [
+                "key_id",
+                "value"
+              ]
+            }
+          },
+          {
+            "id": "s2",
+            "op": "select_columns",
+            "inputs": [
+              "right.xlsx"
+            ],
+            "output": "r1",
+            "params": {
+              "columns": [
+                "key_id",
+                "value"
+              ]
+            }
+          },
+          {
+            "id": "rn1",
+            "op": "rename_columns",
+            "inputs": [
+              "l1"
+            ],
+            "output": "l2",
+            "params": {
+              "mapping": {
+                "value": "value_a"
+              }
+            }
+          },
+          {
+            "id": "rn2",
+            "op": "rename_columns",
+            "inputs": [
+              "r1"
+            ],
+            "output": "r2",
+            "params": {
+              "mapping": {
+                "value": "value_b"
+              }
+            }
+          },
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": [
+              "l2",
+              "r2"
+            ],
+            "output": "final",
+            "params": {
+              "left_keys": [
+                "key_id"
+              ],
+              "right_keys": [
+                "key_id"
+              ],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "key_id",
+            "value_a",
+            "value_b"
+          ]
+        }
+      }
+    },
+    {
+      "id": "FF5-join-select-dual",
+      "family": "valid_dual_side",
+      "expected_verdict": "pass",
+      "prompt": "After joining both sources, show entity_id with both side metrics.",
+      "source_schemas": {
+        "src_a.xlsx": [
+          "entity_id",
+          "metric",
+          "extra_a"
+        ],
+        "src_b.xlsx": [
+          "entity_id",
+          "metric",
+          "extra_b"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": [
+              "src_a.xlsx",
+              "src_b.xlsx"
+            ],
+            "output": "joined",
+            "params": {
+              "left_keys": [
+                "entity_id"
+              ],
+              "right_keys": [
+                "entity_id"
+              ],
+              "how": "inner"
+            }
+          },
+          {
+            "id": "sel",
+            "op": "select_columns",
+            "inputs": [
+              "joined"
+            ],
+            "output": "final",
+            "params": {
+              "columns": [
+                "entity_id",
+                "metric_left",
+                "metric_right"
+              ]
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "entity_id",
+            "metric_left",
+            "metric_right"
+          ]
+        }
+      }
+    },
+    {
+      "id": "FF6-dual-no-roles",
+      "family": "valid_dual_side",
+      "expected_verdict": "pass",
+      "prompt": "Keep score from batch1 and batch2 visible by item_id.",
+      "source_schemas": {
+        "batch1.xlsx": [
+          "item_id",
+          "score"
+        ],
+        "batch2.xlsx": [
+          "item_id",
+          "score"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "r1",
+            "op": "rename_columns",
+            "inputs": [
+              "batch1.xlsx"
+            ],
+            "output": "b1",
+            "params": {
+              "mapping": {
+                "score": "score_batch1"
+              }
+            }
+          },
+          {
+            "id": "r2",
+            "op": "rename_columns",
+            "inputs": [
+              "batch2.xlsx"
+            ],
+            "output": "b2",
+            "params": {
+              "mapping": {
+                "score": "score_batch2"
+              }
+            }
+          },
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": [
+              "b1",
+              "b2"
+            ],
+            "output": "final",
+            "params": {
+              "left_keys": [
+                "item_id"
+              ],
+              "right_keys": [
+                "item_id"
+              ],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "final",
+        "reason": "Dual rename join.",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "item_id",
+            "score_batch1",
+            "score_batch2"
+          ],
+          "one_row_represents": "one item with both batch scores"
+        }
+      }
+    },
+    {
+      "id": "FF7-dual-with-roles",
+      "family": "valid_dual_side",
+      "expected_verdict": "pass",
+      "prompt": "Keep score from batch1 and batch2 visible by item_id.",
+      "source_schemas": {
+        "batch1.xlsx": [
+          "item_id",
+          "score"
+        ],
+        "batch2.xlsx": [
+          "item_id",
+          "score"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "r1",
+            "op": "rename_columns",
+            "inputs": [
+              "batch1.xlsx"
+            ],
+            "output": "b1",
+            "params": {
+              "mapping": {
+                "score": "score_batch1"
+              }
+            }
+          },
+          {
+            "id": "r2",
+            "op": "rename_columns",
+            "inputs": [
+              "batch2.xlsx"
+            ],
+            "output": "b2",
+            "params": {
+              "mapping": {
+                "score": "score_batch2"
+              }
+            }
+          },
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": [
+              "b1",
+              "b2"
+            ],
+            "output": "final",
+            "params": {
+              "left_keys": [
+                "item_id"
+              ],
+              "right_keys": [
+                "item_id"
+              ],
+              "how": "inner"
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "item_id",
+            "score_batch1",
+            "score_batch2"
+          ],
+          "one_row_represents": "one item with both batch scores",
+          "output_roles": [
+            {
+              "role": "entity_key",
+              "columns": [
+                "item_id"
+              ]
+            },
+            {
+              "role": "comparison_side",
+              "columns": [
+                "score_batch1"
+              ],
+              "side_id": "batch1"
+            },
+            {
+              "role": "comparison_side",
+              "columns": [
+                "score_batch2"
+              ],
+              "side_id": "batch2"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "FF8-same-schema-alt-history",
+      "family": "valid_dual_side",
+      "expected_verdict": "pass",
+      "prompt": "Compare metric values for side A versus side B and keep both side values visible by entity_id.",
+      "source_schemas": {
+        "src_a.xlsx": [
+          "entity_id",
+          "metric"
+        ],
+        "src_b.xlsx": [
+          "entity_id",
+          "metric"
+        ]
+      },
+      "plan": {
+        "status": "planned",
+        "steps": [
+          {
+            "id": "j",
+            "op": "join",
+            "inputs": [
+              "src_a.xlsx",
+              "src_b.xlsx"
+            ],
+            "output": "joined",
+            "params": {
+              "left_keys": [
+                "entity_id"
+              ],
+              "right_keys": [
+                "entity_id"
+              ],
+              "how": "inner"
+            }
+          },
+          {
+            "id": "rn",
+            "op": "rename_columns",
+            "inputs": [
+              "joined"
+            ],
+            "output": "final",
+            "params": {
+              "mapping": {
+                "metric_left": "metric_a",
+                "metric_right": "metric_b"
+              }
+            }
+          }
+        ],
+        "final_output": "final",
+        "final_output_requirements": {
+          "grain": "entity",
+          "required_columns": [
+            "entity_id",
+            "metric_a",
+            "metric_b"
+          ],
+          "one_row_represents": "one entity with both side metrics"
+        }
+      }
+    }
+  ]
+}
