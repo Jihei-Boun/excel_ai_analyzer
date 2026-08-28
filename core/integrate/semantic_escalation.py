@@ -225,6 +225,21 @@ def run_integration_pipeline_semantic_experimental(
     escalate, reason = _should_semantic_escalate(
         verification, uncertain_policy=cfg.uncertain_policy
     )
+    # Phase 39L: observational escalation attach (does not alter decision).
+    try:
+        from core.integrate.verifier_invocation_capture import (
+            capture_enabled,
+            update_last_escalation,
+        )
+
+        if capture_enabled():
+            update_last_escalation(
+                escalation_triggered=bool(escalate),
+                escalation_type=str(reason) if reason is not None else None,
+            )
+    except Exception:
+        pass
+
     if not escalate:
         trace.semantic_escalation_reason = reason
         base.metadata["semantic_escalation"] = trace.to_dict()

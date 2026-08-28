@@ -651,7 +651,7 @@ def run_semantic_verification(
         materialization_mode=materialization_mode,
     )
     assert_no_golden_leakage(payload)
-    user = (
+    user_prefix = (
         "Determine whether the proposed integration plan"
         + (" and observed result" if variant != "V1" else "")
         + " directly satisfy all material requirements in the user's request.\n"
@@ -686,17 +686,71 @@ def run_semantic_verification(
         "If the request only asks to combine/stack tables or compute an overall\n"
         "total across inputs, do not invent a contrast requirement.\n"
         "Do not repair the plan. If evidence is insufficient, return uncertain.\n\n"
-        + json.dumps(payload, ensure_ascii=False, indent=2)
     )
+    user = user_prefix + json.dumps(payload, ensure_ascii=False, indent=2)
+
+    # Phase 39L: capture exact pre-invocation input (observation only).
+    from core.integrate.verifier_invocation_capture import (
+        attach_response,
+        build_invocation_record,
+        capture_enabled,
+        env_case_id,
+        env_request_id,
+        persist_record,
+    )
+
+    capture_rec = None
+    if capture_enabled():
+        capture_rec = build_invocation_record(
+            verbatim_user_message=user,
+            system_prompt=_VERIFIER_SYSTEM,
+            user_instruction_prefix=user_prefix,
+            structured_payload=payload,
+            model=model,
+            base_url=base_url,
+            timeout_s=300,
+            temperature=0.0,
+            format_json=True,
+            materialization_mode=materialization_mode,
+            variant=variant,
+            independent=independent,
+            result_provided=result is not None,
+            request_id=env_request_id(),
+            case_id=env_case_id(),
+            chat_path=(
+                "injected_chat_json_fn"
+                if chat_json_fn is not None
+                else "core.llm_client._chat_raw+extract"
+            ),
+        )
+
     fn = chat_json_fn or chat_json
     t0 = time.time()
+    raw_text: str | None = None
+    raw: dict[str, Any] | None = None
     try:
-        raw = fn(
-            user,
-            system=_VERIFIER_SYSTEM,
-            base_url=base_url,
-            model=model,
-        )
+        # Prefer raw-text path for capture fidelity when using default client.
+        if capture_rec is not None and chat_json_fn is None:
+            from core.llm_client import _chat_raw, _extract_json_object
+
+            raw_text = _chat_raw(
+                user,
+                system=_VERIFIER_SYSTEM,
+                base_url=base_url,
+                model=model,
+                timeout=300,
+                format_json=True,
+            )
+            raw = _extract_json_object(raw_text)
+        else:
+            raw = fn(
+                user,
+                system=_VERIFIER_SYSTEM,
+                base_url=base_url,
+                model=model,
+            )
+            if isinstance(raw, dict):
+                raw_text = json.dumps(raw, ensure_ascii=False)
         out = _normalize_verdict(raw if isinstance(raw, dict) else {})
     except Exception as exc:  # noqa: BLE001
         out = SemanticVerificationResult(
@@ -704,9 +758,41 @@ def run_semantic_verification(
             parse_ok=False,
             error=f"{type(exc).__name__}: {exc}",
         )
+        if capture_rec is not None:
+            capture_rec = attach_response(
+                capture_rec,
+                raw_text=raw_text,
+                raw_parsed=raw if isinstance(raw, dict) else None,
+                parsed_verdict=out.verdict,
+                parsed_reason_code=out.reason_code,
+                parsed_evidence=list(out.evidence or []),
+                parse_ok=False,
+                parse_error=out.error,
+                latency_s=round(time.time() - t0, 3),
+            )
+            persist_record(capture_rec)
+            out.elapsed_s = capture_rec["latency_s"]
+            out.model = model
+            out.variant = variant
+            return out
+
     out.elapsed_s = round(time.time() - t0, 2)
     out.model = model
     out.variant = variant
+
+    if capture_rec is not None:
+        capture_rec = attach_response(
+            capture_rec,
+            raw_text=raw_text,
+            raw_parsed=raw if isinstance(raw, dict) else None,
+            parsed_verdict=out.verdict,
+            parsed_reason_code=out.reason_code,
+            parsed_evidence=list(out.evidence or []),
+            parse_ok=out.parse_ok,
+            parse_error=out.error,
+            latency_s=out.elapsed_s,
+        )
+        persist_record(capture_rec)
     return out
 
 
