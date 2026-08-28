@@ -318,6 +318,14 @@ def _merge_escalation_result(
             "exhausted",
         )
     }
+    # Phase 39O: observational fingerprints for failure-escalation parent/child.
+    try:
+        from core.integrate.attempt_lineage import plan_fingerprint
+
+        out.metadata["fast_path_plan_fingerprint"] = plan_fingerprint(fast.plan)
+        out.metadata["strong_path_plan_fingerprint"] = plan_fingerprint(strong.plan)
+    except Exception:
+        pass
     return out
 
 

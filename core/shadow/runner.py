@@ -87,6 +87,12 @@ def map_integration_result_telemetry(result: Any) -> dict[str, Any]:
             getattr(result, "final_output", None)
         ),
         "shadow_success": getattr(result, "status", None) == "success",
+        # Phase 39O attempt lineage (null-safe for historical records)
+        "attempt_lineage": meta.get("attempt_lineage"),
+        "verified_attempt_id": meta.get("verified_attempt_id"),
+        "final_attempt_id": meta.get("final_attempt_id"),
+        "verified_plan_fingerprint": meta.get("verified_plan_fingerprint"),
+        "final_plan_fingerprint": meta.get("final_plan_fingerprint"),
     }
     out["total_32b_calls"] = int(out["failure_32b_invoked"]) + int(
         out["semantic_32b_invoked"]

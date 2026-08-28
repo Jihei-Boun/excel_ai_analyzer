@@ -90,6 +90,18 @@ def build_invocation_record(
     case_id: str | None = None,
     result_provided: bool,
     chat_path: str,
+    # Phase 39O — attempt lineage (optional; null for historical / absent)
+    attempt_id: str | None = None,
+    plan_fingerprint: str | None = None,
+    result_fingerprint: str | None = None,
+    planner_model: str | None = None,
+    attempt_stage: str | None = None,
+    parent_attempt_id: str | None = None,
+    escalation_trigger: str | None = None,
+    became_final: bool | None = None,
+    final_attempt_id: str | None = None,
+    attempt_disposition: str | None = None,
+    lineage_schema_version: int | None = None,
 ) -> dict[str, Any]:
     """Assemble a capture record. Does not write to disk."""
     exact_input = {
@@ -123,6 +135,18 @@ def build_invocation_record(
         "timeout_s": timeout_s,
         "retry_attempt": retry_attempt,
         "result_provided": result_provided,
+        # Phase 39O lineage (absent => null; do not invent historical IDs)
+        "attempt_id": attempt_id,
+        "plan_fingerprint": plan_fingerprint,
+        "result_fingerprint": result_fingerprint,
+        "planner_model": planner_model,
+        "attempt_stage": attempt_stage,
+        "parent_attempt_id": parent_attempt_id,
+        "escalation_trigger": escalation_trigger,
+        "became_final": became_final,
+        "final_attempt_id": final_attempt_id,
+        "attempt_disposition": attempt_disposition,
+        "lineage_schema_version": lineage_schema_version,
         "exact_verifier_input": exact_input,
         "exact_payload_hash": raw_payload_hash,
         "canonical_structured_payload": structured_payload,
@@ -144,6 +168,7 @@ def build_invocation_record(
             "exact_verifier_input is the system+user messages at capture point",
             "canonical_structured_payload is the JSON object embedded in the user message",
             "Python does not judge whether model claims are hallucinated",
+            "attempt_id links this invocation to the candidate attempt evaluated",
         ],
     }
 
@@ -246,6 +271,35 @@ def update_last_escalation(
             escalation_type=escalation_type,
         )
         updated["escalation_attached_at_utc"] = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S.%fZ"
+        )
+        persist_record(updated)
+    except Exception:
+        return
+
+
+def update_last_lineage_finalization(
+    *,
+    became_final: bool | None,
+    final_attempt_id: str | None,
+    attempt_disposition: str | None = None,
+) -> None:
+    """Append-only finalization linkage for the most recent capture.
+
+    Does not rewrite plan_fingerprint / attempt_id (attempt immutability).
+    """
+    global _last_record
+    if _last_record is None:
+        return
+    try:
+        updated = dict(_last_record)
+        if became_final is not None:
+            updated["became_final"] = became_final
+        if final_attempt_id is not None:
+            updated["final_attempt_id"] = final_attempt_id
+        if attempt_disposition is not None:
+            updated["attempt_disposition"] = attempt_disposition
+        updated["lineage_finalized_at_utc"] = datetime.now(timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%S.%fZ"
         )
         persist_record(updated)

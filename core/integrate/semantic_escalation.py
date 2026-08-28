@@ -204,6 +204,86 @@ def run_integration_pipeline_semantic_experimental(
         str(name): [str(c) for c in df.columns]
         for name, df in sources.items()
     }
+
+    # Phase 39O: attempt lineage (observation only; never alters escalate decision).
+    lineage = None
+    verified_attempt = None
+    try:
+        from core.integrate.attempt_lineage import (
+            DISPOSITION_REJECTED_BY_SEMANTIC_VERIFIER,
+            DISPOSITION_SUPERSEDED_BY_FAILURE_ESCALATION,
+            RequestAttemptLineage,
+            STAGE_FAILURE_ESCALATION_SUCCESS,
+            STAGE_FAST_PATH,
+            STAGE_FAST_SUCCESS,
+            STAGE_SEMANTIC_STRONG,
+            TRIGGER_FAILURE_ESCALATION,
+            TRIGGER_NONE,
+            TRIGGER_SEMANTIC_ESCALATION,
+            plan_fingerprint,
+            safe_lineage_call,
+        )
+        from core.integrate.verifier_invocation_capture import (
+            env_request_id,
+            get_last_record_for_tests,
+            update_last_lineage_finalization,
+        )
+
+        lineage = RequestAttemptLineage(request_id=env_request_id())
+        parent_id = None
+        if bool(trace.failure_escalated):
+            parent = lineage.create_attempt(
+                stage=STAGE_FAST_PATH,
+                plan=None,
+                planner_model="qwen2.5:7b",
+                planner_path="fast",
+                escalation_trigger=TRIGGER_NONE,
+                notes=["failure_escalation_parent"],
+            )
+            fp = (base.metadata or {}).get("fast_path_plan_fingerprint")
+            if isinstance(fp, str) and fp:
+                parent.plan_fingerprint = fp
+            lineage.set_disposition(
+                parent.attempt_id, DISPOSITION_SUPERSEDED_BY_FAILURE_ESCALATION
+            )
+            parent_id = parent.attempt_id
+            verified_attempt = lineage.create_attempt(
+                stage=STAGE_FAILURE_ESCALATION_SUCCESS,
+                plan=base.plan,
+                planner_model=str(
+                    (base.metadata or {}).get("final_model") or cfg.strong_model
+                ),
+                planner_path="strong",
+                parent_attempt_id=parent_id,
+                escalation_trigger=TRIGGER_FAILURE_ESCALATION,
+            )
+        else:
+            verified_attempt = lineage.create_attempt(
+                stage=STAGE_FAST_SUCCESS,
+                plan=base.plan,
+                planner_model=str(
+                    (base.metadata or {}).get("final_model") or "qwen2.5:7b"
+                ),
+                planner_path="fast",
+                escalation_trigger=TRIGGER_NONE,
+            )
+    except Exception as _lin_exc:  # noqa: BLE001
+        lineage = None
+        verified_attempt = None
+        try:
+            base.metadata["attempt_lineage_error"] = (
+                f"{type(_lin_exc).__name__}: {_lin_exc}"
+            )
+        except Exception:
+            pass
+
+    lin_ctx = None
+    if lineage is not None and verified_attempt is not None:
+        try:
+            lin_ctx = lineage.capture_fields_for(verified_attempt.attempt_id)
+        except Exception:
+            lin_ctx = None
+
     verification = run_semantic_verification(
         user_prompt=user_prompt,
         plan=base.plan.to_dict(),
@@ -215,7 +295,19 @@ def run_integration_pipeline_semantic_experimental(
         chat_json_fn=verifier_chat_json_fn,
         source_schemas=source_schemas,
         materialization_mode="final_schema_expr_partition",
+        lineage_context=lin_ctx,
     )
+    # Attach verifier_invocation_id to attempt (best-effort).
+    if lineage is not None and verified_attempt is not None:
+        try:
+            last = get_last_record_for_tests()
+            if isinstance(last, dict) and last.get("verifier_invocation_id"):
+                lineage.attach_verifier_invocation(
+                    verified_attempt.attempt_id,
+                    str(last["verifier_invocation_id"]),
+                )
+        except Exception:
+            pass
     verifier_elapsed_s = round(time.time() - t_ver0, 3)
     trace.verifier = verification.to_dict()
     base.metadata["semantic_verifier_invoked"] = True
@@ -243,11 +335,54 @@ def run_integration_pipeline_semantic_experimental(
     if not escalate:
         trace.semantic_escalation_reason = reason
         base.metadata["semantic_escalation"] = trace.to_dict()
+        # Phase 39O: verified attempt is final when no semantic escalation.
+        if lineage is not None and verified_attempt is not None:
+            try:
+                lineage.set_final(verified_attempt.attempt_id)
+                base.metadata["attempt_lineage"] = lineage.to_dict()
+                base.metadata["verified_attempt_id"] = verified_attempt.attempt_id
+                base.metadata["final_attempt_id"] = lineage.final_attempt_id
+                base.metadata["verified_plan_fingerprint"] = (
+                    verified_attempt.plan_fingerprint
+                )
+                from core.integrate.verifier_invocation_capture import (
+                    update_last_lineage_finalization as _ulf,
+                )
+                _ulf(
+                    became_final=True,
+                    final_attempt_id=lineage.final_attempt_id,
+                    attempt_disposition="final",
+                )
+            except Exception as _fin_exc:  # noqa: BLE001
+                base.metadata["attempt_lineage_error"] = (
+                    f"{type(_fin_exc).__name__}: {_fin_exc}"
+                )
         return base
 
     if int(cfg.max_semantic_escalations) < 1:
         trace.notes.append("semantic_escalation_budget_zero")
         base.metadata["semantic_escalation"] = trace.to_dict()
+        if lineage is not None and verified_attempt is not None:
+            try:
+                lineage.set_final(verified_attempt.attempt_id)
+                base.metadata["attempt_lineage"] = lineage.to_dict()
+                base.metadata["verified_attempt_id"] = verified_attempt.attempt_id
+                base.metadata["final_attempt_id"] = lineage.final_attempt_id
+                base.metadata["verified_plan_fingerprint"] = (
+                    verified_attempt.plan_fingerprint
+                )
+                from core.integrate.verifier_invocation_capture import (
+                    update_last_lineage_finalization as _ulf,
+                )
+                _ulf(
+                    became_final=True,
+                    final_attempt_id=lineage.final_attempt_id,
+                    attempt_disposition="final",
+                )
+            except Exception as _fin_exc:  # noqa: BLE001
+                base.metadata["attempt_lineage_error"] = (
+                    f"{type(_fin_exc).__name__}: {_fin_exc}"
+                )
         return base
 
     # Exactly one strong semantic replan
@@ -310,4 +445,59 @@ def run_integration_pipeline_semantic_experimental(
     # Phase 35 primary: do not re-verify strong result
     if cfg.reverify_strong and strong.status == "success" and strong.plan is not None:
         trace.notes.append("reverify_strong_skipped_in_primary_config")
+
+    # Phase 39O: parent rejected by verifier; child strong attempt is final.
+    if lineage is not None and verified_attempt is not None:
+        try:
+            from core.integrate.attempt_lineage import (
+                DISPOSITION_CANNOT_PLAN,
+                DISPOSITION_EXECUTION_FAILED,
+                DISPOSITION_REJECTED_BY_SEMANTIC_VERIFIER,
+                DISPOSITION_SUPERSEDED_BY_SEMANTIC_ESCALATION,
+                STAGE_SEMANTIC_STRONG,
+                TRIGGER_SEMANTIC_ESCALATION,
+            )
+            from core.integrate.verifier_invocation_capture import (
+                update_last_lineage_finalization as _ulf,
+            )
+
+            lineage.set_disposition(
+                verified_attempt.attempt_id,
+                DISPOSITION_REJECTED_BY_SEMANTIC_VERIFIER,
+            )
+            # Also mark superseded once child exists.
+            child = lineage.create_attempt(
+                stage=STAGE_SEMANTIC_STRONG,
+                plan=strong.plan,
+                planner_model=str(cfg.strong_model),
+                planner_path="semantic_strong",
+                parent_attempt_id=verified_attempt.attempt_id,
+                escalation_trigger=TRIGGER_SEMANTIC_ESCALATION,
+            )
+            lineage.set_disposition(
+                verified_attempt.attempt_id,
+                DISPOSITION_SUPERSEDED_BY_SEMANTIC_ESCALATION,
+            )
+            if strong.status == "success":
+                lineage.set_final(child.attempt_id)
+            elif strong.status == "cannot_plan":
+                lineage.set_disposition(child.attempt_id, DISPOSITION_CANNOT_PLAN)
+            else:
+                lineage.set_disposition(child.attempt_id, DISPOSITION_EXECUTION_FAILED)
+            merged.metadata["attempt_lineage"] = lineage.to_dict()
+            merged.metadata["verified_attempt_id"] = verified_attempt.attempt_id
+            merged.metadata["final_attempt_id"] = lineage.final_attempt_id
+            merged.metadata["verified_plan_fingerprint"] = (
+                verified_attempt.plan_fingerprint
+            )
+            merged.metadata["final_plan_fingerprint"] = child.plan_fingerprint
+            _ulf(
+                became_final=False,
+                final_attempt_id=lineage.final_attempt_id,
+                attempt_disposition=DISPOSITION_SUPERSEDED_BY_SEMANTIC_ESCALATION,
+            )
+        except Exception as _fin_exc:  # noqa: BLE001
+            merged.metadata["attempt_lineage_error"] = (
+                f"{type(_fin_exc).__name__}: {_fin_exc}"
+            )
     return merged

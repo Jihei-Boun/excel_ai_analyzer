@@ -631,12 +631,14 @@ def run_semantic_verification(
     independent: bool = True,
     source_schemas: dict[str, list[str]] | None = None,
     materialization_mode: str = "final_schema_expr_partition",
+    lineage_context: dict[str, Any] | None = None,
 ) -> SemanticVerificationResult:
     """Offline research entry. Never mutates plan/result.
 
     independent=True (Phase 39B default): split plan_structure vs planner_claims.
     materialization_mode default (Phase 39H): final_schema_expr_partition
     (expression + partition ancestry; Python exposes signatures, LLM judges).
+    lineage_context (Phase 39O): optional attempt attribution for capture only.
     """
     import time
 
@@ -699,6 +701,7 @@ def run_semantic_verification(
         persist_record,
     )
 
+    lin = lineage_context if isinstance(lineage_context, dict) else {}
     capture_rec = None
     if capture_enabled():
         capture_rec = build_invocation_record(
@@ -715,13 +718,24 @@ def run_semantic_verification(
             variant=variant,
             independent=independent,
             result_provided=result is not None,
-            request_id=env_request_id(),
+            request_id=lin.get("request_id") or env_request_id(),
             case_id=env_case_id(),
             chat_path=(
                 "injected_chat_json_fn"
                 if chat_json_fn is not None
                 else "core.llm_client._chat_raw+extract"
             ),
+            attempt_id=lin.get("attempt_id"),
+            plan_fingerprint=lin.get("plan_fingerprint"),
+            result_fingerprint=lin.get("result_fingerprint"),
+            planner_model=lin.get("planner_model"),
+            attempt_stage=lin.get("attempt_stage"),
+            parent_attempt_id=lin.get("parent_attempt_id"),
+            escalation_trigger=lin.get("escalation_trigger"),
+            became_final=lin.get("became_final"),
+            final_attempt_id=lin.get("final_attempt_id"),
+            attempt_disposition=lin.get("attempt_disposition"),
+            lineage_schema_version=lin.get("lineage_schema_version"),
         )
 
     fn = chat_json_fn or chat_json
