@@ -22,8 +22,14 @@ def maybe_build_shadow_snapshot(
     model: str,
     profile_name: str | None = None,
     config: ShadowConfig | None = None,
+    request_id: str | None = None,
+    case_id: str | None = None,
 ) -> ShadowRequestSnapshot | None:
-    """Build immutable snapshot if Shadow enabled; never raises."""
+    """Build immutable snapshot if Shadow enabled; never raises.
+
+    request_id / case_id are frozen here (caller thread). Workers must not
+    re-read MULTI_VERIFIER_CAPTURE_* env for identity.
+    """
     try:
         cfg = config or load_shadow_config()
         if not cfg.enabled:
@@ -36,6 +42,8 @@ def maybe_build_shadow_snapshot(
             base_url=base_url,
             model=model,
             profile_name=profile_name,
+            request_id=request_id,
+            case_id=case_id,
             store_prompt=cfg.store_prompt,
         )
     except Exception:  # noqa: BLE001

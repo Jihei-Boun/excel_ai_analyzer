@@ -145,13 +145,19 @@ class AttemptRecord:
 
 @dataclass
 class RequestAttemptLineage:
-    """In-request attempt tracker. Observational only."""
+    """In-request attempt tracker. Observational only.
+
+    Owned by one request. Attempts created here always inherit this
+    request_id. Cross-request rebinding is refused and recorded.
+    """
 
     request_id: str | None = None
+    case_id: str | None = None
     schema_version: int = LINEAGE_SCHEMA_VERSION
     attempts: list[AttemptRecord] = field(default_factory=list)
     final_attempt_id: str | None = None
     lineage_error: str | None = None
+    integrity_violations: list[dict[str, Any]] = field(default_factory=list)
 
     def _next_seq(self) -> int:
         return len(self.attempts) + 1
@@ -169,6 +175,28 @@ class RequestAttemptLineage:
         notes: list[str] | None = None,
     ) -> AttemptRecord:
         seq = self._next_seq()
+        notes_list = list(notes or [])
+        if parent_attempt_id:
+            parent = self.get(parent_attempt_id)
+            if parent is None:
+                self.integrity_violations.append(
+                    {
+                        "code": "parent_attempt_missing",
+                        "parent_attempt_id": parent_attempt_id,
+                    }
+                )
+                notes_list.append("integrity:parent_attempt_missing")
+            elif parent.request_id != self.request_id:
+                self.integrity_violations.append(
+                    {
+                        "code": "parent_child_request_mismatch",
+                        "parent_attempt_id": parent_attempt_id,
+                        "parent_request_id": parent.request_id,
+                        "child_request_id": self.request_id,
+                    }
+                )
+                notes_list.append("integrity:parent_request_id_mismatch")
+                self.lineage_error = self.lineage_error or "parent_request_id_mismatch"
         rec = AttemptRecord(
             attempt_id=new_attempt_id(request_id=self.request_id, seq=seq),
             request_id=self.request_id,
@@ -180,7 +208,7 @@ class RequestAttemptLineage:
             result_fingerprint=result_fingerprint,
             parent_attempt_id=parent_attempt_id,
             escalation_trigger=escalation_trigger or TRIGGER_NONE,
-            notes=list(notes or []),
+            notes=notes_list,
         )
         self.attempts.append(rec)
         return rec
@@ -211,6 +239,27 @@ class RequestAttemptLineage:
 
     def set_final(self, attempt_id: str) -> None:
         """Mark one attempt as the final Shadow result; others stay non-final."""
+        att = self.get(attempt_id)
+        if att is None:
+            self.integrity_violations.append(
+                {
+                    "code": "final_attempt_missing",
+                    "attempt_id": attempt_id,
+                }
+            )
+            self.lineage_error = self.lineage_error or "final_attempt_missing"
+            return
+        if att.request_id != self.request_id:
+            self.integrity_violations.append(
+                {
+                    "code": "final_attempt_request_mismatch",
+                    "attempt_id": attempt_id,
+                    "attempt_request_id": att.request_id,
+                    "lineage_request_id": self.request_id,
+                }
+            )
+            self.lineage_error = self.lineage_error or "final_attempt_request_mismatch"
+            return
         self.final_attempt_id = attempt_id
         for a in self.attempts:
             if a.attempt_id == attempt_id:
@@ -226,6 +275,8 @@ class RequestAttemptLineage:
             "final_attempt_id": self.final_attempt_id,
             "attempts": [a.to_dict() for a in self.attempts],
             "lineage_error": self.lineage_error,
+            "case_id": self.case_id,
+            "integrity_violations": list(self.integrity_violations),
         }
 
     def capture_fields_for(self, attempt_id: str) -> dict[str, Any]:
@@ -235,6 +286,7 @@ class RequestAttemptLineage:
             return {
                 "attempt_id": None,
                 "request_id": self.request_id,
+                "case_id": self.case_id,
                 "plan_fingerprint": None,
                 "result_fingerprint": None,
                 "planner_model": None,
@@ -248,6 +300,7 @@ class RequestAttemptLineage:
         return {
             "attempt_id": att.attempt_id,
             "request_id": self.request_id or att.request_id,
+            "case_id": self.case_id,
             "plan_fingerprint": att.plan_fingerprint,
             "result_fingerprint": att.result_fingerprint,
             "planner_model": att.planner_model,

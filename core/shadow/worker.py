@@ -212,12 +212,16 @@ def _execute_job(
     rec["prompt_hash"] = snapshot.prompt_hash
     rec["prompt"] = snapshot.prompt_for_telemetry()
     rec["legacy"] = legacy_observation
+    rec["case_id"] = snapshot.case_id
+    rec["identity_source"] = "snapshot_frozen"
 
     try:
         if _force_runner is not None:
             shadow_out = _force_runner(snapshot, config=cfg)
         else:
-            # Timeout wrapper: cooperative check after run (hard kill of LLM not available)
+            # Timeout wrapper: cooperative check after run (hard kill of LLM not available).
+            # The Future is not retained; future.cancel() is never invoked. A timed-out
+            # caller does not stop this worker. Late outputs remain bound to `snapshot`.
             shadow_out = run_shadow_pipeline(
                 snapshot, config=cfg, chat_json_fn=chat_json_fn
             )
@@ -238,6 +242,12 @@ def _execute_job(
         }
 
     rec["shadow"] = shadow_out
+    # Pattern A: late completion is allowed; writes stay bound to snapshot identity.
+    # Never rewrite shadow_out.request / lineage to a later request.
+    lin = (shadow_out.get("attempt_lineage") or {}) if isinstance(shadow_out, dict) else {}
+    if isinstance(lin, dict) and lin.get("request_id") and lin.get("request_id") != snapshot.request_id:
+        rec["provenance_integrity_failure"] = True
+        rec["provenance_integrity_reason"] = "lineage_request_id_mismatch_vs_snapshot"
     legacy_ok = bool(legacy_observation.get("legacy_success"))
     shadow_ok = bool(shadow_out.get("shadow_success"))
     structural = structural_compare(

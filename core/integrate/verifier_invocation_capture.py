@@ -24,6 +24,9 @@ MATERIALIZATION_DEFAULT = "final_schema_expr_partition"
 
 _lock = threading.Lock()
 _last_record: dict[str, Any] | None = None
+_records_by_attempt: dict[str, dict[str, Any]] = {}
+_records_by_invocation: dict[str, dict[str, Any]] = {}
+_integrity_failures: list[dict[str, Any]] = []
 
 
 def capture_enabled() -> bool:
@@ -205,12 +208,11 @@ def attach_response(
 def persist_record(record: dict[str, Any]) -> Path | None:
     """Append JSONL under capture dir. Never raises into caller semantics."""
     global _last_record
+    _index_record(record)
     if not capture_enabled():
-        _last_record = record
         return None
     dest = capture_dir()
     if dest is None:
-        _last_record = record
         return None
     try:
         dest.mkdir(parents=True, exist_ok=True)
@@ -220,21 +222,49 @@ def persist_record(record: dict[str, Any]) -> Path | None:
         with _lock:
             with path.open("a", encoding="utf-8") as f:
                 f.write(line + "\n")
-            _last_record = record
         return path
     except Exception:
         # Telemetry must not alter verifier semantics.
-        _last_record = record
         return None
+
+
+def _index_record(record: dict[str, Any]) -> None:
+    """Identity-keyed index. Does not rebind a record onto another request."""
+    global _last_record
+    with _lock:
+        _last_record = record
+        iid = record.get("verifier_invocation_id")
+        if isinstance(iid, str) and iid:
+            _records_by_invocation[iid] = record
+        aid = record.get("attempt_id")
+        if isinstance(aid, str) and aid:
+            _records_by_attempt[aid] = record
 
 
 def get_last_record_for_tests() -> dict[str, Any] | None:
     return _last_record
 
 
+def get_record_for_attempt(attempt_id: str | None) -> dict[str, Any] | None:
+    if not attempt_id:
+        return None
+    with _lock:
+        rec = _records_by_attempt.get(str(attempt_id))
+        return rec
+
+
+def get_integrity_failures_for_tests() -> list[dict[str, Any]]:
+    with _lock:
+        return list(_integrity_failures)
+
+
 def clear_last_record_for_tests() -> None:
     global _last_record
-    _last_record = None
+    with _lock:
+        _last_record = None
+        _records_by_attempt.clear()
+        _records_by_invocation.clear()
+        _integrity_failures.clear()
 
 
 def env_case_id() -> str | None:
@@ -247,32 +277,106 @@ def env_request_id() -> str | None:
     return raw or None
 
 
+def _record_matches(
+    rec: dict[str, Any] | None,
+    *,
+    request_id: str | None,
+    attempt_id: str | None,
+) -> bool:
+    if rec is None:
+        return False
+    if attempt_id is not None:
+        existing = rec.get("attempt_id")
+        if existing is not None and existing != attempt_id:
+            return False
+    if request_id is not None:
+        existing_rid = rec.get("request_id")
+        if existing_rid is not None and existing_rid != request_id:
+            return False
+    return True
+
+
+def _resolve_record_locked(
+    *,
+    request_id: str | None,
+    attempt_id: str | None,
+) -> dict[str, Any] | None:
+    if attempt_id:
+        rec = _records_by_attempt.get(str(attempt_id))
+        if rec is not None:
+            return rec
+    if request_id is None and attempt_id is None:
+        return _last_record
+    if _last_record is not None and _record_matches(
+        _last_record, request_id=request_id, attempt_id=attempt_id
+    ):
+        return _last_record
+    return None
+
+
+def _refuse_rebind(
+    *,
+    operation: str,
+    rec: dict[str, Any],
+    request_id: str | None,
+    attempt_id: str | None,
+) -> None:
+    _integrity_failures.append(
+        {
+            "event": "provenance_integrity_failure",
+            "operation": operation,
+            "action": "refused_rebind",
+            "existing_request_id": rec.get("request_id"),
+            "existing_attempt_id": rec.get("attempt_id"),
+            "expected_request_id": request_id,
+            "expected_attempt_id": attempt_id,
+        }
+    )
+
+
 def update_last_escalation(
     *,
     escalation_triggered: bool,
     escalation_type: str | None,
+    request_id: str | None = None,
+    attempt_id: str | None = None,
 ) -> None:
-    """Attach escalation outcome to the most recent capture (best-effort)."""
-    global _last_record
-    if _last_record is None:
-        return
+    """Attach escalation outcome to the capture for this request/attempt.
+
+    If identity is provided and does not match the stored record, refuse
+    to rebind. Does not silently rewrite A into B.
+    """
     try:
-        updated = attach_response(
-            _last_record,
-            raw_text=_last_record.get("raw_model_response_text"),
-            raw_parsed=_last_record.get("raw_model_response_parsed"),
-            parsed_verdict=_last_record.get("parsed_verdict"),
-            parsed_reason_code=_last_record.get("parsed_reason_code"),
-            parsed_evidence=_last_record.get("parsed_evidence"),
-            parse_ok=_last_record.get("parse_ok"),
-            parse_error=_last_record.get("parse_error"),
-            latency_s=_last_record.get("latency_s"),
-            escalation_triggered=escalation_triggered,
-            escalation_type=escalation_type,
-        )
-        updated["escalation_attached_at_utc"] = datetime.now(timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%S.%fZ"
-        )
+        with _lock:
+            rec = _resolve_record_locked(request_id=request_id, attempt_id=attempt_id)
+            if rec is None:
+                return
+            if (request_id is not None or attempt_id is not None) and not _record_matches(
+                rec, request_id=request_id, attempt_id=attempt_id
+            ):
+                _refuse_rebind(
+                    operation="update_last_escalation",
+                    rec=rec,
+                    request_id=request_id,
+                    attempt_id=attempt_id,
+                )
+                return
+            updated = attach_response(
+                rec,
+                raw_text=rec.get("raw_model_response_text"),
+                raw_parsed=rec.get("raw_model_response_parsed"),
+                parsed_verdict=rec.get("parsed_verdict"),
+                parsed_reason_code=rec.get("parsed_reason_code"),
+                parsed_evidence=rec.get("parsed_evidence"),
+                parse_ok=rec.get("parse_ok"),
+                parse_error=rec.get("parse_error"),
+                latency_s=rec.get("latency_s"),
+                escalation_triggered=escalation_triggered,
+                escalation_type=escalation_type,
+            )
+            updated["escalation_attached_at_utc"] = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ"
+            )
         persist_record(updated)
     except Exception:
         return
@@ -283,25 +387,39 @@ def update_last_lineage_finalization(
     became_final: bool | None,
     final_attempt_id: str | None,
     attempt_disposition: str | None = None,
+    request_id: str | None = None,
+    attempt_id: str | None = None,
 ) -> None:
-    """Append-only finalization linkage for the most recent capture.
+    """Append-only finalization linkage for the capture of this attempt.
 
     Does not rewrite plan_fingerprint / attempt_id (attempt immutability).
+    Does not look up "latest" when identity is provided.
     """
-    global _last_record
-    if _last_record is None:
-        return
     try:
-        updated = dict(_last_record)
-        if became_final is not None:
-            updated["became_final"] = became_final
-        if final_attempt_id is not None:
-            updated["final_attempt_id"] = final_attempt_id
-        if attempt_disposition is not None:
-            updated["attempt_disposition"] = attempt_disposition
-        updated["lineage_finalized_at_utc"] = datetime.now(timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%S.%fZ"
-        )
+        with _lock:
+            rec = _resolve_record_locked(request_id=request_id, attempt_id=attempt_id)
+            if rec is None:
+                return
+            if (request_id is not None or attempt_id is not None) and not _record_matches(
+                rec, request_id=request_id, attempt_id=attempt_id
+            ):
+                _refuse_rebind(
+                    operation="update_last_lineage_finalization",
+                    rec=rec,
+                    request_id=request_id,
+                    attempt_id=attempt_id,
+                )
+                return
+            updated = dict(rec)
+            if became_final is not None:
+                updated["became_final"] = became_final
+            if final_attempt_id is not None:
+                updated["final_attempt_id"] = final_attempt_id
+            if attempt_disposition is not None:
+                updated["attempt_disposition"] = attempt_disposition
+            updated["lineage_finalized_at_utc"] = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ"
+            )
         persist_record(updated)
     except Exception:
         return

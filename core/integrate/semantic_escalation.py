@@ -145,12 +145,30 @@ def run_integration_pipeline_semantic_experimental(
     chat_json_fn: Callable[..., dict[str, Any]] | None = None,
     build_plan_fn: Callable[..., IntegrationPlan] | None = None,
     verifier_chat_json_fn: Callable[..., dict[str, Any]] | None = None,
+    request_id: str | None = None,
+    case_id: str | None = None,
 ) -> IntegrationPipelineResult:
     """Experimental path: failure escalation (optional) + semantic escalation (optional).
 
     Not wired to route_multi. Does not change production defaults.
+
+    request_id / case_id are frozen at entry. Live env is not re-read after
+    this point for lineage or capture identity.
     """
     cfg = config or SemanticEscalationConfig()
+    # Freeze identity at entry (caller/snapshot). Do not re-read env later.
+    try:
+        from core.integrate.verifier_invocation_capture import (
+            env_case_id,
+            env_request_id,
+        )
+
+        frozen_request_id = request_id if request_id is not None else env_request_id()
+        frozen_case_id = case_id if case_id is not None else env_case_id()
+    except Exception:
+        frozen_request_id = request_id
+        frozen_case_id = case_id
+
     strategy = PlannerModelStrategy(
         fast_model="qwen2.5:7b",
         strong_model=cfg.strong_model,
@@ -224,12 +242,13 @@ def run_integration_pipeline_semantic_experimental(
             safe_lineage_call,
         )
         from core.integrate.verifier_invocation_capture import (
-            env_request_id,
-            get_last_record_for_tests,
+            get_record_for_attempt,
             update_last_lineage_finalization,
         )
 
-        lineage = RequestAttemptLineage(request_id=env_request_id())
+        lineage = RequestAttemptLineage(
+            request_id=frozen_request_id, case_id=frozen_case_id
+        )
         parent_id = None
         if bool(trace.failure_escalated):
             parent = lineage.create_attempt(
@@ -300,11 +319,20 @@ def run_integration_pipeline_semantic_experimental(
     # Attach verifier_invocation_id to attempt (best-effort).
     if lineage is not None and verified_attempt is not None:
         try:
-            last = get_last_record_for_tests()
-            if isinstance(last, dict) and last.get("verifier_invocation_id"):
+            inv_id = getattr(verification, "verifier_invocation_id", None)
+            if not inv_id:
+                rec = get_record_for_attempt(verified_attempt.attempt_id)
+                if (
+                    isinstance(rec, dict)
+                    and rec.get("verifier_invocation_id")
+                    and rec.get("request_id")
+                    in {None, lineage.request_id, verified_attempt.request_id}
+                ):
+                    inv_id = rec.get("verifier_invocation_id")
+            if inv_id:
                 lineage.attach_verifier_invocation(
                     verified_attempt.attempt_id,
-                    str(last["verifier_invocation_id"]),
+                    str(inv_id),
                 )
         except Exception:
             pass
@@ -328,6 +356,10 @@ def run_integration_pipeline_semantic_experimental(
             update_last_escalation(
                 escalation_triggered=bool(escalate),
                 escalation_type=str(reason) if reason is not None else None,
+                request_id=frozen_request_id,
+                attempt_id=(
+                    verified_attempt.attempt_id if verified_attempt is not None else None
+                ),
             )
     except Exception:
         pass
@@ -352,6 +384,8 @@ def run_integration_pipeline_semantic_experimental(
                     became_final=True,
                     final_attempt_id=lineage.final_attempt_id,
                     attempt_disposition="final",
+                    request_id=frozen_request_id,
+                    attempt_id=verified_attempt.attempt_id,
                 )
             except Exception as _fin_exc:  # noqa: BLE001
                 base.metadata["attempt_lineage_error"] = (
@@ -378,6 +412,8 @@ def run_integration_pipeline_semantic_experimental(
                     became_final=True,
                     final_attempt_id=lineage.final_attempt_id,
                     attempt_disposition="final",
+                    request_id=frozen_request_id,
+                    attempt_id=verified_attempt.attempt_id,
                 )
             except Exception as _fin_exc:  # noqa: BLE001
                 base.metadata["attempt_lineage_error"] = (
@@ -495,6 +531,8 @@ def run_integration_pipeline_semantic_experimental(
                 became_final=False,
                 final_attempt_id=lineage.final_attempt_id,
                 attempt_disposition=DISPOSITION_SUPERSEDED_BY_SEMANTIC_ESCALATION,
+                request_id=frozen_request_id,
+                attempt_id=verified_attempt.attempt_id,
             )
         except Exception as _fin_exc:  # noqa: BLE001
             merged.metadata["attempt_lineage_error"] = (

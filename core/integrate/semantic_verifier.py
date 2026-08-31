@@ -142,6 +142,7 @@ class SemanticVerificationResult:
     variant: str | None = None
     elapsed_s: float | None = None
     error: str | None = None
+    verifier_invocation_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -719,7 +720,7 @@ def run_semantic_verification(
             independent=independent,
             result_provided=result is not None,
             request_id=lin.get("request_id") or env_request_id(),
-            case_id=env_case_id(),
+            case_id=lin.get("case_id") or env_case_id(),
             chat_path=(
                 "injected_chat_json_fn"
                 if chat_json_fn is not None
@@ -785,6 +786,7 @@ def run_semantic_verification(
                 latency_s=round(time.time() - t0, 3),
             )
             persist_record(capture_rec)
+            out.verifier_invocation_id = capture_rec.get("verifier_invocation_id")
             out.elapsed_s = capture_rec["latency_s"]
             out.model = model
             out.variant = variant
@@ -807,6 +809,7 @@ def run_semantic_verification(
             latency_s=out.elapsed_s,
         )
         persist_record(capture_rec)
+        out.verifier_invocation_id = capture_rec.get("verifier_invocation_id")
     return out
 
 

@@ -155,11 +155,20 @@ def run_shadow_pipeline(
             ),
             base_url=snapshot.base_url,
             chat_json_fn=chat_json_fn,
+            request_id=snapshot.request_id,
+            case_id=snapshot.case_id,
         )
         out["latency_by_stage_s"]["pipeline"] = round(time.time() - t_pipe, 3)
 
         out.update(map_integration_result_telemetry(result))
         out["shadow_completed"] = True
+        lin = out.get("attempt_lineage")
+        if isinstance(lin, dict) and lin.get("request_id") and snapshot.request_id:
+            if lin.get("request_id") != snapshot.request_id:
+                out["provenance_integrity_failure"] = True
+                out["provenance_integrity_reason"] = (
+                    "lineage_request_id_mismatch_vs_snapshot"
+                )
     except Exception as exc:  # noqa: BLE001
         out["shadow_status"] = "shadow_pipeline_exception"
         out["error_family"] = "shadow_pipeline_exception"

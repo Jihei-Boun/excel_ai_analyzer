@@ -59,6 +59,8 @@ def route_multi_prompt(
     filter_df: pd.DataFrame | None,
     sheet_info: dict[str, dict] | None = None,
     unit_label: str = "파일",
+    request_id: str | None = None,
+    case_id: str | None = None,
 ) -> SingleRouteOutcome:
     prepared = named_frames
 
@@ -135,6 +137,8 @@ def route_multi_prompt(
         base_url=base_url,
         model=model,
         profile_name=profile_name,
+        request_id=request_id,
+        case_id=case_id,
     )
     shadow_scheduled = False
 

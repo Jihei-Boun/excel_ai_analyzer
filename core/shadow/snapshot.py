@@ -17,7 +17,12 @@ def _prompt_hash(prompt: str) -> str:
 
 @dataclass
 class ShadowRequestSnapshot:
-    """Copyable snapshot — DataFrames are deep-copied at construction."""
+    """Copyable snapshot — DataFrames are deep-copied at construction.
+
+    Identity (request_id / case_id) is frozen at construction on the caller
+    thread. Shadow workers must use these fields and must not re-read process
+    global env or a "current request" slot.
+    """
 
     request_id: str
     shadow_request_id: str
@@ -31,6 +36,7 @@ class ShadowRequestSnapshot:
     profile_name: str | None
     created_at_unix: float
     store_prompt: bool = False
+    case_id: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
 
     def prompt_for_pipeline(self) -> str:
@@ -42,6 +48,28 @@ class ShadowRequestSnapshot:
         return None
 
 
+def _freeze_env_identity(
+    request_id: str | None, case_id: str | None
+) -> tuple[str | None, str | None]:
+    """Copy env identity once. Never call this from a late worker callback."""
+    rid, cid = request_id, case_id
+    if rid is not None and cid is not None:
+        return rid, cid
+    try:
+        from core.integrate.verifier_invocation_capture import (
+            env_case_id,
+            env_request_id,
+        )
+
+        if rid is None:
+            rid = env_request_id()
+        if cid is None:
+            cid = env_case_id()
+    except Exception:  # noqa: BLE001
+        pass
+    return rid, cid
+
+
 def build_shadow_snapshot(
     *,
     prompt: str,
@@ -50,13 +78,18 @@ def build_shadow_snapshot(
     model: str,
     profile_name: str | None = None,
     request_id: str | None = None,
+    case_id: str | None = None,
     store_prompt: bool = False,
 ) -> ShadowRequestSnapshot:
-    rid = request_id or str(uuid.uuid4())
+    rid, cid = _freeze_env_identity(request_id, case_id)
+    rid = rid or str(uuid.uuid4())
     sources: dict[str, pd.DataFrame] = {}
     for name, df in named_frames:
         # Isolation: deep copy so shadow mutation cannot affect legacy
         sources[str(name)] = df.copy(deep=True)
+    meta: dict[str, Any] = {}
+    if cid:
+        meta["case_id"] = cid
     return ShadowRequestSnapshot(
         request_id=rid,
         shadow_request_id=f"shadow-{rid}",
@@ -70,4 +103,6 @@ def build_shadow_snapshot(
         profile_name=profile_name,
         created_at_unix=time.time(),
         store_prompt=store_prompt,
+        case_id=cid,
+        meta=meta,
     )
