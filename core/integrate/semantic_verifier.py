@@ -259,16 +259,12 @@ def _compact_understanding(und: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def _compact_result(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Pass through bounded observation dicts. No semantic interpretation."""
     if not isinstance(result, dict):
         return None
-    out: dict[str, Any] = {}
-    if result.get("columns") is not None:
-        out["columns"] = list(result.get("columns") or [])
-    if result.get("row_count") is not None:
-        out["row_count"] = result.get("row_count")
-    if result.get("sample_rows") is not None:
-        out["sample_rows"] = list(result.get("sample_rows") or [])[:5]
-    return out or None
+    from core.integrate.result_observation import observe_result_for_verifier
+
+    return observe_result_for_verifier(result)
 
 
 def build_verifier_payload(
@@ -535,8 +531,14 @@ def build_verifier_payload(
                     "only materialization_evidence proves column existence."
                 )
 
+    # Phase 39Z: attach bounded observed_result whenever a result dict is supplied.
+    # V1 historically omitted this even if result existed; V2/V3 always expose the key.
     if variant in {"V2", "V3"}:
         payload["observed_result"] = _compact_result(result)
+    elif result is not None:
+        obs = _compact_result(result)
+        if obs is not None:
+            payload["observed_result"] = obs
     if variant == "V3":
         payload["cross_file_understanding"] = _compact_understanding(understanding)
     return payload
@@ -654,9 +656,10 @@ def run_semantic_verification(
         materialization_mode=materialization_mode,
     )
     assert_no_golden_leakage(payload)
+    result_attached = result is not None
     user_prefix = (
         "Determine whether the proposed integration plan"
-        + (" and observed result" if variant != "V1" else "")
+        + (" and observed result" if (variant != "V1" or result_attached) else "")
         + " directly satisfy all material requirements in the user's request.\n"
         "Step order (mandatory):\n"
         "  (1) Reconstruct material requirements from user_prompt only.\n"

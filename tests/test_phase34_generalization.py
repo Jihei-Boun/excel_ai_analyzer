@@ -73,9 +73,32 @@ def test_verifier_input_is_prompt_plus_plan_only() -> None:
     # Phase 39B+: independent verifier splits plan_structure vs planner_claims
     # (legacy key integration_plan is no longer the default payload shape).
     assert "plan_structure" in payload or "integration_plan" in payload
-    assert "observed_result" not in payload
+    # Phase 39Z: V1 attaches bounded observed_result when a result is supplied.
+    assert "observed_result" in payload
+    assert payload["observed_result"]["row_count"] == 2
     assert "cross_file_understanding" not in payload
     assert_no_golden_leakage(payload)
+    # Historical V1 with no result still omits the key (no CrossFileUnderstanding).
+    payload_none = build_verifier_payload(
+        user_prompt="stack compatible rows",
+        plan={
+            "status": "planned",
+            "steps": [
+                {
+                    "id": "1",
+                    "op": "union_rows",
+                    "inputs": ["a", "b"],
+                    "output": "u",
+                    "params": {},
+                }
+            ],
+            "final_output": "u",
+        },
+        result=None,
+        variant=FROZEN_VARIANT,
+    )
+    assert "observed_result" not in payload_none
+    assert "cross_file_understanding" not in payload_none
 
 
 def test_dataset_has_no_scenario_routing_fields_in_verifier_path() -> None:

@@ -19,11 +19,13 @@ def test_39w_sha_and_frozen_rule() -> None:
     assert "C03" not in src
 
 
-def test_production_verifier_still_omits_result() -> None:
+def test_production_verifier_variant_still_v1() -> None:
+    """39X freeze: variant remains V1. Phase 39Z later wired result observation."""
     assert SEMANTIC_VERIFIER_VARIANT == "V1"
     esc = Path("core/integrate/semantic_escalation.py").read_text()
-    assert "result=None" in esc
     assert "PHASE39X" not in esc
+    assert "observe_result_for_verifier" in esc
+    assert SEMANTIC_VERIFIER_VARIANT == "V1"
 
 
 def test_corpus_reuses_39w_and_covers_roles() -> None:

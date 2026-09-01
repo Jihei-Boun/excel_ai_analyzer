@@ -6,6 +6,10 @@ Strong replan uses the same Plan Validator / Executor / Result Validator.
 
 Does NOT modify route_multi, failure-based Phase 28 escalation policy,
 verifier prompt, or prescribe semantic repairs.
+
+Phase 39Z: successful fast results are observed with a bounded deterministic
+result snapshot before the verifier runs. Variant remains V1. Python exposes
+facts only; the verifier still makes semantic judgments.
 """
 
 from __future__ import annotations
@@ -296,6 +300,39 @@ def run_integration_pipeline_semantic_experimental(
         except Exception:
             pass
 
+    # Phase 39Z: observe the same attempt result (no re-execution). Fail-open.
+    observed = None
+    try:
+        from core.integrate.result_observation import observe_result_for_verifier
+
+        observed = observe_result_for_verifier(getattr(base, "final_output", None))
+    except Exception as _obs_exc:  # noqa: BLE001
+        observed = None
+        try:
+            trace.notes.append(f"result_observation_failed:{type(_obs_exc).__name__}")
+            base.metadata["result_observation_failed"] = True
+        except Exception:
+            pass
+
+    if lineage is not None and verified_attempt is not None:
+        try:
+            from core.integrate.attempt_lineage import compact_result_fingerprint as _cfp
+            from core.shadow.fingerprint import dataframe_fingerprint
+
+            fo = getattr(base, "final_output", None)
+            fp_src = dataframe_fingerprint(fo) if isinstance(fo, pd.DataFrame) else None
+            if fp_src is None and observed is not None:
+                fp_src = {
+                    "shape": [observed.get("row_count"), observed.get("column_count")],
+                    "columns": observed.get("columns"),
+                    "content_hash_head50": observed.get("content_hash"),
+                }
+            compact = _cfp(fp_src)
+            if compact:
+                verified_attempt.result_fingerprint = compact
+        except Exception:
+            pass
+
     lin_ctx = None
     if lineage is not None and verified_attempt is not None:
         try:
@@ -306,7 +343,7 @@ def run_integration_pipeline_semantic_experimental(
     verification = run_semantic_verification(
         user_prompt=user_prompt,
         plan=base.plan.to_dict(),
-        result=None,
+        result=observed,
         understanding=und_dict,
         variant=SEMANTIC_VERIFIER_VARIANT,
         model=cfg.verifier_model,

@@ -27,11 +27,13 @@ def test_corpus_includes_anchors_and_lookalikes() -> None:
     assert len(Y_IDS) >= 17
 
 
-def test_production_still_v1_result_none() -> None:
+def test_production_still_v1_after_39z_observation() -> None:
+    """39Y freeze: variant remains V1. 39Z added observation plumbing only."""
     assert SEMANTIC_VERIFIER_VARIANT == "V1"
     esc = Path("core/integrate/semantic_escalation.py").read_text()
-    assert "result=None" in esc
     assert "PHASE39Y" not in esc
+    assert "observe_result_for_verifier" in esc
+    assert "result=observed" in esc
 
 
 def test_result_observation_is_bounded_and_generic() -> None:
