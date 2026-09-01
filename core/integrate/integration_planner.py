@@ -10,6 +10,7 @@ No key_candidates[0] injection. No numeric→sum. No aggregate_merge rewrite.
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Callable
 
 from core.integrate.integration_plan_types import (
@@ -480,13 +481,29 @@ def build_integration_plan(
                 "If still unsure, return status=cannot_plan with empty steps."
             )
         try:
+            t_llm = time.time()
             data = fn(
                 prompt,
                 system=system,
                 base_url=base_url,
                 model=model,
             )
+            llm_latency = round(time.time() - t_llm, 3)
             plan = integration_plan_from_dict(data)
+            _observe_planner_invocation(
+                system_prompt=system,
+                user_prompt=prompt,
+                model=model,
+                base_url=base_url,
+                retry_feedback=retry_feedback,
+                parse_attempt=attempt,
+                raw_response=data,
+                parsed_plan=plan.to_dict(),
+                parse_ok=True,
+                parse_error=None,
+                backend_error=None,
+                latency_s=llm_latency,
+            )
             # Safety: additive request + count-on-string is silent substitution.
             # Evidence feedback once; if repeated, cannot_plan (do not invent ops).
             additive = _prompt_requests_additive_aggregation(user_prompt)
@@ -536,10 +553,38 @@ def build_integration_plan(
             return plan
         except IntegrationPlanParseError as exc:
             last_error = str(exc)
+            _observe_planner_invocation(
+                system_prompt=system,
+                user_prompt=prompt,
+                model=model,
+                base_url=base_url,
+                retry_feedback=retry_feedback,
+                parse_attempt=attempt,
+                raw_response=locals().get("data"),
+                parsed_plan=None,
+                parse_ok=False,
+                parse_error=str(exc),
+                backend_error=None,
+                latency_s=round(time.time() - t_llm, 3) if "t_llm" in locals() else None,
+            )
         except Exception as exc:  # noqa: BLE001 — LLM/JSON failure
             last_error = f"{type(exc).__name__}: {exc}"
+            _observe_planner_invocation(
+                system_prompt=system,
+                user_prompt=prompt,
+                model=model,
+                base_url=base_url,
+                retry_feedback=retry_feedback,
+                parse_attempt=attempt,
+                raw_response=None,
+                parsed_plan=None,
+                parse_ok=False,
+                parse_error=None,
+                backend_error=last_error,
+                latency_s=round(time.time() - t_llm, 3) if "t_llm" in locals() else None,
+            )
 
-    return IntegrationPlan(
+    failed = IntegrationPlan(
         status="cannot_plan",
         steps=[],
         final_output=None,
@@ -552,6 +597,31 @@ def build_integration_plan(
             "planner_error": last_error,
         },
     )
+    _observe_planner_invocation(
+        system_prompt=system,
+        user_prompt=user,
+        model=model,
+        base_url=base_url,
+        retry_feedback=retry_feedback,
+        parse_attempt=total_attempts,
+        raw_response=None,
+        parsed_plan=failed.to_dict(),
+        parse_ok=True,
+        parse_error=None,
+        backend_error=last_error,
+        latency_s=None,
+    )
+    return failed
+
+
+def _observe_planner_invocation(**kwargs: Any) -> None:
+    """Best-effort observational capture. Must never affect planner control flow."""
+    try:
+        from core.integrate.planner_invocation_capture import record_planner_invocation
+
+        record_planner_invocation(**kwargs)
+    except Exception:
+        return
 
 
 def _compact_understanding_for_prompt(understanding: dict[str, Any]) -> dict[str, Any]:
