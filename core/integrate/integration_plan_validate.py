@@ -1,7 +1,10 @@
 """Phase 16: IntegrationPlan Validator (no execution, no semantic repair).
 
-validate_integration_plan(understanding, plan) → IntegrationValidationResult
+validate_integration_plan(understanding, plan, *, frames=None)
+→ IntegrationValidationResult
+
 Does not mutate plan. Does not choose keys/ops/metrics.
+Phase 39U: optional frames observe post-transformation join uniqueness only.
 """
 
 from __future__ import annotations
@@ -63,10 +66,13 @@ def validate_integration_plan(
     plan: IntegrationPlan | dict[str, Any],
     *,
     user_prompt: str | None = None,
+    frames: dict[str, Any] | None = None,
 ) -> IntegrationValidationResult:
     """Validate IntegrationPlan against CrossFileUnderstanding.
 
     Never mutates ``plan``. Never rewrites ops/keys/metrics.
+    Optional ``frames`` are copied locally and used only to observe
+    post-transformation uniqueness at join boundaries (Phase 39U).
     """
     und = (
         understanding.to_dict()
@@ -182,6 +188,12 @@ def validate_integration_plan(
     pairwise_index = _index_pairwise(und)
     relationship_index = _index_relationships(und)
 
+    preview_frames: dict[str, Any] | None = None
+    if frames:
+        from core.integrate.relational_state import copy_source_frames
+
+        preview_frames = copy_source_frames(frames)
+
     for step in plan_obj.steps:
         if not step.id:
             err("missing_step_id", "Step id is required", step_id=None)
@@ -236,8 +248,20 @@ def validate_integration_plan(
                 warn=warn,
                 info=info,
                 lineage=lineage,
+                preview_frames=preview_frames,
             )
             out_meta = _simulate_output(step, input_metas)
+            if preview_frames is not None:
+                from core.integrate.relational_state import (
+                    apply_declared_step,
+                    overlay_meta_from_frame,
+                )
+
+                applied = apply_declared_step(step, preview_frames)
+                if applied is not None:
+                    preview_frames[step.output] = applied
+                    if out_meta is not None:
+                        overlay_meta_from_frame(out_meta, applied)
             if out_meta is not None:
                 datasets[step.output] = out_meta
                 produced.add(step.output)
@@ -873,6 +897,7 @@ def _validate_step(
     warn,
     info,
     lineage: list[dict[str, Any]],
+    preview_frames: dict[str, Any] | None = None,
 ) -> None:
     op = step.op
     if op == "rename_columns":
@@ -891,6 +916,7 @@ def _validate_step(
             warn=warn,
             info=info,
             lineage=lineage,
+            preview_frames=preview_frames,
         )
     elif op == "aggregate":
         _v_aggregate(step, inputs[0], err=err, warn=warn, lineage=lineage)
@@ -1111,6 +1137,7 @@ def _v_join(
     warn,
     info,
     lineage,
+    preview_frames=None,
 ) -> None:
     if len(inputs) != 2:
         err("join_needs_two_inputs", "join requires exactly 2 inputs", step_id=step.id)
@@ -1218,8 +1245,39 @@ def _v_join(
     left_u = right_u = None
     left_null = right_null = None
     is_composite = len(left_keys) >= 2
+    observed_card = False
 
-    if is_composite:
+    # Phase 39U: if declared upstream ops were previewed, uniqueness is
+    # measured on the actual join-boundary frames — not the original source.
+    if preview_frames is not None:
+        from core.integrate.relational_state import (
+            cardinality_from_uniqueness,
+            uniqueness_on_keys,
+        )
+
+        left_frame = preview_frames.get(left.name)
+        right_frame = preview_frames.get(right.name)
+        if left_frame is not None and right_frame is not None:
+            obs_l = uniqueness_on_keys(left_frame, left_keys)
+            obs_r = uniqueness_on_keys(right_frame, right_keys)
+            if obs_l is not None and obs_r is not None:
+                left_u, right_u = float(obs_l), float(obs_r)
+                card = cardinality_from_uniqueness(left_u, right_u)
+                observed_card = True
+                left.row_count = int(len(left_frame))
+                right.row_count = int(len(right_frame))
+                info(
+                    "join_boundary_uniqueness",
+                    "Join-key uniqueness observed on post-transformation branch state",
+                    step_id=step.id,
+                    left_uniqueness=left_u,
+                    right_uniqueness=right_u,
+                    cardinality=card,
+                    left_rows=left.row_count,
+                    right_rows=right.row_count,
+                )
+
+    if is_composite and not observed_card:
         comp = _composite_stats(
             pairwise_index, left.name, right.name, left_keys, right_keys
         )
@@ -1251,7 +1309,7 @@ def _v_join(
         if lk not in left.columns or rk not in right.columns:
             continue
         lc, rc = left.columns[lk], right.columns[rk]
-        if not is_composite:
+        if not is_composite and not observed_card:
             left_u, right_u = lc.uniqueness_ratio, rc.uniqueness_ratio
         left_null, right_null = lc.null_ratio, rc.null_ratio
         if not _dtypes_compatible(lc.dtype_family, rc.dtype_family):
@@ -1288,6 +1346,9 @@ def _v_join(
             )
 
         if is_composite:
+            continue
+
+        if observed_card:
             continue
 
         stats = _pair_stats(pairwise_index, left.name, right.name, lk, rk)
@@ -1662,7 +1723,15 @@ def _simulate_output(step: IntegrationStep, inputs: list[_DatasetMeta]) -> _Data
         for g in step.params.get("group_by") or []:
             g = str(g)
             if g in src.columns:
-                cols[g] = src.columns[g]
+                src_meta = src.columns[g]
+                # group_by keys are unique by construction (one row per group).
+                cols[g] = _ColumnMeta(
+                    name=g,
+                    dtype_family=src_meta.dtype_family,
+                    null_ratio=src_meta.null_ratio,
+                    uniqueness_ratio=1.0,
+                    distinct_count=src_meta.distinct_count,
+                )
         for m in step.params.get("metrics") or []:
             if not isinstance(m, dict):
                 continue

@@ -492,7 +492,9 @@ def _run_integration_attempt_loop(
             if attempt < rounds - 1:
                 continue
 
-        plan_val = validate_integration_plan(understanding, plan, user_prompt=user_prompt)
+        plan_val = validate_integration_plan(
+            understanding, plan, user_prompt=user_prompt, frames=sources
+        )
         last_plan_val = plan_val
         expected_schema_by_step = [
             {
