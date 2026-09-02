@@ -777,6 +777,318 @@ def build_schema_lineage(
     return evidence
 
 
+GRAIN_KNOWN = "known"
+GRAIN_INDETERMINATE = "indeterminate"
+GRAIN_NOT_APPLICABLE = "not_applicable"
+
+_SUPPORTED_GRAIN_OPS = frozenset(
+    {
+        "rename_columns",
+        "filter_rows",
+        "select_columns",
+        "union_rows",
+        "join",
+        "aggregate",
+    }
+)
+
+
+def _grain_result(
+    status: str,
+    identities: list[dict[str, str]] | None = None,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    ids = list(identities or []) if status == GRAIN_KNOWN else []
+    return {"status": status, "identities": ids, "reason": reason}
+
+
+def _grain_ind(reason: str) -> dict[str, Any]:
+    return _grain_result(GRAIN_INDETERMINATE, reason=reason)
+
+
+def _id_tuple(identities: list[dict[str, str]]) -> tuple[tuple[str, str], ...]:
+    return tuple((i["source_id"], i["origin_column_ref"]) for i in identities)
+
+
+def _identity(source_id: str, origin_column_ref: str) -> dict[str, str]:
+    return {"source_id": source_id, "origin_column_ref": origin_column_ref}
+
+
+def _singleton_origin(origins: list[dict[str, str]] | None) -> tuple[str, str] | None:
+    rows = [o for o in (origins or []) if isinstance(o, dict) and o.get("source") and o.get("column")]
+    if len(rows) != 1:
+        return None
+    return (str(rows[0]["source"]), str(rows[0]["column"]))
+
+
+def _origins_for_table(
+    name: str,
+    lineage: dict[str, Any],
+    source_schemas: dict[str, list[str]],
+) -> dict[str, list[dict[str, str]]]:
+    step_o = lineage.get("step_column_origins") or {}
+    if name in step_o:
+        return {str(k): list(v or []) for k, v in (step_o.get(name) or {}).items()}
+    if name in source_schemas:
+        return {str(c): [{"source": name, "column": str(c)}] for c in source_schemas[name]}
+    return {}
+
+
+def _copy_known(state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": GRAIN_KNOWN,
+        "identities": [dict(x) for x in state.get("identities") or []],
+        "columns": list(state.get("columns") or []),
+        "reason": state.get("reason"),
+    }
+
+
+def observe_final_grain_identities(
+    plan: dict[str, Any] | None,
+    source_schemas: dict[str, list[str]] | None = None,
+    *,
+    lineage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Observe canonical row-grain identities for a plan's final table.
+
+    Structural only: ``(source_id, origin_column_ref)`` pairs. Does not read
+    prompts, labels, or contracts. Unknown grain is ``indeterminate``, never
+    ``known`` with an empty identity list except for explicit global aggregate.
+    """
+    source_schemas = {str(k): [str(c) for c in (v or [])] for k, v in (source_schemas or {}).items()}
+    if not isinstance(plan, dict):
+        return _grain_ind("invalid_plan")
+    if plan.get("status") == "cannot_plan":
+        return _grain_result(GRAIN_NOT_APPLICABLE, reason="cannot_plan")
+    if plan.get("status") != "planned":
+        return _grain_ind("invalid_plan")
+
+    if lineage is None:
+        lineage = build_schema_lineage(plan, source_schemas, include_intermediates=True)
+
+    table_grain: dict[str, dict[str, Any]] = {}
+    for src in source_schemas:
+        table_grain[src] = {
+            "status": GRAIN_INDETERMINATE,
+            "identities": [],
+            "columns": [],
+            "reason": "source_has_no_declared_grain",
+        }
+
+    for step in plan.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        op = str(step.get("op") or "")
+        out_name = str(step.get("output") or "")
+        inputs = [str(x) for x in (step.get("inputs") or [])]
+        params = step.get("params") or {}
+        if not isinstance(params, dict):
+            params = {}
+        if not out_name:
+            continue
+        if op not in _SUPPORTED_GRAIN_OPS:
+            table_grain[out_name] = {
+                "status": GRAIN_INDETERMINATE,
+                "identities": [],
+                "columns": [],
+                "reason": "unsupported_operation",
+            }
+            continue
+
+        in_states = [table_grain.get(n) or {
+            "status": GRAIN_INDETERMINATE,
+            "identities": [],
+            "columns": [],
+            "reason": "branch_state_unknown",
+        } for n in inputs]
+        in_origins = [_origins_for_table(n, lineage, source_schemas) for n in inputs]
+
+        if op == "filter_rows":
+            st0 = in_states[0] if in_states else None
+            if st0 and st0["status"] == GRAIN_KNOWN:
+                table_grain[out_name] = _copy_known(st0)
+            else:
+                table_grain[out_name] = {
+                    "status": GRAIN_INDETERMINATE,
+                    "identities": [],
+                    "columns": [],
+                    "reason": (st0.get("reason") if st0 else "branch_state_unknown"),
+                }
+            continue
+
+        if op == "rename_columns":
+            st0 = in_states[0] if in_states else None
+            if not st0 or st0["status"] != GRAIN_KNOWN:
+                table_grain[out_name] = {
+                    "status": GRAIN_INDETERMINATE,
+                    "identities": [],
+                    "columns": [],
+                    "reason": (st0.get("reason") if st0 else "branch_state_unknown"),
+                }
+                continue
+            mapping = {str(k): str(v) for k, v in (params.get("mapping") or {}).items()}
+            copied = _copy_known(st0)
+            copied["columns"] = [mapping.get(c, c) for c in copied["columns"]]
+            table_grain[out_name] = copied
+            continue
+
+        if op == "select_columns":
+            st0 = in_states[0] if in_states else None
+            if not st0 or st0["status"] != GRAIN_KNOWN:
+                table_grain[out_name] = {
+                    "status": GRAIN_INDETERMINATE,
+                    "identities": [],
+                    "columns": [],
+                    "reason": (st0.get("reason") if st0 else "branch_state_unknown"),
+                }
+                continue
+            selected = {str(c) for c in (params.get("columns") or [])}
+            if any(c not in selected for c in st0.get("columns") or []):
+                table_grain[out_name] = {
+                    "status": GRAIN_INDETERMINATE,
+                    "identities": [],
+                    "columns": [],
+                    "reason": "grain_column_projected_away",
+                }
+                continue
+            table_grain[out_name] = _copy_known(st0)
+            continue
+
+        if op == "aggregate":
+            if not in_origins:
+                table_grain[out_name] = {
+                    "status": GRAIN_INDETERMINATE,
+                    "identities": [],
+                    "columns": [],
+                    "reason": "branch_state_unknown",
+                }
+                continue
+            group_by = [str(g) for g in (params.get("group_by") or [])]
+            origins = in_origins[0]
+            if not group_by:
+                table_grain[out_name] = {
+                    "status": GRAIN_KNOWN,
+                    "identities": [],
+                    "columns": [],
+                    "reason": "global_aggregate",
+                }
+                continue
+            identities: list[dict[str, str]] = []
+            columns: list[str] = []
+            failed = None
+            for g in group_by:
+                orig = _singleton_origin(origins.get(g))
+                if orig is None:
+                    failed = "group_by_origin_unresolved" if g not in origins else "group_by_origin_ambiguous"
+                    break
+                identities.append(_identity(orig[0], orig[1]))
+                columns.append(g)
+            if failed:
+                table_grain[out_name] = {
+                    "status": GRAIN_INDETERMINATE,
+                    "identities": [],
+                    "columns": [],
+                    "reason": failed,
+                }
+            else:
+                table_grain[out_name] = {
+                    "status": GRAIN_KNOWN,
+                    "identities": identities,
+                    "columns": columns,
+                    "reason": None,
+                }
+            continue
+
+        if op == "union_rows":
+            if not in_states or any(s["status"] != GRAIN_KNOWN for s in in_states):
+                table_grain[out_name] = {
+                    "status": GRAIN_INDETERMINATE,
+                    "identities": [],
+                    "columns": [],
+                    "reason": "union_grain_unprovable",
+                }
+                continue
+            keys = [_id_tuple(s["identities"]) for s in in_states]
+            if len(set(keys)) != 1:
+                table_grain[out_name] = {
+                    "status": GRAIN_INDETERMINATE,
+                    "identities": [],
+                    "columns": [],
+                    "reason": "union_grain_mismatch",
+                }
+                continue
+            table_grain[out_name] = _copy_known(in_states[0])
+            continue
+
+        if op == "join":
+            if len(in_states) < 2 or any(s["status"] != GRAIN_KNOWN for s in in_states[:2]):
+                table_grain[out_name] = {
+                    "status": GRAIN_INDETERMINATE,
+                    "identities": [],
+                    "columns": [],
+                    "reason": "join_grain_unprovable",
+                }
+                continue
+            left, right = in_states[0], in_states[1]
+            if _id_tuple(left["identities"]) != _id_tuple(right["identities"]) or not left["identities"]:
+                table_grain[out_name] = {
+                    "status": GRAIN_INDETERMINATE,
+                    "identities": [],
+                    "columns": [],
+                    "reason": "join_grain_unprovable",
+                }
+                continue
+            left_keys = [str(k) for k in (params.get("left_keys") or params.get("left_on") or [])]
+            right_keys = [str(k) for k in (params.get("right_keys") or params.get("right_on") or [])]
+            if not left_keys or len(left_keys) != len(right_keys):
+                table_grain[out_name] = {
+                    "status": GRAIN_INDETERMINATE,
+                    "identities": [],
+                    "columns": [],
+                    "reason": "join_grain_unprovable",
+                }
+                continue
+            grain_set = set(_id_tuple(left["identities"]))
+            left_key_ids: list[tuple[str, str]] = []
+            right_key_ids: list[tuple[str, str]] = []
+            ok = True
+            for k in left_keys:
+                orig = _singleton_origin(in_origins[0].get(k))
+                if orig is None:
+                    ok = False
+                    break
+                left_key_ids.append(orig)
+            if ok:
+                for k in right_keys:
+                    orig = _singleton_origin(in_origins[1].get(k))
+                    if orig is None:
+                        ok = False
+                        break
+                    right_key_ids.append(orig)
+            if not ok or set(left_key_ids) != grain_set or set(right_key_ids) != grain_set:
+                table_grain[out_name] = {
+                    "status": GRAIN_INDETERMINATE,
+                    "identities": [],
+                    "columns": [],
+                    "reason": "join_grain_unprovable",
+                }
+                continue
+            table_grain[out_name] = _copy_known(left)
+            continue
+
+    final_name = str(plan.get("final_output") or "")
+    if not final_name:
+        return _grain_ind("missing_final")
+    produced = set(lineage.get("step_outputs") or {}) | set(source_schemas)
+    if final_name not in produced and final_name not in table_grain:
+        return _grain_ind("missing_final")
+    st = table_grain.get(final_name)
+    if not st:
+        return _grain_ind("missing_final")
+    if st["status"] == GRAIN_KNOWN:
+        return _grain_result(GRAIN_KNOWN, st["identities"], st.get("reason"))
+    return _grain_ind(str(st.get("reason") or "indeterminate"))
+
 
 def extract_source_schemas_from_understanding(
     understanding: dict[str, Any] | None,
