@@ -1,0 +1,15 @@
+{
+  "verdict": "NO_SAFE_OPERATIONAL_STRATEGY",
+  "frontier_winner": "S0 — CURRENT PRODUCTION BASELINE",
+  "gate": "A",
+  "migration": "NOT_APPROVED",
+  "shadow": "OFF",
+  "production_change": "NO_PRODUCTION_CHANGE",
+  "phase40d_43": "OBSERVER_REANALYSIS_ONLY",
+  "v1_contract_regenerated": false,
+  "ACTUAL_STRONG_RECOVERY": "NOT_MEASURED",
+  "reuse": "NO_SAFE_EXISTING_CALL_REUSE",
+  "trigger": "NO_SAFE_CONTRACT_CALL_TRIGGER",
+  "observer_false_block": 0,
+  "useful_basis_token": "lookalike"
+}
