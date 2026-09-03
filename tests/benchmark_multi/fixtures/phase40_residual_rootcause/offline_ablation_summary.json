@@ -1,0 +1,9 @@
+{
+  "n_reference": 15,
+  "all_validator_valid": true,
+  "all_executor_success": true,
+  "all_manual_ok": true,
+  "escalation_skips_cannot_plan": true,
+  "h1_any_supported": false,
+  "h2_any_supported": false
+}

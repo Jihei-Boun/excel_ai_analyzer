@@ -1,0 +1,246 @@
+{
+  "schema": "phase40_residual_manual_evaluation_v1",
+  "evaluator_note": "Research-only labels. Independent of verifier verdict. Same-attempt labels apply to the verifier-evaluated attempt when invoked.",
+  "cases": {
+    "r40-A01": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": [],
+      "notes": "Join sku + sum units. Correct."
+    },
+    "r40-A02": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": [],
+      "notes": "Union both warehouses. Correct."
+    },
+    "r40-A03": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": [],
+      "notes": "Join plan_id, sum amount per plan_name. Correct."
+    },
+    "r40-A04": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": [],
+      "notes": "Join pkg_id. Correct."
+    },
+    "r40-A05": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": [],
+      "notes": "Join meter_id, sum kwh per site. Correct."
+    },
+    "r40-A06": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": ["fast_retry_after_union_incompatible_schema"],
+      "notes": "First fast attempt union rejected; retry join+agg correct."
+    },
+    "r40-A07": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": [],
+      "notes": "Join machine_id, sum hours per plant. Correct."
+    },
+    "r40-B01": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": [],
+      "notes": "Grain customer_id not store. Correct."
+    },
+    "r40-B02": {
+      "manual_final": "NO",
+      "manual_verified_attempt": null,
+      "first_divergence": "P2_PLANNER_CANNOT_PLAN_WRONG",
+      "primary": "P2_PLANNER_CANNOT_PLAN_WRONG",
+      "secondary": ["V3_VALIDATOR_CORRECT_REJECTION", "S5_VERIFIER_NOT_REACHED"],
+      "notes": "Answerable per-employee minutes. Fast hit final_grain_contradiction then cannot_plan. Verifier never reached."
+    },
+    "r40-B03": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": [],
+      "notes": "Grain patient_id. Correct."
+    },
+    "r40-B04": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": [],
+      "notes": "Grain room_id. Correct."
+    },
+    "r40-B05": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": [],
+      "notes": "Aggregate qty per product_id without using category. Correct."
+    },
+    "r40-C01": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": [],
+      "notes": "Union monthly ledgers. Correct."
+    },
+    "r40-C02": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": ["fast_retry_join_key_projection"],
+      "notes": "Join emp_id. Retry after join_key_dropped_in_final_projection."
+    },
+    "r40-C03": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": [],
+      "notes": "Union call lists. Correct."
+    },
+    "r40-C04": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": [],
+      "notes": "Union survey waves despite overlapping respondent. Correct."
+    },
+    "r40-D01": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": "P3_PLANNER_OPERATIONAL_FAILURE",
+      "primary": "P3_PLANNER_OPERATIONAL_FAILURE",
+      "secondary": ["X3_FAILURE_ESCALATION_RECOVERY"],
+      "notes": "Fast unmaterializable rename/grain. 32B join+rename keeps 2023 and 2024 revenue. Verifier pass on recovered attempt."
+    },
+    "r40-D02": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": [],
+      "notes": "East/west visits as independent columns. Correct on fast path."
+    },
+    "r40-D03": {
+      "manual_final": "NO",
+      "manual_verified_attempt": null,
+      "first_divergence": "P2_PLANNER_CANNOT_PLAN_WRONG",
+      "primary": "P2_PLANNER_CANNOT_PLAN_WRONG",
+      "secondary": ["X4_FAILURE_ESCALATION_FAILED_RECOVERY", "S5_VERIFIER_NOT_REACHED", "P3_PLANNER_OPERATIONAL_FAILURE"],
+      "notes": "Answerable actual vs forecast partition. Fast nonexistent_column/grain; 32B cannot_plan. 966s."
+    },
+    "r40-D04": {
+      "manual_final": "NO",
+      "manual_verified_attempt": null,
+      "first_divergence": "P2_PLANNER_CANNOT_PLAN_WRONG",
+      "primary": "P2_PLANNER_CANNOT_PLAN_WRONG",
+      "secondary": ["X4_FAILURE_ESCALATION_FAILED_RECOVERY", "S5_VERIFIER_NOT_REACHED", "P3_PLANNER_OPERATIONAL_FAILURE"],
+      "notes": "Answerable day vs night kwh partition. Fast unmaterializable; 32B cannot_plan."
+    },
+    "r40-E01": {
+      "manual_final": "CORRECT_CANNOT_PLAN",
+      "manual_verified_attempt": null,
+      "first_divergence": null,
+      "primary": "C1_CORRECT_CANNOT_PLAN",
+      "secondary": ["X5_UNNECESSARY_ESCALATION"],
+      "notes": "No inbound/outbound evidence. Final cannot_plan correct. 32B invoked because fast failed validation rather than cannot_plan."
+    },
+    "r40-E02": {
+      "manual_final": "CORRECT_CANNOT_PLAN",
+      "manual_verified_attempt": null,
+      "first_divergence": null,
+      "primary": "C1_CORRECT_CANNOT_PLAN",
+      "secondary": ["V3_VALIDATOR_CORRECT_REJECTION"],
+      "notes": "join_against_unrelated then cannot_plan. Correct."
+    },
+    "r40-E03": {
+      "manual_final": "CORRECT_CANNOT_PLAN",
+      "manual_verified_attempt": null,
+      "first_divergence": null,
+      "primary": "C1_CORRECT_CANNOT_PLAN",
+      "secondary": [],
+      "notes": "No paid/free flag. Fast cannot_plan. Correct."
+    },
+    "r40-E04": {
+      "manual_final": "CORRECT_CANNOT_PLAN",
+      "manual_verified_attempt": null,
+      "first_divergence": null,
+      "primary": "C1_CORRECT_CANNOT_PLAN",
+      "secondary": ["X5_UNNECESSARY_ESCALATION"],
+      "notes": "No shared identity. Final cannot_plan correct after 32B."
+    },
+    "r40-F01": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": "P3_PLANNER_OPERATIONAL_FAILURE",
+      "primary": "P3_PLANNER_OPERATIONAL_FAILURE",
+      "secondary": ["X3_FAILURE_ESCALATION_RECOVERY"],
+      "notes": "Fast grain contradiction; 32B filter+join keeps front/rear occupancy. 39U-like post-filter uniqueness worked on strong path."
+    },
+    "r40-F02": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "NO",
+      "first_divergence": "P1_PLANNER_SEMANTIC_WRONG",
+      "primary": "P1_PLANNER_SEMANTIC_WRONG",
+      "secondary": ["S3_VERIFIER_CORRECT_REJECTION", "X1_SEMANTIC_ESCALATION_RECOVERY"],
+      "notes": "Fast fake-dual: two sum(score) aliases. Verifier fail wrong_output_grain. Strong filter+rename+join YES."
+    },
+    "r40-F03": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": "P3_PLANNER_OPERATIONAL_FAILURE",
+      "primary": "P3_PLANNER_OPERATIONAL_FAILURE",
+      "secondary": ["X3_FAILURE_ESCALATION_RECOVERY"],
+      "notes": "Fast grain contradiction; 32B prod vs test cpu columns. Correct."
+    },
+    "r40-G01": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": "P3_PLANNER_OPERATIONAL_FAILURE",
+      "primary": "P3_PLANNER_OPERATIONAL_FAILURE",
+      "secondary": ["X3_FAILURE_ESCALATION_RECOVERY"],
+      "notes": "West-only Pike 10 Lane 2. Fast grain contradiction; 32B recovered."
+    },
+    "r40-G02": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": null,
+      "primary": "NONE_CORRECT",
+      "secondary": [],
+      "notes": "qty per product_name. Bolt 5 Washer 1. Correct."
+    },
+    "r40-G03": {
+      "manual_final": "YES",
+      "manual_verified_attempt": "YES",
+      "first_divergence": "U1_UNKNOWN",
+      "primary": "U1_UNKNOWN",
+      "secondary": ["X3_FAILURE_ESCALATION_RECOVERY"],
+      "notes": "Fast result-validation severe_inner_join_row_loss; 32B recovered with join on sale_id + grain (store_id, month). Rejected fast plan body not stored, so cannot distinguish planner bad join vs result-validator false reject."
+    }
+  }
+}

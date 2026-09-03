@@ -1,0 +1,62 @@
+{
+  "head": "1911ed701c56d20593bb19bee752bc66ff1c4ed0",
+  "defaults": {
+    "pipeline_max_retries": 2,
+    "pipeline_rounds": 3,
+    "planner_max_parse_retries": 1,
+    "planner_total_parse_attempts": 3,
+    "strong_max_retries": 2
+  },
+  "transitions": [
+    {
+      "from": "pipeline_attempt",
+      "fn": "core.integrate.integration_pipeline._run_integration_attempt_loop",
+      "call": "build_integration_plan(..., retry_feedback=attempt_feedback)"
+    },
+    {
+      "from": "planner_llm",
+      "fn": "core.integrate.integration_planner.build_integration_plan",
+      "condition": "IntegrationPlanParseError",
+      "to": "format_retry",
+      "note": "attempt>0 appends Fix JSON shape/types; if still unsure return cannot_plan"
+    },
+    {
+      "from": "format_retry_exhausted",
+      "fn": "build_integration_plan",
+      "output_status": "cannot_plan",
+      "reason": "planner_parse_failed"
+    },
+    {
+      "from": "plan.status==cannot_plan",
+      "fn": "_run_integration_attempt_loop",
+      "output_status": "cannot_plan",
+      "note": "returns immediately; does not set metadata.exhausted"
+    },
+    {
+      "from": "plan.status==planned AND invalid",
+      "fn": "format_integration_validation_feedback",
+      "retry_mode": "repair for STRUCTURAL/ALIAS (keep family sentence)",
+      "output_status": "continue loop"
+    },
+    {
+      "from": "loop ends without success/cannot_plan",
+      "fn": "_run_integration_attempt_loop",
+      "output_status": "failed",
+      "metadata_exhausted": true
+    },
+    {
+      "from": "fast.status==cannot_plan",
+      "fn": "should_escalate_after_fast_path",
+      "output": "should_escalate=False",
+      "reason_code": "skip_cannot_plan"
+    },
+    {
+      "from": "fast.status==failed AND trigger codes",
+      "fn": "should_escalate_after_fast_path",
+      "output": "should_escalate=True",
+      "call": "_run_integration_attempt_loop(model=qwen3:32b, initial_feedback=build_escalation_feedback)"
+    }
+  ],
+  "keep_family_sentence_file": "core/integrate/integration_validation_types.py",
+  "keep_family_function": "format_integration_validation_feedback"
+}
