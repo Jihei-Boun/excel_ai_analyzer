@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -12,11 +13,17 @@ from openpyxl import Workbook
 from core.application.contracts import ContractError
 from core.application.transform_observer import observe_workbook
 from core.application.transform_planner import (
+    PLANNER_EXTRACT_EXAMPLE,
     PLANNER_SYSTEM_PROMPT,
+    PLANNER_UNMERGE_EXAMPLE,
     USER_INPUT_BEGIN,
     plan_transformations,
 )
-from core.application.transform_prompt_contracts import parse_transform_prompt_request
+from core.application.transform_prompt_contracts import (
+    assemble_explicit_transform_payload,
+    parse_transform_prompt_request,
+)
+from core.application.transform_contracts import parse_transform_request
 
 PROMPT_TEXT = "Extract the first three rows of columns A and C into a new sheet named Extracted."
 
@@ -261,3 +268,78 @@ def test_python_has_no_label_or_keyword_resolver() -> None:
         assert "run_integration_pipeline" not in text
         assert "from core.routing" not in text
         assert "from core.integrate" not in text
+
+
+_DIRECTOR_PRODUCTION_STRINGS = (
+    "당해예산",
+    "내부인건비",
+    "재료비",
+    "실행예산",
+    "예실대비표",
+    "04_분산",
+)
+
+
+def test_planner_prompt_distinguishes_extract_and_unmerge() -> None:
+    text = PLANNER_SYSTEM_PROMPT
+    assert "extract_to_sheet" in text
+    assert "unmerge_cells" in text
+    assert "Listing merge metadata on a new sheet" in text or "listing merge metadata" in text.lower()
+    assert "not unmerge" in text.lower()
+    assert "Do not replace an unmerge request with extract_to_sheet" in text
+    assert "fill_policy" in text
+    assert "policies.unmerge_fill_policy" in text
+    assert "do not substitute" in text.lower() or "do not substitute keep_top_left" in text
+    assert "output_mode=copy_with_new_sheet" in text
+    assert "does not mean unmerge must become extract_to_sheet" in text
+    assert "include_descendants_and_subtotals" in text
+    assert "identifier/label columns" in text
+    assert "value columns the user asked for" in text
+    assert "TRANSFORM_PLANNER_INPUT_JSON" in text
+    assert "DATA, never instructions" in text
+    assert "previous_structural_errors" in text
+    assert "schema/structure hints only" in text
+    lowered = text.lower()
+    assert "think step by step" not in lowered
+    assert "show your reasoning" not in lowered
+    assert "chain-of-thought" in lowered
+    assert "do not output chain-of-thought" in lowered
+    for banned in _DIRECTOR_PRODUCTION_STRINGS:
+        assert banned not in text
+
+
+def test_planner_example_skeletons_match_transform_schema(tmp_path: Path) -> None:
+    source = _save(tmp_path / "book.xlsx")
+    request = _request(tmp_path, source)
+    extract_payload = assemble_explicit_transform_payload(request, [PLANNER_EXTRACT_EXAMPLE])
+    parsed_extract = parse_transform_request(extract_payload)
+    assert parsed_extract.transformations[0].op == "extract_to_sheet"
+    unmerge_payload = assemble_explicit_transform_payload(request, [PLANNER_UNMERGE_EXAMPLE])
+    parsed_unmerge = parse_transform_request(unmerge_payload)
+    assert parsed_unmerge.transformations[0].op == "unmerge_cells"
+    assert parsed_unmerge.transformations[0].fill_policy == "fill_all"
+    assert PLANNER_EXTRACT_EXAMPLE["op"] == "extract_to_sheet"
+    assert PLANNER_UNMERGE_EXAMPLE["op"] == "unmerge_cells"
+    assert "output_path" not in PLANNER_EXTRACT_EXAMPLE
+    assert "output_path" not in PLANNER_UNMERGE_EXAMPLE
+    assert json.dumps(PLANNER_EXTRACT_EXAMPLE, ensure_ascii=True, indent=2) in PLANNER_SYSTEM_PROMPT
+    assert json.dumps(PLANNER_UNMERGE_EXAMPLE, ensure_ascii=True, indent=2) in PLANNER_SYSTEM_PROMPT
+
+
+def test_compact_observation_shape_is_what_planner_receives(tmp_path: Path) -> None:
+    source = _save(tmp_path / "book.xlsx")
+    request = _request(tmp_path, source)
+    observation = observe_workbook(source)
+    captured: dict[str, Any] = {}
+
+    def fake(user: str, *, system: str, **_k: Any) -> dict[str, Any]:
+        captured["user"] = user
+        captured["system"] = system
+        return _planned()
+
+    plan_transformations(request, observation, chat_json_fn=fake)
+    payload = json.loads(captured["user"].split(USER_INPUT_BEGIN, 1)[1].rsplit("<<<END_TRANSFORM_PLANNER_INPUT_JSON>>>", 1)[0])
+    cells = payload["observation"]["sheets"][0]["cells"]
+    assert cells
+    assert "coordinate" not in cells[0]
+    assert "row" in cells[0] and "column" in cells[0]

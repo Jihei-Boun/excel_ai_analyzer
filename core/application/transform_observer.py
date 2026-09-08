@@ -2,6 +2,11 @@
 
 Collects visible structural facts only. Does not infer labels, groups, headers,
 or synonyms. Never writes the source workbook.
+
+Planner JSON (`to_dict`) is compact: cells emit 1-based row/column/value and
+omit A1 `coordinate` plus `is_formula` when false. Merge spans keep range
+bounds and top-left value. Serialized overflow still drops the last sheet's
+cell tail, then merges, then the sheet.
 """
 
 from __future__ import annotations
@@ -40,14 +45,16 @@ class ObservedMerge:
     top_left_is_formula: bool
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "start_row": self.start_row,
             "start_column": self.start_column,
             "end_row": self.end_row,
             "end_column": self.end_column,
             "top_left_value": self.top_left_value,
-            "top_left_is_formula": self.top_left_is_formula,
         }
+        if self.top_left_is_formula:
+            payload["top_left_is_formula"] = True
+        return payload
 
 
 @dataclass(frozen=True)
@@ -59,13 +66,16 @@ class ObservedCell:
     is_formula: bool
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        # Planner JSON uses 1-based row/column only. A1 `coordinate` stays on
+        # the Python object for tests but is omitted here as a duplicate.
+        payload: dict[str, Any] = {
             "row": self.row,
             "column": self.column,
-            "coordinate": self.coordinate,
             "value": self.value,
-            "is_formula": self.is_formula,
         }
+        if self.is_formula:
+            payload["is_formula"] = True
+        return payload
 
 
 @dataclass(frozen=True)
