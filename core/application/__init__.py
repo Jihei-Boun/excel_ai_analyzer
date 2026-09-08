@@ -11,6 +11,21 @@ from core.application.contracts import (
     ContractError,
 )
 from core.application.headless import analyze_excel, parse_analyze_request
+from core.application.transform_contracts import (
+    TRANSFORM_CONTRACT_VERSION,
+    TRANSFORM_OPERATION,
+    ExtractToSheetOp,
+    TransformRequest,
+    TransformResponse,
+    UnmergeCellsOp,
+    parse_transform_request,
+)
+from core.application.transform_headless import transform_excel
+from core.application.transform_prompt_contracts import (
+    TransformPromptRequest,
+    parse_transform_prompt_request,
+)
+from core.application.transform_prompt_headless import transform_excel_from_prompt
 
 __all__ = [
     "CONTRACT_VERSION",
@@ -20,4 +35,15 @@ __all__ = [
     "ContractError",
     "analyze_excel",
     "parse_analyze_request",
+    "transform_excel",
+    "transform_excel_from_prompt",
+    "TRANSFORM_CONTRACT_VERSION",
+    "TRANSFORM_OPERATION",
+    "ExtractToSheetOp",
+    "TransformRequest",
+    "TransformPromptRequest",
+    "TransformResponse",
+    "UnmergeCellsOp",
+    "parse_transform_request",
+    "parse_transform_prompt_request",
 ]

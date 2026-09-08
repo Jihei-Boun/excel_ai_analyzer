@@ -19,6 +19,7 @@ from core.application.contracts import (
     error_response,
 )
 from core.application.headless import analyze_excel
+from core.application.transform_prompt_headless import transform_excel_from_prompt
 
 logger = logging.getLogger("core.application.cli")
 
@@ -46,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     if isinstance(payload, dict):
         request_id = str(payload.get("request_id") or "")
 
-    response = _run_analyze(payload)
+    response = _dispatch(payload)
     if not isinstance(response, dict):
         response = error_response(
             request_id=request_id,
@@ -67,10 +68,22 @@ def main(argv: list[str] | None = None) -> int:
     return CLI_EXIT_CODES.get(status, CLI_EXIT_CODES["execution_failed"])
 
 
+def _dispatch(payload: Any) -> dict[str, Any]:
+    if isinstance(payload, dict) and payload.get("operation") == "transform":
+        return _run_transform(payload)
+    return _run_analyze(payload)
+
+
 def _run_analyze(payload: Any) -> dict[str, Any]:
     captured = _StdoutToStderr()
     with captured:
         return analyze_excel(payload)
+
+
+def _run_transform(payload: Any) -> dict[str, Any]:
+    captured = _StdoutToStderr()
+    with captured:
+        return transform_excel_from_prompt(payload)
 
 
 def _write_response(response: dict[str, Any]) -> None:

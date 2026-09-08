@@ -78,3 +78,39 @@ def test_cli_invalid_request_exit_code(tmp_path: Path) -> None:
     if result.stderr:
         json.loads(result.stdout)  # stdout still exclusive JSON
         assert result.stdout.strip() != result.stderr.strip()
+
+
+def test_cli_empty_stdin_is_malformed_json() -> None:
+    result = _run_cli("")
+    assert result.returncode == CLI_EXIT_CODES["invalid_request"]
+    parsed = json.loads(result.stdout)
+    assert parsed["status"] == "invalid_request"
+    assert parsed["error"]["code"] == "malformed_json"
+
+
+def test_cli_non_object_json_is_invalid_request() -> None:
+    result = _run_cli("[1, 2]")
+    assert result.returncode == CLI_EXIT_CODES["invalid_request"]
+    parsed = json.loads(result.stdout)
+    assert parsed["status"] == "invalid_request"
+    json.loads(result.stdout)
+    assert result.stdout.strip().startswith("{")
+
+
+def test_cli_unsupported_operation_is_not_transform() -> None:
+    result = _run_cli(json.dumps({"contract_version": "1.0", "operation": "nope", "request_id": "req-x"}))
+    parsed = json.loads(result.stdout)
+    assert parsed["status"] == "invalid_request"
+    assert parsed["error"]["code"] == "invalid_operation"
+    assert result.returncode == CLI_EXIT_CODES["invalid_request"]
+
+
+def test_cli_missing_operation_stays_on_analyze(tmp_path: Path) -> None:
+    path = write_table(tmp_path / "input.xlsx")
+    payload = base_request(tmp_path, paths=[path], prompt="이 파일 요약해줘")
+    payload.pop("operation")
+    result = _run_cli(json.dumps(payload))
+    parsed = json.loads(result.stdout)
+    assert parsed["status"] == "success"
+    assert result.returncode == CLI_EXIT_CODES["success"]
+    assert parsed.get("data", {}).get("route") == "route_single_prompt"
