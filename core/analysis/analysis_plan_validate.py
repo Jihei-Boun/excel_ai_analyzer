@@ -217,6 +217,7 @@ def validate_analysis_plan(
         )
     )
     issues.extend(_validate_overall_aggregate(plan, df, available, user_prompt=user_prompt))
+    issues.extend(_validate_grouped_selection(plan, df, user_prompt=user_prompt))
 
     errors = [i for i in issues if i.level == "error"]
     return ValidationReport(ok=not errors, issues=issues)
@@ -312,14 +313,89 @@ def _raw_aggregate_metric_names(raw: dict[str, Any]) -> list[str]:
     return names
 
 
-def _prompt_mentioned_values(df: pd.DataFrame, prompt: str) -> tuple[str, list[str]] | None:
+def _validate_grouped_selection(
+    plan: AnalysisPlan,
+    df: pd.DataFrame,
+    *,
+    user_prompt: str | None,
+) -> list[ValidationIssue]:
+    """그룹 이름을 집어 물었는데 모든 그룹을 내는 집계를 막는다.
+
+    예: '연구활동비 항목들의 평균'에 group_by=[비목분류]만 있고 include_groups가 없으면
+    7개 그룹이 다 나온다. 그 그룹만 남기도록 되돌려 보낸다.
+    """
+    if not user_prompt:
+        return []
+    issues: list[ValidationIssue] = []
+    for index, step in enumerate(plan.steps):
+        payload = step.payload or {}
+        group_by = [str(g) for g in payload.get("group_by") or []]
+        if step.op != "aggregate" or not group_by or payload.get("include_groups"):
+            continue
+        group_col = group_by[0]
+        if group_col not in df.columns:
+            continue
+        # 앞 단계 필터든 뒤 단계 필터·그룹 비교든, 그 그룹을 고르는 단계가 있으면 통과.
+        selects_group = any(
+            (
+                s.op == "filter_rows"
+                and any(
+                    str(f.get("column") or "") == group_col
+                    for f in (s.payload or {}).get("column_filters") or []
+                    if isinstance(f, dict)
+                )
+            )
+            or (
+                s.op == "compare_groups"
+                and str((s.payload or {}).get("group_column") or "") == group_col
+                and (s.payload or {}).get("groups")
+            )
+            for i, s in enumerate(plan.steps)
+            if i != index
+        )
+        if selects_group:
+            continue
+        mentioned = _prompt_mentioned_values(df, str(user_prompt), columns=[group_col])
+        if not mentioned:
+            continue
+        _, values = mentioned
+        from core.pai.pandasai_frame import is_total_label
+        from core.summary.summary_utils import cell_text
+
+        all_groups = {
+            cell_text(v).strip()
+            for v in df[group_col].dropna().unique()
+            if cell_text(v).strip() and not is_total_label(cell_text(v))
+        }
+        if all_groups and all_groups.issubset(set(values)):
+            continue
+        issues.append(
+            ValidationIssue(
+                "error",
+                "aggregate_missing_group_selection",
+                f"The request names group(s) {', '.join(values)} of `{group_col}` but the "
+                "aggregate returns every group. Keep only the named group(s): set "
+                f"include_groups={json_list(values)} on this aggregate, or filter_rows "
+                f'column_filters=[{{"column":"{group_col}","values":{json_list(values)}}}] '
+                "then aggregate group_by=[] for one number.",
+            )
+        )
+    return issues
+
+
+def _prompt_mentioned_values(
+    df: pd.DataFrame,
+    prompt: str,
+    *,
+    columns: list[str] | None = None,
+) -> tuple[str, list[str]] | None:
     """요청 문장에 그대로 나온 라벨 열 값을 찾는다. 가장 많이 나온 열 하나를 돌려준다."""
     from core.pai.pandasai_frame import is_total_label
     from core.summary.summary_utils import cell_text
 
     prompt_norm = prompt.replace(" ", "")
     best: tuple[str, list[str]] | None = None
-    for col in df.columns:
+    for col in df.columns if columns is None else [c for c in columns if c in df.columns]:
         name = str(col)
         if name in META_COLUMNS or name.startswith("_"):
             continue
@@ -1847,7 +1923,13 @@ def _validate_row_mix_for_plan(
             s.op == "aggregate" and bool(s.payload.get("prefer_subtotals"))
             for s in plan.steps
         )
-        level = "warning" if prefer_sub or saw_annotate else "error"
+        # group_by=[] 집계는 실행기가 상세 행만 골라 집계한다 (aggregate_overall).
+        overall_only = all(
+            s.op == "aggregate" and not (s.payload or {}).get("group_by")
+            for s in plan.steps
+            if s.op in _AGG_LIKE_OPS
+        )
+        level = "warning" if prefer_sub or saw_annotate or overall_only else "error"
         issues.append(
             ValidationIssue(
                 level,

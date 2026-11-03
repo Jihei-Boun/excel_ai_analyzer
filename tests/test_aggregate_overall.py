@@ -253,3 +253,48 @@ def test_pipeline_retries_until_selection_filter_is_added() -> None:
     assert result is not None
     assert calls["n"] >= 2
     assert result.dataframe.iloc[0]["계획"] == 50
+
+
+def test_grouped_aggregate_requires_named_group_selection() -> None:
+    report = _report(
+        {"operation": "aggregate", "group_by": ["분류"], "metrics": [{"column": "계획", "fn": "mean"}]},
+        "활동비 항목들의 계획 평균을 구해줘",
+    )
+    assert not report.ok
+    issue = next(i for i in report.errors if i.code == "aggregate_missing_group_selection")
+    assert "활동비" in issue.message and "include_groups" in issue.message
+
+
+def test_grouped_aggregate_with_include_groups_passes() -> None:
+    report = _report(
+        {
+            "operation": "aggregate",
+            "group_by": ["분류"],
+            "include_groups": ["활동비"],
+            "metrics": [{"column": "계획", "fn": "mean"}],
+        },
+        "활동비 항목들의 계획 평균을 구해줘",
+    )
+    assert report.ok, [i.message for i in report.issues]
+
+
+def test_grouped_aggregate_without_group_names_passes() -> None:
+    report = _report(
+        {"operation": "aggregate", "group_by": ["분류"], "metrics": [{"column": "계획", "fn": "sum"}]},
+        "분류별 계획 합계를 보여줘",
+    )
+    assert report.ok, [i.message for i in report.issues]
+
+
+def test_include_groups_mean_returns_named_group_only() -> None:
+    result, _ = _run(
+        {
+            "operation": "aggregate",
+            "group_by": ["분류"],
+            "include_groups": ["활동비"],
+            "metrics": [{"column": "계획", "fn": "mean"}],
+        },
+        _ledger_df(),
+    )
+    assert list(result["분류"]) == ["활동비"]
+    assert result.iloc[0]["계획"] == 20.0

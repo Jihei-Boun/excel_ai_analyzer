@@ -39,6 +39,8 @@ subtotal/total/footer rows are excluded automatically. Use it for an overall tot
 and for a total/mean of specific rows: filter those rows first
 (column_filters[{column, values}] on the item/label column), then aggregate with group_by=[].
 Do NOT group by the item column when the user wants ONE number for selected items.
+If the user names specific groups (e.g. "mean of group G"), set include_groups=[G] so only
+those groups are returned — never return every group for a named-group request.
 fn MUST be one of: sum | mean | median | min | max | count (avg→mean). NEVER omit fn.
 metrics MUST use shape [{ "column": "<existing>", "fn": "sum" }].
 Do NOT invent aliases like sales_sum / 매출액_합계 as column names.
