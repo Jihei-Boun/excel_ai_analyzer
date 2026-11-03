@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+import os
+
 import pandas as pd
 
 from core.analysis.analysis_executor import execute_analysis_plan
@@ -47,6 +49,14 @@ class AnalysisPipelineResult:
     plan: AnalysisPlan
     validation: ValidationReport
     meta: dict[str, Any] = field(default_factory=dict)
+
+
+INTERPRET_DISABLE_ENV = "EXCEL_ANALYZER_DISABLE_INTERPRET"
+
+
+def interpretation_disabled() -> bool:
+    """환경변수로 LLM 해석 문장을 끈다 (예: 화면 캡처). 기본은 켜짐."""
+    return os.environ.get(INTERPRET_DISABLE_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def should_try_analysis_pipeline(df: pd.DataFrame, *, wants_dataframe: bool) -> bool:
@@ -377,7 +387,7 @@ def try_analysis_pipeline(
             )
             exec_meta = {**exec_meta, "transpose": transpose_meta}
         reply = _build_reply(result_df, plan, exec_meta)
-        if plan.interpret:
+        if plan.interpret and not interpretation_disabled():
             try:
                 interpretation = interpret_analysis_result(
                     prompt,

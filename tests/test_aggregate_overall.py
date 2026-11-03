@@ -378,3 +378,32 @@ def test_listing_with_filter_passes() -> None:
         "활동비 항목들의 계획과 집행을 보여줘",
     )
     assert report.ok, [i.message for i in report.issues]
+
+
+def test_interpretation_can_be_disabled_by_env(monkeypatch) -> None:
+    calls = {"n": 0}
+
+    def fake_text(*_a, **_k):
+        calls["n"] += 1
+        return "해석 문장"
+
+    plan = {"operation": "aggregate", "group_by": [], "metrics": [{"column": "계획", "fn": "sum"}], "interpret": True}
+
+    def run():
+        return try_analysis_pipeline(
+            "계획 전체 합계를 구해줘",
+            _ledger_df(),
+            base_url="http://localhost",
+            model="dummy",
+            profile_name="generic",
+            max_retries=0,
+            chat_json_fn=lambda *_a, **_k: plan,
+            chat_text_fn=fake_text,
+        )
+
+    monkeypatch.setenv("EXCEL_ANALYZER_DISABLE_INTERPRET", "1")
+    off = run()
+    assert "해석 문장" not in off.reply and calls["n"] == 0
+    monkeypatch.delenv("EXCEL_ANALYZER_DISABLE_INTERPRET")
+    on = run()
+    assert "해석 문장" in on.reply
