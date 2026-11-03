@@ -47,12 +47,20 @@ def transpose_table(
 
 
 def _pick_label_column(df: pd.DataFrame, requested: str | None) -> str | None:
+    """지정 열, 없으면 값이 가장 덜 겹치는 비숫자 열(같으면 앞 열)."""
     if requested and requested in df.columns:
         return requested
+    best: str | None = None
+    best_ratio = -1.0
     for col in df.columns:
-        if not pd.api.types.is_numeric_dtype(df[col]):
-            return col
-    return None
+        if pd.api.types.is_numeric_dtype(df[col]):
+            continue
+        texts = [cell_text(v).strip() for v in df[col]]
+        filled = [t for t in texts if t]
+        ratio = len(set(filled)) / len(texts) if texts else 0.0
+        if ratio > best_ratio:
+            best, best_ratio = col, ratio
+    return best
 
 
 def _unique_labels(labels: list[str]) -> list[str]:

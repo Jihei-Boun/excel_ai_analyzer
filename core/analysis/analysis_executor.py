@@ -117,12 +117,13 @@ def _run_step(
         if not cols:
             keep = [c for c in df.columns if c not in META_COLUMNS]
             return (df[keep] if keep else df), {}
+        cols, added = _with_split_name_columns(df, cols)
         out = df[cols].copy()
         renames = step.payload.get("renames") or {}
         valid = {k: v for k, v in renames.items() if k in out.columns and v}
         if valid:
             out = out.rename(columns=valid)
-        return out, {}
+        return out, ({"added_name_columns": added} if added else {})
 
     if op == "drop_columns":
         cols = [c for c in step.payload.get("columns", []) if c in df.columns]
@@ -242,6 +243,27 @@ def _run_step(
         return result, {"top_per_group": top_meta}
 
     raise ValueError(f"지원하지 않는 연산: {op!r}")
+
+
+def _with_split_name_columns(df: pd.DataFrame, cols: list[str]) -> tuple[list[str], list[str]]:
+    """병합 헤더가 숫자 코드 열 ``X``와 이름 열 ``X_2``로 갈렸을 때 이름 열을 함께 남긴다.
+
+    ``X``만 고르면 행 이름이 코드 숫자로만 보인다. 값은 바꾸지 않고 라벨 열만 더한다.
+    """
+    out: list[str] = []
+    added: list[str] = []
+    for col in cols:
+        out.append(col)
+        twin = f"{col}_2"
+        if twin in cols or twin in out or twin not in df.columns:
+            continue
+        if not pd.api.types.is_numeric_dtype(df[col]):
+            continue
+        if pd.api.types.is_numeric_dtype(df[twin]):
+            continue
+        out.append(twin)
+        added.append(twin)
+    return out, added
 
 
 def _filter_rows(

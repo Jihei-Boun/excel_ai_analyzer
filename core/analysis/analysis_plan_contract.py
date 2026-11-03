@@ -48,6 +48,16 @@ Do NOT use { "매출액_합계": "sum" } — that shape is invalid.
 IMPORTANT: after aggregate, the metric column KEEP its source name (e.g. 매출).
 Later sort/select/compare MUST use that same name — NEVER invent 매출_합계 / amount_sum / score_mean.
 
+### Show selected items (no aggregate)
+When the user asks to SHOW/LIST items or "items of group G" with some columns
+(e.g. "G 항목들의 A와 B를 보여줘", "X, Y, Z의 A와 B를 표로 보여줘"), return their detail rows:
+annotate → filter_rows(detail + column_filters) → select_columns([item label, A, B]).
+Do NOT aggregate unless the user asks for ONE total/mean (합계를 구해/평균을 구해/총).
+A column NAME may contain 합계/Total (e.g. "B 합계" = column B_합계): that names a column,
+it is NOT an instruction to sum. Include the item NAME column: the TEXT column that names
+each row. If a header was split into a numeric code column `X` and a text column `X_2`,
+the names are in `X_2` — select `X_2` (optionally also `X`), never only the code column.
+
 ### transpose (swap rows and columns of the FINAL table)
 Use when the user asks to swap/flip rows and columns (행과 열을 바꿔/뒤집어, 전치, transpose).
 Put {"op":"transpose"} as the LAST step, or set "transpose": true on a high-level operation.
@@ -276,6 +286,15 @@ then aggregate group_by=[] with fn=mean.
 {"operation":"aggregate","group_by":["region"],
  "metrics":[{"column":"amount","fn":"sum"},{"column":"cost","fn":"sum"}],
  "transpose":true,"interpret":false}
+
+11) Show selected items' columns, then swap rows and columns (generic):
+{"steps":[
+  {"op":"annotate_row_types"},
+  {"op":"filter_rows","include_row_types":["detail"],
+   "column_filters":[{"column":"category","values":["G"]}]},
+  {"op":"select_columns","columns":["item","amount","cost_total"]},
+  {"op":"transpose"}
+],"interpret":false}
 """.strip()
 
 

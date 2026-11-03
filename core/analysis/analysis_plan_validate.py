@@ -327,6 +327,9 @@ def _validate_grouped_selection(
     if not user_prompt:
         return []
     issues: list[ValidationIssue] = []
+    listing_issue = _missing_listing_selection(plan, df, str(user_prompt))
+    if listing_issue is not None:
+        issues.append(listing_issue)
     for index, step in enumerate(plan.steps):
         payload = step.payload or {}
         group_by = [str(g) for g in payload.get("group_by") or []]
@@ -357,6 +360,9 @@ def _validate_grouped_selection(
             continue
         mentioned = _prompt_mentioned_values(df, str(user_prompt), columns=[group_col])
         if not mentioned:
+            item_issue = _missing_item_selection(plan, df, str(user_prompt), index, group_col)
+            if item_issue is not None:
+                issues.append(item_issue)
             continue
         _, values = mentioned
         from core.pai.pandasai_frame import is_total_label
@@ -381,6 +387,84 @@ def _validate_grouped_selection(
             )
         )
     return issues
+
+
+_GROUPING_OPS = frozenset(
+    {"aggregate", "compare_groups", "top_per_group", "distribution_summary", "correlation"}
+)
+
+
+def _missing_listing_selection(
+    plan: AnalysisPlan,
+    df: pd.DataFrame,
+    prompt: str,
+) -> ValidationIssue | None:
+    """집계 없이 행을 보여 주는 계획인데, 요청이 집은 항목·그룹을 고르지 않은 경우.
+
+    예: '연구활동비 항목들의 A와 B를 보여줘'에 filter 없이 select_columns만 있으면
+    모든 행이 나온다.
+    """
+    if any(s.op in _GROUPING_OPS for s in plan.steps):
+        return None
+    if not any(s.op in {"select_columns", "filter_rows"} for s in plan.steps):
+        return None
+    if any(
+        (s.payload or {}).get("column_filters") or (s.payload or {}).get("numeric_filters")
+        for s in plan.steps
+        if s.op == "filter_rows"
+    ):
+        return None
+    mentioned = _prompt_mentioned_values(df, prompt)
+    if not mentioned:
+        return None
+    col, values = mentioned
+    return ValidationIssue(
+        "error",
+        "listing_missing_selection",
+        f"The request names {', '.join(values)} (values of column `{col}`) but the plan "
+        "returns every row. Keep only those rows: filter_rows "
+        f'column_filters=[{{"column":"{col}","values":{json_list(values)}}}] '
+        "before select_columns.",
+    )
+
+
+def _missing_item_selection(
+    plan: AnalysisPlan,
+    df: pd.DataFrame,
+    prompt: str,
+    index: int,
+    group_col: str,
+) -> ValidationIssue | None:
+    """요청이 다른 열의 항목 이름을 집었는데 그 항목을 고르지 않고 그룹으로 묶는 계획을 막는다.
+
+    예: '국내여비, 국외여비, 회의비의 …'(항목명 열 값)인데 group_by=[분류]만 있는 경우.
+    """
+    mentioned = _prompt_mentioned_values(df, prompt)
+    if not mentioned:
+        return None
+    item_col, values = mentioned
+    if item_col == group_col:
+        return None
+    filtered = any(
+        s.op == "filter_rows"
+        and any(
+            str(f.get("column") or "") == item_col
+            for f in (s.payload or {}).get("column_filters") or []
+            if isinstance(f, dict)
+        )
+        for s in plan.steps[:index]
+    )
+    if filtered:
+        return None
+    return ValidationIssue(
+        "error",
+        "aggregate_missing_item_selection",
+        f"The request names item(s) {', '.join(values)} of column `{item_col}`, but the plan "
+        f"groups by `{group_col}` without selecting them. First filter_rows "
+        f'column_filters=[{{"column":"{item_col}","values":{json_list(values)}}}]; then either '
+        "list those rows (select_columns, no aggregate) or aggregate by "
+        f"`{item_col}` / group_by=[] for one number.",
+    )
 
 
 def _prompt_mentioned_values(

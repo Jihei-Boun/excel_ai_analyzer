@@ -126,3 +126,48 @@ def test_pipeline_whole_table_transpose() -> None:
     # 원본 7행 → 7개 열 + 항목 열, 원본 열 3개(라벨 열 제외) → 3행
     assert out.shape == (3, 8)
     assert list(out[TRANSPOSE_HEADER]) == ["항목명", "계획", "집행"]
+
+
+def test_transpose_prefers_most_unique_label_column() -> None:
+    df = pd.DataFrame(
+        {"분류": ["활동비", "활동비", "활동비"], "항목명": ["여비", "회의비", "인쇄비"], "계획": [30, 20, 10]}
+    )
+    out, meta = transpose_table(df)
+    assert meta["label_column"] == "항목명"
+    assert list(out.columns) == [TRANSPOSE_HEADER, "여비", "회의비", "인쇄비"]
+    assert list(out[TRANSPOSE_HEADER]) == ["분류", "계획"]
+
+
+def test_select_code_column_keeps_split_name_column_for_transpose() -> None:
+    df = pd.DataFrame(
+        {
+            "분류": ["활동비", "활동비"],
+            "비용명": [271.0, 272.0],
+            "비용명_2": ["국내여비", "국외여비"],
+            "계획": [30, 100],
+        }
+    )
+    result = try_analysis_pipeline(
+        "활동비 항목들의 계획을 보여주고 행과 열을 바꿔줘",
+        df,
+        base_url="http://localhost",
+        model="dummy",
+        profile_name="generic",
+        max_retries=0,
+        chat_json_fn=lambda *_a, **_k: {
+            "steps": [
+                {"op": "annotate_row_types"},
+                {
+                    "op": "filter_rows",
+                    "include_row_types": ["detail"],
+                    "column_filters": [{"column": "분류", "values": ["활동비"]}],
+                },
+                {"op": "select_columns", "columns": ["비용명", "계획"]},
+                {"op": "transpose"},
+            ],
+            "interpret": False,
+        },
+        chat_text_fn=lambda *_a, **_k: "",
+    )
+    assert result is not None
+    assert list(result.dataframe.columns) == [TRANSPOSE_HEADER, "국내여비", "국외여비"]

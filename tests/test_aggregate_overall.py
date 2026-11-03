@@ -298,3 +298,83 @@ def test_include_groups_mean_returns_named_group_only() -> None:
     )
     assert list(result["분류"]) == ["활동비"]
     assert result.iloc[0]["계획"] == 20.0
+
+
+def test_grouped_aggregate_requires_selecting_named_items_of_other_column() -> None:
+    report = _report(
+        {"operation": "aggregate", "group_by": ["분류"], "metrics": [{"column": "계획", "fn": "sum"}]},
+        "여비, 회의비의 계획을 표로 보여줘",
+    )
+    assert not report.ok
+    issue = next(i for i in report.errors if i.code == "aggregate_missing_item_selection")
+    assert "항목명" in issue.message and "여비" in issue.message
+
+
+def test_item_filter_before_grouped_aggregate_passes() -> None:
+    report = _report(
+        {
+            "steps": [
+                {"op": "annotate_row_types"},
+                {
+                    "op": "filter_rows",
+                    "include_row_types": ["detail"],
+                    "column_filters": [{"column": "항목명", "values": ["여비", "회의비"]}],
+                },
+                {"op": "aggregate", "group_by": ["항목명"], "metrics": [{"column": "계획", "fn": "sum"}]},
+            ]
+        },
+        "여비, 회의비의 계획을 표로 보여줘",
+    )
+    assert report.ok, [i.message for i in report.issues]
+
+
+def test_selected_items_listing_then_transpose() -> None:
+    result, _ = _run(
+        {
+            "steps": [
+                {"op": "annotate_row_types"},
+                {
+                    "op": "filter_rows",
+                    "include_row_types": ["detail"],
+                    "column_filters": [{"column": "분류", "values": ["활동비"]}],
+                },
+                {"op": "select_columns", "columns": ["항목명", "계획", "집행"]},
+            ]
+        },
+        _ledger_df(),
+    )
+    assert list(result["항목명"]) == ["여비", "회의비", "인쇄비"]
+
+
+def test_listing_without_named_group_filter_is_rejected() -> None:
+    report = _report(
+        {
+            "steps": [
+                {"op": "annotate_row_types"},
+                {"op": "filter_rows", "include_row_types": ["detail"]},
+                {"op": "select_columns", "columns": ["항목명", "계획", "집행"]},
+            ]
+        },
+        "활동비 항목들의 계획과 집행을 보여줘",
+    )
+    assert not report.ok
+    issue = next(i for i in report.errors if i.code == "listing_missing_selection")
+    assert "활동비" in issue.message and "분류" in issue.message
+
+
+def test_listing_with_filter_passes() -> None:
+    report = _report(
+        {
+            "steps": [
+                {"op": "annotate_row_types"},
+                {
+                    "op": "filter_rows",
+                    "include_row_types": ["detail"],
+                    "column_filters": [{"column": "분류", "values": ["활동비"]}],
+                },
+                {"op": "select_columns", "columns": ["항목명", "계획", "집행"]},
+            ]
+        },
+        "활동비 항목들의 계획과 집행을 보여줘",
+    )
+    assert report.ok, [i.message for i in report.issues]
