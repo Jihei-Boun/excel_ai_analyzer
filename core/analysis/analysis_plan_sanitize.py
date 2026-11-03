@@ -246,11 +246,12 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
         return AnalysisStep(op, {"columns": [str(c) for c in cols]})
 
     if op == "aggregate":
-        group_by = item.get("group_by") or item.get("group_column") or []
-        if isinstance(group_by, str):
-            group_by = [group_by]
-        group_by = _resolve_columns([str(c) for c in group_by], columns)
-        if not group_by:
+        raw_group_by = item.get("group_by") or item.get("group_column") or []
+        if isinstance(raw_group_by, str):
+            raw_group_by = [raw_group_by]
+        group_by = _resolve_columns([str(c) for c in raw_group_by], columns)
+        # 빈 group_by는 전체 집계다. 이름을 줬는데 하나도 못 찾으면 버린다.
+        if raw_group_by and not group_by:
             return None
         from core.analysis.analysis_plan_compile import (
             _metric_alias_candidates,

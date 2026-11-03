@@ -15,6 +15,7 @@ from core.analysis.analysis_ops import (
     distribution_summary,
     ensure_row_types,
     filter_vs_mean,
+    primary_label_column,
     ratio_of_columns,
     top_per_group,
 )
@@ -271,12 +272,8 @@ def _filter_rows(
             )
         if dims:
             present = [c for c in dims if c in work.columns]
-            if present:
-                primary = present[0]
-                for cand in present:
-                    if str(cand).endswith("_2") or "명" in str(cand):
-                        primary = cand
-                        break
+            primary = primary_label_column(present)
+            if primary is not None:
                 has_label = work[primary].map(lambda v: bool(cell_text(v)))
                 mask &= has_label
 

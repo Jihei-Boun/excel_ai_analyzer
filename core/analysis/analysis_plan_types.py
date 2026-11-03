@@ -222,7 +222,7 @@ def _analysis_plan_from_dict_inner(
         hint = ""
         if op in {"aggregate", "groupby", "group_aggregate"}:
             hint = (
-                " For operation=aggregate include group_by and "
+                " For operation=aggregate include group_by ([] for one overall row) and "
                 "metrics:[{column, fn}] with fn in sum|mean|median|min|max|count."
             )
         elif op in {"find_items", "item_filter", "condition_select"}:

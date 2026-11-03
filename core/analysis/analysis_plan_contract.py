@@ -32,8 +32,13 @@ prefer group_comparison / rate_vs_mean instead.
 ## Operation contracts (required fields MUST be present)
 
 ### aggregate
-required: group_by (array of existing columns), metrics (array of {column, fn})
-optional: prefer_subtotals (sum only), include_groups, output_columns, criteria_note, interpret
+required: group_by (array of existing columns, or [] for one overall row), metrics (array of {column, fn})
+optional: prefer_subtotals (sum only), include_groups, column_filters, output_columns, criteria_note, interpret
+group_by=[] returns ONE row (label column "구분" = "전체") over detail rows only;
+subtotal/total/footer rows are excluded automatically. Use it for an overall total/mean,
+and for a total/mean of specific rows: filter those rows first
+(column_filters[{column, values}] on the item/label column), then aggregate with group_by=[].
+Do NOT group by the item column when the user wants ONE number for selected items.
 fn MUST be one of: sum | mean | median | min | max | count (avg→mean). NEVER omit fn.
 metrics MUST use shape [{ "column": "<existing>", "fn": "sum" }].
 Do NOT invent aliases like sales_sum / 매출액_합계 as column names.
@@ -243,6 +248,19 @@ prefer_subtotals applies to sum only.
   {"op":"aggregate","group_by":["rep"],"metrics":[{"column":"amount","fn":"sum"}]},
   {"op":"filter_vs_mean","column":"amount","relation":"above"}
 ],"interpret":false}
+
+8) Overall total of one column (generic):
+{"operation":"aggregate","group_by":[],"metrics":[{"column":"amount","fn":"sum"}],"interpret":false}
+
+9) Total / mean of selected rows only (generic):
+{"steps":[
+  {"op":"annotate_row_types"},
+  {"op":"filter_rows","include_row_types":["detail"],
+   "column_filters":[{"column":"item","values":["A","B","C"]}]},
+  {"op":"aggregate","group_by":[],"metrics":[{"column":"amount","fn":"sum"}]}
+],"interpret":false}
+For "mean of the items in group G": filter column_filters on the group column = G,
+then aggregate group_by=[] with fn=mean.
 """.strip()
 
 

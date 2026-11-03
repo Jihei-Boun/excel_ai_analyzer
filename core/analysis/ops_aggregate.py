@@ -16,7 +16,15 @@ from core.schema.row_classify import (
 from core.summary.summary_utils import cell_text
 from core.io.text_normalize import normalize_text
 
-from core.analysis.ops_filters import AGGREGATE_FNS, ensure_row_types
+from core.analysis.ops_filters import (
+    AGGREGATE_FNS,
+    ensure_row_types,
+    primary_label_column,
+)
+
+# group_by가 비었을 때 만드는 한 행짜리 결과의 라벨 열/값.
+OVERALL_LABEL_COLUMN = "구분"
+OVERALL_LABEL = "전체"
 
 def top_per_group(
     df: pd.DataFrame,
@@ -128,9 +136,15 @@ def aggregate_groups(
     ``fn`` 지원: sum, mean/avg, median, min, max, count.
     prefer_subtotals=True는 **sum** 지표에만 소계 행을 우선한다.
     mean/count/min/max/median은 detail 행에서 직접 계산한다 (소계는 합계 전용).
+    group_by가 비면 전체 상세 행을 한 행으로 집계한다 (``aggregate_overall``).
     """
     if not group_by:
-        raise ValueError("aggregate에 group_by가 필요합니다.")
+        return aggregate_overall(
+            df,
+            metrics=metrics,
+            dimension_columns=dimension_columns,
+            include_groups=include_groups,
+        )
     group_col = group_by[0]
     if group_col not in df.columns:
         raise ValueError(f"group_by 컬럼 없음: {group_col}")
@@ -229,6 +243,103 @@ def aggregate_groups(
         "aggregations": {name: fn for name, fn in metric_specs},
     }
     return result, meta
+
+
+def aggregate_overall(
+    df: pd.DataFrame,
+    *,
+    metrics: list[dict[str, str]],
+    dimension_columns: list[str] | None = None,
+    include_groups: list[str] | None = None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """그룹 없이 상세 행 전체(또는 앞 단계에서 고른 행)를 한 행으로 집계한다.
+
+    소계·합계·footer 행, 합계 라벨이 붙은 행, 라벨 열이 빈 행은 제외한다.
+    합계(sum)는 표에 합계 행이 있으면 그 값과 대조해 차이를 경고한다.
+    """
+    work = ensure_row_types(df, dimension_columns=dimension_columns)
+    metric_specs = _normalize_metrics(metrics, work.columns)
+    if not metric_specs:
+        raise ValueError("aggregate에 유효한 metrics가 없습니다.")
+
+    warnings: list[str] = []
+    if include_groups:
+        warnings.append("include_groups ignored: aggregate without group_by has no groups.")
+
+    data_cols = [c for c in work.columns if c not in META_COLUMNS_SET]
+    dims = [
+        c
+        for c in (dimension_columns or infer_dimension_columns(work[data_cols]))
+        if c in work.columns
+    ]
+    row_types = work[ROW_TYPE_COL].astype(str)
+    detail_mask = row_types == "detail"
+    total_label_mask = pd.Series(False, index=work.index)
+    for col in dims:
+        total_label_mask |= work[col].map(lambda v: bool(cell_text(v)) and is_total_label(cell_text(v)))
+    blank_label_mask = pd.Series(False, index=work.index)
+    primary = primary_label_column(dims)
+    if primary is not None:
+        blank_label_mask = ~work[primary].map(lambda v: bool(cell_text(v)))
+
+    keep = detail_mask & ~total_label_mask & ~blank_label_mask
+    detail = work.loc[keep]
+
+    excluded: dict[str, int] = {}
+    for rtype, count in row_types[~detail_mask].value_counts().items():
+        excluded[str(rtype)] = int(count)
+    for reason, mask in (
+        ("total_label", detail_mask & total_label_mask),
+        ("blank_label", detail_mask & ~total_label_mask & blank_label_mask),
+    ):
+        if int(mask.sum()):
+            excluded[reason] = int(mask.sum())
+
+    row: dict[str, object] = {OVERALL_LABEL_COLUMN: OVERALL_LABEL}
+    for name, fn in metric_specs:
+        if fn == "count":
+            values = [
+                1.0
+                for v in detail[name]
+                if cell_text(v) or pd.notna(pd.to_numeric(v, errors="coerce"))
+            ]
+        else:
+            values = pd.to_numeric(detail[name], errors="coerce").dropna().astype(float).tolist()
+        row[name] = _reduce_values(values, fn)
+
+    total_check: dict[str, dict[str, Any]] = {}
+    total_rows = work.loc[row_types == "total"]
+    if not total_rows.empty:
+        last_total = total_rows.iloc[-1]
+        for name, fn in metric_specs:
+            if fn != "sum" or row[name] is None:
+                continue
+            t_val = pd.to_numeric(last_total.get(name), errors="coerce")
+            if pd.isna(t_val):
+                continue
+            d_val = float(row[name])
+            match = abs(float(t_val) - d_val) <= max(1.0, abs(d_val) * 0.01)
+            total_check[name] = {"total_row": float(t_val), "detail_sum": d_val, "match": match}
+            if not match:
+                warnings.append(
+                    f"{OVERALL_LABEL}: 합계 행 `{name}`={float(t_val):,.0f} vs "
+                    f"상세합={d_val:,.0f} 차이"
+                )
+
+    fns = {fn for _, fn in metric_specs}
+    source = f"detail_{next(iter(fns))}" if len(fns) == 1 else "detail"
+    meta = {
+        "aggregate_sources": {OVERALL_LABEL: source},
+        "aggregate_warnings": warnings,
+        "prefer_subtotals": False,
+        "aggregations": {name: fn for name, fn in metric_specs},
+        "overall": {
+            "detail_rows": int(len(detail)),
+            "excluded_rows": excluded,
+            "total_row_check": total_check,
+        },
+    }
+    return pd.DataFrame([row]), meta
 
 
 def ratio_of_columns(

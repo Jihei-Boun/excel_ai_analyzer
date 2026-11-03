@@ -20,6 +20,7 @@ from core.analysis.analysis_plan_types import (
 )
 from core.integrate.plan_types import ValidationIssue, ValidationReport
 from core.schema.row_classify import ROW_TYPE_COL
+from core.analysis.ops_aggregate import OVERALL_LABEL_COLUMN
 
 _NUMERIC_AGGS = frozenset({"sum", "mean", "median", "avg", "min", "max", "std", "var"})
 _SUPPORTED_FILTER_OPS = frozenset(
@@ -130,6 +131,8 @@ def validate_analysis_plan(
                     known.add(col)
             for g in payload.get("group_by") or []:
                 known.add(str(g))
+            if not payload.get("group_by"):
+                known.add(OVERALL_LABEL_COLUMN)
             continue
 
         if op == "ratio_of_aggregates":
@@ -213,9 +216,128 @@ def validate_analysis_plan(
             user_prompt=user_prompt,
         )
     )
+    issues.extend(_validate_overall_aggregate(plan, df, available, user_prompt=user_prompt))
 
     errors = [i for i in issues if i.level == "error"]
     return ValidationReport(ok=not errors, issues=issues)
+
+
+def _validate_overall_aggregate(
+    plan: AnalysisPlan,
+    df: pd.DataFrame,
+    available: set[str],
+    *,
+    user_prompt: str | None,
+) -> list[ValidationIssue]:
+    """group_by=[] 집계는 한 숫자로 끝나므로, 조용히 틀리는 두 경우를 막는다.
+
+    1) LLM이 쓴 지표 열 이름이 실제 열로 풀리지 않으면 버리지 않고 오류로 돌려준다.
+    2) 요청에 라벨 열의 실제 값이 있는데 행 필터가 없으면 오류로 돌려준다.
+    """
+    overall_index = next(
+        (
+            i
+            for i, s in enumerate(plan.steps)
+            if s.op == "aggregate" and not (s.payload or {}).get("group_by")
+        ),
+        None,
+    )
+    if overall_index is None:
+        return []
+    from core.analysis.analysis_plan_compile import _resolve_metric_column
+
+    issues: list[ValidationIssue] = []
+    unresolved = [
+        name
+        for name in _raw_aggregate_metric_names(plan.raw or {})
+        if not _resolve_metric_column(name, available)
+    ]
+    if unresolved:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "unknown_metric_column",
+                f"aggregate metric column(s) {sorted(set(unresolved))} do not exist. "
+                "Use only existing columns as metrics. To total specific items, "
+                "filter those rows with filter_rows column_filters, then aggregate group_by=[].",
+            )
+        )
+
+    selected = any(
+        s.op == "filter_rows"
+        and ((s.payload or {}).get("column_filters") or (s.payload or {}).get("numeric_filters"))
+        for s in plan.steps[:overall_index]
+    )
+    if not selected and user_prompt:
+        mentioned = _prompt_mentioned_values(df, str(user_prompt))
+        if mentioned:
+            col, values = mentioned
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "overall_aggregate_missing_selection",
+                    f"The request names values of column `{col}` ({', '.join(values)}) "
+                    "but the plan aggregates ALL rows. Add filter_rows with "
+                    f'column_filters=[{{"column":"{col}","values":{json_list(values)}}}] '
+                    "before aggregate group_by=[].",
+                )
+            )
+    return issues
+
+
+def json_list(values: list[str]) -> str:
+    import json
+
+    return json.dumps(values, ensure_ascii=False)
+
+
+def _raw_aggregate_metric_names(raw: dict[str, Any]) -> list[str]:
+    """LLM 원본 계획에서 aggregate 지표 열 이름을 모은다 (sanitize 전)."""
+    blocks: list[dict[str, Any]] = []
+    if str(raw.get("operation") or "") == "aggregate":
+        blocks.append(raw)
+    for step in raw.get("steps") or []:
+        if isinstance(step, dict) and str(step.get("op") or step.get("operation") or "") == "aggregate":
+            blocks.append(step)
+    names: list[str] = []
+    for block in blocks:
+        metrics = block.get("metrics") or []
+        if isinstance(metrics, dict):
+            metrics = [metrics]
+        for metric in metrics if isinstance(metrics, list) else []:
+            if isinstance(metric, dict):
+                name = str(metric.get("column") or metric.get("name") or "").strip()
+                if name:
+                    names.append(name)
+    return names
+
+
+def _prompt_mentioned_values(df: pd.DataFrame, prompt: str) -> tuple[str, list[str]] | None:
+    """요청 문장에 그대로 나온 라벨 열 값을 찾는다. 가장 많이 나온 열 하나를 돌려준다."""
+    from core.pai.pandasai_frame import is_total_label
+    from core.summary.summary_utils import cell_text
+
+    prompt_norm = prompt.replace(" ", "")
+    best: tuple[str, list[str]] | None = None
+    for col in df.columns:
+        name = str(col)
+        if name in META_COLUMNS or name.startswith("_"):
+            continue
+        if pd.api.types.is_numeric_dtype(df[col]):
+            continue
+        found: list[str] = []
+        for value in df[col].dropna().unique():
+            text = cell_text(value).strip()
+            compact = text.replace(" ", "")
+            if len(compact) < 2 or not any(not ch.isdigit() and ch not in ".,-" for ch in compact):
+                continue
+            if is_total_label(text) or text in found:
+                continue
+            if compact in prompt_norm:
+                found.append(text)
+        if found and (best is None or len(found) > len(best[1])):
+            best = (name, found)
+    return best
 
 
 def _validate_plan_composition(
@@ -253,6 +375,8 @@ def _validate_plan_composition(
                     produced.add(col)
             for g in payload.get("group_by") or []:
                 produced.add(str(g))
+            if not payload.get("group_by"):
+                produced.add(OVERALL_LABEL_COLUMN)
         elif op == "ratio_of_aggregates":
             saw_ratio = True
             name = str(payload.get("name") or "").strip()
