@@ -25,7 +25,7 @@ SUPPORTED_ANALYSIS_OPS = frozenset(
 )
 
 SUPPORTED_DERIVE_EXPRS = frozenset(
-    {"diff", "abs", "abs_diff", "ratio", "percent_ratio", "sign_label"}
+    {"diff", "abs", "abs_diff", "ratio", "percent_ratio", "sign_label", "sum", "mean"}
 )
 
 ROW_TYPES = frozenset({"detail", "subtotal", "total", "footer", "blank"})
@@ -203,6 +203,8 @@ def _analysis_plan_from_dict_inner(
     raw_steps = compiled.get("steps") or data.get("steps") or []
     if not isinstance(raw_steps, list):
         raise ValueError("steps는 배열이어야 합니다.")
+    if not raw_steps:
+        raw_steps = _top_level_derive_steps(data)
     raw_steps, transpose, transpose_label = _split_transpose(data, raw_steps)
     if transpose and not raw_steps and not compiled.get("steps"):
         # 표 전체 전치: 원본 행을 그대로 두고 마지막에 바꾼다.
@@ -294,6 +296,28 @@ def _analysis_plan_from_dict_inner(
         transpose=transpose,
         transpose_label_column=transpose_label,
     )
+
+
+def _top_level_derive_steps(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """``{"operation":"derive_column", name, expr, select_columns?, column_filters?}`` 꼴을 펼친다.
+
+    행마다 열을 계산하는 요청이라 상세 행만 남긴 뒤 계산하고, 열 선택이 있으면 붙인다.
+    """
+    if str(data.get("operation") or "").strip() != "derive_column":
+        return []
+    derive = {"op": "derive_column", "name": data.get("name"), "expr": data.get("expr")}
+    filter_step: dict[str, Any] = {"op": "filter_rows", "include_row_types": ["detail"]}
+    if data.get("column_filters"):
+        filter_step["column_filters"] = data.get("column_filters")
+    steps: list[dict[str, Any]] = [{"op": "annotate_row_types"}, filter_step, derive]
+    selected = data.get("select_columns") or data.get("output_columns")
+    if isinstance(selected, list) and selected:
+        cols = [str(c) for c in selected]
+        name = str(data.get("name") or "").strip()
+        if name and name not in cols:
+            cols.append(name)
+        steps.append({"op": "select_columns", "columns": cols})
+    return steps
 
 
 _TRANSPOSE_OPS = frozenset({"transpose", "swap_axes", "pivot_axes"})

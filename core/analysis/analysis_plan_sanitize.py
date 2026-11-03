@@ -169,6 +169,7 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
     if op == "derive_column":
         name = str(item.get("name") or "").strip()
         expr = item.get("expr") or item.get("formula")
+        expr = _normalize_row_aggregate_expr(expr)
         if isinstance(expr, dict) and "type" in expr and len(expr) > 1:
             # {type: ratio, numerator, denominator} → {ratio: [num, den]}
             kind = str(expr.get("type"))
@@ -186,9 +187,11 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
                     left = str(expr.get("left") or expr.get("numerator") or "")
                     right = str(expr.get("right") or expr.get("denominator") or "")
                     expr = {kind: [left, right]}
-        if not name or not isinstance(expr, dict) or not expr:
+        if not isinstance(expr, dict) or not expr:
             return None
         kind = str(next(iter(expr.keys())))
+        if not name and kind not in {"sum", "mean"}:
+            return None
         if kind not in SUPPORTED_DERIVE_EXPRS:
             return None
         operands = expr.get(kind) or []
@@ -201,6 +204,11 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
             return None
         if kind in {"diff", "abs_diff", "ratio", "percent_ratio"} and len(operands) != 2:
             return None
+        if kind in {"sum", "mean"}:
+            if len(operands) < 2:
+                return None
+            if not name:
+                name = ("+".join(operands) if kind == "sum" else f"평균({','.join(operands)})")
         # sign_label 1피연산자는 직전 파생열(차이)일 수 있어 columns 소속을 강제하지 않는다.
         if kind == "sign_label" and len(operands) == 1:
             return AnalysisStep(op, {"name": name, "expr": {kind: operands}})
@@ -634,3 +642,30 @@ def _parse_embedded_numeric_compare(
         return op, None, float(rhs.replace(",", ""))
     except ValueError:
         return None
+
+
+_ROW_AGG_ALIASES = {
+    "sum": "sum", "add": "sum", "plus": "sum", "row_sum": "sum", "total": "sum",
+    "mean": "mean", "avg": "mean", "average": "mean", "row_mean": "mean",
+}
+
+
+def _normalize_row_aggregate_expr(expr: Any) -> Any:
+    """행마다 여러 열을 더하거나 평균 내는 식의 여러 표기를 ``{sum|mean: [cols]}``로 맞춘다.
+
+    예: ``{"type":"sum","columns":[A,B]}``, ``{"add":[A,B]}``, ``{"avg":[A,B,C]}``.
+    """
+    if not isinstance(expr, dict) or not expr:
+        return expr
+    if "type" in expr:
+        kind = _ROW_AGG_ALIASES.get(str(expr.get("type") or "").strip().lower())
+        cols = expr.get("columns") or expr.get("operands")
+        if kind and isinstance(cols, list):
+            return {kind: [str(c) for c in cols]}
+        return expr
+    if len(expr) == 1:
+        key = str(next(iter(expr.keys()))).strip().lower()
+        kind = _ROW_AGG_ALIASES.get(key)
+        if kind:
+            return {kind: next(iter(expr.values()))}
+    return expr

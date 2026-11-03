@@ -218,6 +218,7 @@ def validate_analysis_plan(
     )
     issues.extend(_validate_overall_aggregate(plan, df, available, user_prompt=user_prompt))
     issues.extend(_validate_grouped_selection(plan, df, user_prompt=user_prompt))
+    issues.extend(_validate_per_row_combination(plan, user_prompt=user_prompt))
 
     errors = [i for i in issues if i.level == "error"]
     return ValidationReport(ok=not errors, issues=issues)
@@ -311,6 +312,50 @@ def _raw_aggregate_metric_names(raw: dict[str, Any]) -> list[str]:
                 if name:
                     names.append(name)
     return names
+
+
+_PER_ROW_MARKERS = ("항목별", "행별", "항목마다", "행마다", "각 항목", "각각", "per row", "each row", "per item")
+
+
+def _validate_per_row_combination(
+    plan: AnalysisPlan,
+    *,
+    user_prompt: str | None,
+) -> list[ValidationIssue]:
+    """'A와 B 평균을 항목별로'처럼 행마다 열을 묶으라는 요청을 열 집계로 처리한 계획을 막는다."""
+    text = str(user_prompt or "").lower()
+    if not any(marker in text for marker in _PER_ROW_MARKERS):
+        return []
+    if any(
+        s.op == "derive_column"
+        and isinstance((s.payload or {}).get("expr"), dict)
+        and set(s.payload["expr"]) & {"sum", "mean"}
+        for s in plan.steps
+    ):
+        return []
+    for step in plan.steps:
+        if step.op != "aggregate":
+            continue
+        metrics = [m for m in (step.payload or {}).get("metrics") or [] if isinstance(m, dict)]
+        by_fn: dict[str, list[str]] = {}
+        for metric in metrics:
+            fn = str(metric.get("fn") or "").lower()
+            if fn in {"sum", "mean"}:
+                by_fn.setdefault(fn, []).append(str(metric.get("column") or ""))
+        for fn, cols in by_fn.items():
+            if len(cols) >= 2:
+                return [
+                    ValidationIssue(
+                        "error",
+                        "per_row_combination_as_aggregate",
+                        f"The request asks for the {fn} of {', '.join(cols)} for EACH item/row "
+                        "(항목별/행별). Do not aggregate down the columns. Use derive_column "
+                        f'{{"name":"...","expr":{{"{fn}":{json_list(cols)}}}}} on detail rows '
+                        "(filter the named items/group first), then select_columns with the item "
+                        "name column, the source columns and the new column.",
+                    )
+                ]
+    return []
 
 
 def _validate_grouped_selection(
@@ -1482,6 +1527,23 @@ def _validate_select_columns(step: AnalysisStep, known: set[str]) -> list[Valida
     return issues
 
 
+def _is_split_code_column(df: pd.DataFrame, col: str) -> bool:
+    """병합 헤더가 숫자 코드 ``X``와 텍스트 이름 ``X_2``로 갈린 경우의 ``X``인가."""
+    twin = f"{col}_2"
+    if col not in df.columns or twin not in df.columns:
+        return False
+    return _is_numeric_compatible(df[col]) and not _is_numeric_compatible(df[twin])
+
+
+def _code_column_issue(col: str, where: str) -> ValidationIssue:
+    return ValidationIssue(
+        "error",
+        "code_column_metric",
+        f"`{col}` holds codes for the names in `{col}_2`, not amounts. "
+        f"Do not use it in {where}; use it (or `{col}_2`) only as a label.",
+    )
+
+
 def _validate_derive(
     step: AnalysisStep,
     known: set[str],
@@ -1510,7 +1572,9 @@ def _validate_derive(
                     f"derive_column `{step.payload.get('name')}` depends on missing column `{name}`.",
                 )
             )
-        elif name in df.columns and kind in {"ratio", "percent_ratio", "diff", "abs_diff"}:
+        elif kind in {"sum", "mean", "diff", "abs_diff"} and _is_split_code_column(df, name):
+            issues.append(_code_column_issue(name, f"derive `{kind}`"))
+        elif name in df.columns and kind in {"ratio", "percent_ratio", "diff", "abs_diff", "sum", "mean"}:
             if not _is_numeric_compatible(df[name]):
                 issues.append(
                     ValidationIssue(
@@ -1574,6 +1638,9 @@ def _validate_aggregate(
             continue
         if col not in known and col not in available:
             issues.append(_missing_column_issue("missing_metric_column", col, available))
+            continue
+        if fn in _NUMERIC_AGGS and _is_split_code_column(df, col):
+            issues.append(_code_column_issue(col, f"aggregate `{fn}`"))
             continue
         if fn in _NUMERIC_AGGS and col in df.columns and not _is_numeric_compatible(df[col]):
             issues.append(

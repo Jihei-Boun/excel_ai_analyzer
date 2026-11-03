@@ -362,4 +362,18 @@ def _derive_column(df: pd.DataFrame, payload: dict[str, Any]) -> pd.DataFrame:
             work[name] = left / denom
         return work
 
+    if kind in {"sum", "mean"}:
+        if len(operands) < 2:
+            raise ValueError(f"{kind}는 피연산자 2개 이상이 필요합니다.")
+        missing = [c for c in operands if c not in work.columns]
+        if missing:
+            raise ValueError(f"derive 피연산자 없음: {missing}")
+        values = work[operands].apply(pd.to_numeric, errors="coerce")
+        if kind == "sum":
+            # 모든 값이 비면 0이 아니라 빈 값으로 둔다.
+            work[name] = values.sum(axis=1, min_count=1)
+        else:
+            work[name] = values.mean(axis=1)
+        return work
+
     raise ValueError(f"지원하지 않는 derive 식: {kind!r}")

@@ -58,6 +58,17 @@ it is NOT an instruction to sum. Include the item NAME column: the TEXT column t
 each row. If a header was split into a numeric code column `X` and a text column `X_2`,
 the names are in `X_2` — select `X_2` (optionally also `X`), never only the code column.
 
+### derive_column — per-row sum / mean ACROSS columns
+"A와 B를 더해줘", "A, B, C의 합/평균을 항목별로" = combine several COLUMNS on each row:
+{"op":"derive_column","name":"<new name>","expr":{"sum":["A","B"]}}   (or {"mean":[...]})
+Then select_columns([item label, A, B, <new name>]). Keep one row per item; do NOT aggregate.
+This is different from a column total/mean over rows (aggregate). Use aggregate only when
+the user asks for ONE number down a column ("A 전체 합계", "A의 평균").
+"A와 B(의) 평균을 항목별로/행별로/각각" = per-row mean of A and B → derive_column mean,
+one row per item. "항목별/행별/각" means keep one row per item — never collapse to one row.
+Other derive exprs: diff, abs_diff, ratio, percent_ratio (2 operands), abs, sign_label.
+Never use code columns (a numeric `X` whose names are in `X_2`) as amounts.
+
 ### transpose (swap rows and columns of the FINAL table)
 Use when the user asks to swap/flip rows and columns (행과 열을 바꿔/뒤집어, 전치, transpose).
 Put {"op":"transpose"} as the LAST step, or set "transpose": true on a high-level operation.
@@ -294,6 +305,14 @@ then aggregate group_by=[] with fn=mean.
    "column_filters":[{"column":"category","values":["G"]}]},
   {"op":"select_columns","columns":["item","amount","cost_total"]},
   {"op":"transpose"}
+],"interpret":false}
+
+12) Add two columns on each row (generic):
+{"steps":[
+  {"op":"annotate_row_types"},
+  {"op":"filter_rows","include_row_types":["detail"]},
+  {"op":"derive_column","name":"q1_q2","expr":{"sum":["q1","q2"]}},
+  {"op":"select_columns","columns":["item","q1","q2","q1_q2"]}
 ],"interpret":false}
 """.strip()
 
