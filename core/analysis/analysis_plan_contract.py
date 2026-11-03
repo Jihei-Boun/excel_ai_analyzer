@@ -18,7 +18,7 @@ Return ONLY a JSON object.
 ## Allowed atomic ops
 annotate_row_types, filter_rows, select_columns, derive_column, sort, limit,
 drop_columns, aggregate, ratio_of_aggregates, compare_groups,
-distribution_summary, correlation, filter_vs_mean, top_per_group.
+distribution_summary, correlation, filter_vs_mean, top_per_group, transpose (last step only).
 
 ## Compact high-level forms (compiled to atomic steps)
 Prefer atomic steps when unsure. These generic sugars are OK:
@@ -47,6 +47,14 @@ Do NOT invent aliases like sales_sum / 매출액_합계 as column names.
 Do NOT use { "매출액_합계": "sum" } — that shape is invalid.
 IMPORTANT: after aggregate, the metric column KEEP its source name (e.g. 매출).
 Later sort/select/compare MUST use that same name — NEVER invent 매출_합계 / amount_sum / score_mean.
+
+### transpose (swap rows and columns of the FINAL table)
+Use when the user asks to swap/flip rows and columns (행과 열을 바꿔/뒤집어, 전치, transpose).
+Put {"op":"transpose"} as the LAST step, or set "transpose": true on a high-level operation.
+It runs after every other step, so first build the table the user wants, then transpose.
+The first non-numeric column (e.g. the group/label column) becomes the new header row.
+For "transpose this whole table", return {"operation":"transpose"} with no other steps.
+Never emulate transpose with pivot/aggregate/select tricks.
 
 ### ratio_of_aggregates
 required: name (explicit output id), numerator, denominator (existing columns after aggregate)
@@ -263,6 +271,11 @@ prefer_subtotals applies to sum only.
 ],"interpret":false}
 For "mean of the items in group G": filter column_filters on the group column = G,
 then aggregate group_by=[] with fn=mean.
+
+10) Group totals, then swap rows and columns (generic):
+{"operation":"aggregate","group_by":["region"],
+ "metrics":[{"column":"amount","fn":"sum"},{"column":"cost","fn":"sum"}],
+ "transpose":true,"interpret":false}
 """.strip()
 
 

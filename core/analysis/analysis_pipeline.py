@@ -9,6 +9,7 @@ import pandas as pd
 
 from core.analysis.analysis_executor import execute_analysis_plan
 from core.analysis.analysis_interpret import interpret_analysis_result
+from core.analysis.ops_reshape import transpose_table
 from core.analysis.analysis_plan_builder import build_analysis_plan
 from core.analysis.analysis_plan_types import AnalysisPlan
 from core.analysis.analysis_plan_validate import (
@@ -368,6 +369,13 @@ def try_analysis_pipeline(
 
         warn_msgs = validation_warning_messages(report) + report_warnings_extra
         info_msgs = validation_info_messages(report)
+        if plan.transpose:
+            # 결과 검증은 전치 전 표로 끝났다. 보여 줄 표만 행·열을 바꾼다.
+            result_df, transpose_meta = transpose_table(
+                result_df,
+                label_column=plan.transpose_label_column or None,
+            )
+            exec_meta = {**exec_meta, "transpose": transpose_meta}
         reply = _build_reply(result_df, plan, exec_meta)
         if plan.interpret:
             try:

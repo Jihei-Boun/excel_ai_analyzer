@@ -77,9 +77,12 @@ class AnalysisPlan:
     interpret: bool = False
     footer_labels: list[str] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
+    # 모든 step과 결과 검증이 끝난 뒤 최종 표의 행·열을 바꾼다.
+    transpose: bool = False
+    transpose_label_column: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "steps": [step.to_dict() for step in self.steps],
             "criteria_note": self.criteria_note,
             "dimension_columns": list(self.dimension_columns),
@@ -87,6 +90,11 @@ class AnalysisPlan:
             "interpret": self.interpret,
             "footer_labels": list(self.footer_labels),
         }
+        if self.transpose:
+            out["transpose"] = True
+            if self.transpose_label_column:
+                out["transpose_label_column"] = self.transpose_label_column
+        return out
 
     @property
     def limit_n(self) -> int | None:
@@ -195,6 +203,10 @@ def _analysis_plan_from_dict_inner(
     raw_steps = compiled.get("steps") or data.get("steps") or []
     if not isinstance(raw_steps, list):
         raise ValueError("steps는 배열이어야 합니다.")
+    raw_steps, transpose, transpose_label = _split_transpose(data, raw_steps)
+    if transpose and not raw_steps and not compiled.get("steps"):
+        # 표 전체 전치: 원본 행을 그대로 두고 마지막에 바꾼다.
+        raw_steps = [{"op": "annotate_row_types"}]
 
     # LLM often nests high-level forms inside steps[] with key `operation`
     # (e.g. steps:[{operation:find_items,...}]). Expand those generically.
@@ -279,7 +291,39 @@ def _analysis_plan_from_dict_inner(
         output_columns=out_cols,
         interpret=interpret,
         raw=dict(data),
+        transpose=transpose,
+        transpose_label_column=transpose_label,
     )
+
+
+_TRANSPOSE_OPS = frozenset({"transpose", "swap_axes", "pivot_axes"})
+
+
+def _split_transpose(
+    data: dict[str, Any],
+    raw_steps: list[Any],
+) -> tuple[list[Any], bool, str]:
+    """transpose step(마지막만 허용)과 최상위 transpose 플래그를 떼어 낸다."""
+    flag = data.get("transpose")
+    transpose = flag is True or str(flag).strip().lower() in {"true", "1", "yes"}
+    label = str(data.get("transpose_label_column") or "").strip()
+    kept: list[Any] = []
+    for index, item in enumerate(raw_steps):
+        op = ""
+        if isinstance(item, dict):
+            op = str(item.get("op") or item.get("operation") or "").strip().lower()
+        if op not in _TRANSPOSE_OPS:
+            kept.append(item)
+            continue
+        if index != len(raw_steps) - 1:
+            raise ValueError(
+                "transpose must be the LAST step (it swaps rows and columns of the final table)."
+            )
+        transpose = True
+        label = str(item.get("label_column") or label).strip()
+    if str(data.get("operation") or "").strip().lower() in _TRANSPOSE_OPS:
+        transpose = True
+    return kept, transpose, label
 
 
 def _is_derived_name(name: str, steps: list[AnalysisStep]) -> bool:
