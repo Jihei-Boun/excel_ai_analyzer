@@ -219,6 +219,7 @@ def validate_analysis_plan(
     issues.extend(_validate_overall_aggregate(plan, df, available, user_prompt=user_prompt))
     issues.extend(_validate_grouped_selection(plan, df, user_prompt=user_prompt))
     issues.extend(_validate_per_row_combination(plan, user_prompt=user_prompt))
+    issues.extend(_validate_derive_operands_requested(plan, user_prompt=user_prompt))
 
     errors = [i for i in issues if i.level == "error"]
     return ValidationReport(ok=not errors, issues=issues)
@@ -312,6 +313,86 @@ def _raw_aggregate_metric_names(raw: dict[str, Any]) -> list[str]:
                 if name:
                     names.append(name)
     return names
+
+
+_GENERIC_NAME_PARTS = frozenset({"합계", "평균", "총계", "소계", "합", "total", "sum", "mean", "avg"})
+
+
+def _column_mentioned(column: str, prompt_compact: str) -> bool:
+    """열 이름 전체나 ``_``로 나눈 의미 있는 조각이 요청에 그대로 나오면 언급된 것으로 본다."""
+    name = column.replace(" ", "")
+    if name and name.lower() in prompt_compact:
+        return True
+    for part in name.split("_"):
+        if len(part) >= 2 and part.lower() not in _GENERIC_NAME_PARTS and part.lower() in prompt_compact:
+            return True
+    return False
+
+
+def _validate_derive_operands_requested(
+    plan: AnalysisPlan,
+    *,
+    user_prompt: str | None,
+) -> list[ValidationIssue]:
+    """행마다 더하기/평균에 요청에 없는 열이 섞이는 것을 막는다.
+
+    요청이 피연산자 일부를 이름으로 집었는데 나머지는 요청에 없으면 오류.
+    요청이 열 이름을 하나도 쓰지 않았으면(동의어 등) 판단하지 않는다.
+    """
+    if not user_prompt:
+        return []
+    prompt_compact = str(user_prompt).replace(" ", "").lower()
+    issues: list[ValidationIssue] = []
+    for step in plan.steps:
+        expr = (step.payload or {}).get("expr")
+        if step.op != "derive_column" or not isinstance(expr, dict):
+            continue
+        kind = next(iter(expr), "")
+        if kind not in {"sum", "mean"}:
+            continue
+        operands = [str(c) for c in expr.get(kind) or []]
+        mentioned = [c for c in operands if _column_mentioned(c, prompt_compact)]
+        extra = [c for c in operands if c not in mentioned]
+        if mentioned and extra:
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "derive_operand_not_requested",
+                    f"derive `{kind}` uses {json_list(extra)} which the request did not ask for. "
+                    f"Use only the requested columns: {json_list(mentioned)} "
+                    f'(expr={{"{kind}":{json_list(mentioned)}}}).',
+                )
+            )
+    return issues
+
+
+def _per_row_skeleton(previous_plan: dict[str, Any] | None) -> str:
+    """이전 계획의 필터·지표 열로 '행마다 계산' 단계 골격을 만든다 (새 열을 만들지 않는다)."""
+    import json
+
+    plan = previous_plan if isinstance(previous_plan, dict) else {}
+    blocks = [plan] + [s for s in plan.get("steps") or [] if isinstance(s, dict)]
+    column_filters: list[Any] = []
+    metric_cols: list[str] = []
+    fn = "mean"
+    for block in blocks:
+        if block.get("column_filters"):
+            column_filters = block["column_filters"]
+        if str(block.get("op") or block.get("operation") or "") == "aggregate":
+            for metric in block.get("metrics") or []:
+                if isinstance(metric, dict) and metric.get("column"):
+                    metric_cols.append(str(metric["column"]))
+                    fn = str(metric.get("fn") or fn)
+    filter_step: dict[str, Any] = {"op": "filter_rows", "include_row_types": ["detail"]}
+    if column_filters:
+        filter_step["column_filters"] = column_filters
+    steps = [
+        {"op": "annotate_row_types"},
+        filter_step,
+        {"op": "derive_column", "name": "<new name>", "expr": {fn if fn in {"sum", "mean"} else "mean": metric_cols or ["<A>", "<B>"]}},
+        {"op": "select_columns", "columns": ["<item name column>", *metric_cols, "<new name>"]},
+    ]
+    return json.dumps({"steps": steps}, ensure_ascii=False)
 
 
 _PER_ROW_MARKERS = ("항목별", "행별", "항목마다", "행마다", "각 항목", "각각", "per row", "each row", "per item")
@@ -1130,6 +1211,13 @@ def format_plan_validation_feedback(
             "Hint: the rejected approach compared one column to a statistical summary. "
             "If the request relates two numeric columns in the schema, choose an approach "
             "that uses that column relationship instead."
+        )
+    if "per_row_combination_as_aggregate" in code_set:
+        skeleton = _per_row_skeleton(previous_plan)
+        lines.append(
+            "Hint: 항목별/각각 = one row per item. Keep your row filter and columns, but compute "
+            "the value ACROSS the columns on each row (derive_column), not down the column "
+            "(aggregate). Shape: " + skeleton
         )
 
     if df is not None and not df.empty:

@@ -142,3 +142,57 @@ def test_group_mean_by_category_is_not_flagged() -> None:
     )
     report = validate_analysis_plan(plan, df, profile_name="generic", user_prompt="분류별 이월과 당해 평균을 구해줘")
     assert "per_row_combination_as_aggregate" not in [i.code for i in report.issues]
+
+
+def _derive_report(expr: dict, prompt: str):
+    df = _df()
+    plan = analysis_plan_from_dict(_steps(expr), available_columns=list(df.columns), profile_name="generic")
+    return validate_analysis_plan(plan, df, profile_name="generic", user_prompt=prompt)
+
+
+def test_derive_operand_not_in_request_is_rejected() -> None:
+    report = _derive_report({"mean": ["추가", "이월", "당해"]}, "이월과 당해 평균을 항목별로 구해줘")
+    issue = next(i for i in report.errors if i.code == "derive_operand_not_requested")
+    assert "추가" in issue.message
+
+
+def test_derive_operands_matching_request_pass() -> None:
+    report = _derive_report({"mean": ["이월", "당해"]}, "이월과 당해 평균을 항목별로 구해줘")
+    assert "derive_operand_not_requested" not in [i.code for i in report.issues]
+
+
+def test_derive_operands_with_synonyms_only_are_not_judged() -> None:
+    report = _derive_report({"sum": ["이월", "당해"]}, "두 예산을 더해줘")
+    assert "derive_operand_not_requested" not in [i.code for i in report.issues]
+
+
+def test_prefixed_column_counts_as_mentioned_by_its_part() -> None:
+    from core.analysis.analysis_plan_validate import _column_mentioned
+
+    prompt = "국내여비의이월예산과당해예산평균"
+    assert _column_mentioned("실행예산_이월예산", prompt)
+    assert not _column_mentioned("계획예산", prompt)
+    assert not _column_mentioned("집행계_합계", "실행예산합계를보여줘")
+
+
+def test_per_row_retry_feedback_includes_skeleton_from_previous_plan() -> None:
+    from core.analysis.analysis_plan_validate import format_plan_validation_feedback
+
+    df = _df()
+    previous = {
+        "steps": [
+            {"op": "annotate_row_types"},
+            {
+                "op": "filter_rows",
+                "include_row_types": ["detail"],
+                "column_filters": [{"column": "비용명_2", "values": ["국내여비"]}],
+            },
+            {"op": "aggregate", "group_by": [], "metrics": [{"column": "이월", "fn": "mean"}, {"column": "당해", "fn": "mean"}]},
+        ]
+    }
+    plan = analysis_plan_from_dict(previous, available_columns=list(df.columns), profile_name="generic")
+    report = validate_analysis_plan(plan, df, profile_name="generic", user_prompt="국내여비 각각의 이월과 당해 평균")
+    lines = format_plan_validation_feedback(report, previous_plan=previous, df=df)
+    text = "\n".join(lines)
+    assert "retry_mode: regenerate" in text
+    assert '"mean": ["이월", "당해"]' in text and '"국내여비"' in text

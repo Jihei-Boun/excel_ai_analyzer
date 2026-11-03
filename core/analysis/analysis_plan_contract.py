@@ -336,6 +336,8 @@ COMPOSITION_CATEGORIES = (
 # Field-level fixes: keep composition, fix names/fields
 _REPAIR_ISSUE_CODES = frozenset(
     {
+        "derive_operand_not_requested",
+        "code_column_metric",
         "missing_sort_column",
         "missing_select_column",
         "missing_metric_before_sort",
@@ -350,6 +352,7 @@ _REPAIR_ISSUE_CODES = frozenset(
 # Composition family wrong: full regenerate
 _REGENERATE_ISSUE_CODES = frozenset(
     {
+        "per_row_combination_as_aggregate",
         "entity_ranking_missing_aggregate",
         "misused_top_per_group",
         "global_ranking_misclassified",
