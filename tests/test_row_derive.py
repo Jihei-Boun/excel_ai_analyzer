@@ -225,3 +225,28 @@ def test_plain_ratio_stays_ratio_without_percent_request() -> None:
     assert next(s for s in plan2.steps if s.op == "derive_column").payload["expr"] == {
         "percent_ratio": ["당해", "이월"]
     }
+
+
+def test_percent_columns_are_shown_with_percent_sign() -> None:
+    from core.analysis.analysis_pipeline import try_analysis_pipeline
+
+    plan_json = {
+        "steps": [
+            {"op": "annotate_row_types"},
+            {"op": "filter_rows", "include_row_types": ["detail"]},
+            {"op": "derive_column", "name": "집행률", "expr": {"ratio": ["당해", "이월"]}},
+            {"op": "select_columns", "columns": ["비용명_2", "당해", "이월", "집행률"]},
+        ]
+    }
+    result = try_analysis_pipeline(
+        "이월 대비 당해 집행률을 항목별로 구해줘",
+        _df(),
+        base_url="http://unused",
+        model="unused",
+        profile_name="generic",
+        chat_json_fn=lambda *a, **k: plan_json,
+        chat_text_fn=lambda *a, **k: "",
+    )
+    assert result is not None
+    assert list(result.dataframe.columns) == ["비용명_2", "당해", "이월", "집행률(%)"]
+    assert list(result.dataframe["집행률(%)"]) == [300.0, 250.0]

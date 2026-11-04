@@ -11,7 +11,7 @@ import pandas as pd
 
 from core.analysis.analysis_executor import execute_analysis_plan
 from core.analysis.analysis_interpret import interpret_analysis_result
-from core.analysis.analysis_plan_sanitize import prefer_percent_for_rate
+from core.analysis.analysis_plan_sanitize import percent_column_labels, prefer_percent_for_rate
 from core.analysis.ops_reshape import transpose_table
 from core.analysis.analysis_plan_builder import build_analysis_plan
 from core.analysis.analysis_plan_types import AnalysisPlan
@@ -384,6 +384,12 @@ def try_analysis_pipeline(
 
         warn_msgs = validation_warning_messages(report) + report_warnings_extra
         info_msgs = validation_info_messages(report)
+        # 결과 검증이 끝난 뒤 보여 줄 이름만 바꾼다: 백분율 열은 이름에 (%)를 붙인다.
+        percent_labels = {
+            k: v for k, v in percent_column_labels(plan).items() if k in result_df.columns
+        }
+        if percent_labels:
+            result_df = result_df.rename(columns=percent_labels)
         if plan.transpose:
             # 결과 검증은 전치 전 표로 끝났다. 보여 줄 표만 행·열을 바꾸고, 전치 전 표도 함께 넘긴다.
             pre_transpose_df = result_df.reset_index(drop=True)

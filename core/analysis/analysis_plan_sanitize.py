@@ -672,6 +672,19 @@ def _normalize_row_aggregate_expr(expr: Any) -> Any:
 
 
 _PERCENT_PROMPT_MARKERS = ("%", "퍼센트", "백분율", "percent")
+
+
+def percent_column_labels(plan) -> dict[str, str]:
+    """백분율로 계산한 열에 ``(%)``를 붙인 표시 이름. 이미 %가 들어간 이름은 그대로 둔다."""
+    labels: dict[str, str] = {}
+    for step in plan.steps:
+        if step.op != "derive_column":
+            continue
+        expr = step.payload.get("expr")
+        name = str(step.payload.get("name") or "").strip()
+        if isinstance(expr, dict) and "percent_ratio" in expr and name and "%" not in name:
+            labels[name] = f"{name}(%)"
+    return labels
 _RATE_NAME_SUFFIXES = ("률", "율")
 
 
