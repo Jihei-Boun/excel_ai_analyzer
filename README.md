@@ -1,19 +1,18 @@
 # Excel AI Analyzer
 
-> Upload Excel files and analyze them using natural language with Local LLM.
+> 엑셀 파일을 올리고 자연어로 질문하면, 표로 된 분석 결과를 돌려주는 웹 앱입니다.
 
 ## 프로젝트 소개
 
-본 프로젝트는 다양한 Excel 표를 자연어로 조회·집계·시각화할 수 있는 **준범용** 분석 도구입니다.  
-핵심 데이터 처리 구조는 도메인에 독립적이지만, 현재 기본 프로필과 예시, 일부 의미 규칙은 한국 연구과제 **예실대비표**에 맞춰 최적화되어 있습니다. 예산 심화 요약·하단 footer 제외 등은 사이드바의 **예산 표 모드**에서만 켭니다.
+엑셀 분석은 대부분 같은 작업의 반복입니다. 필요한 행을 고르고, 합계·평균을 내고, 비율을 계산하고, 보기 좋게 행과 열을 바꿉니다.
+Excel AI Analyzer는 이 작업을 **질문 한 줄**로 대신하는 것을 목표로 합니다.
 
-복잡한 함수나 피벗 테이블을 직접 만들지 않아도, 파일을 업로드한 뒤 질문만 입력하면 데이터 탐색·요약·집계를 진행할 수 있습니다.
+- **질문은 자연어로:** "연구활동비 항목들의 실행예산 합계 평균을 구해줘"
+- **계산은 정확하게:** LLM은 *무엇을 할지(분석 계획)* 만 정하고, 실제 숫자 계산은 pandas가 합니다. LLM이 숫자를 직접 만들어 내지 않습니다.
+- **결과는 바로 쓸 수 있게:** 결과 표 아래 버튼으로 엑셀(xlsx)을 내려받을 수 있습니다.
+- **데이터는 밖으로 나가지 않게:** 오픈 모델(기본 `qwen2.5:7b`)을 사내 서버에서 [Ollama](https://ollama.com/)로 실행합니다. 외부 API를 쓰지 않습니다.
 
-- 해결하려는 문제: 엑셀 분석에 필요한 반복 작업과 높은 진입장벽
-- 사용자가 할 수 있는 것: 업로드, 시트 선택, 미리보기, 자연어 질의, 결과 확인
-- 분석 엔진: **규칙 라우팅 + PandasAI + Ollama** (스키마·요약·집계는 규칙 경로, 자유 질문은 LLM)
-- UI: **Streamlit** 기반 인터랙티브 웹 화면
-- 모드: **일반 분석(기본)** / **예산 표 모드(예실대비표)**
+핵심 처리 구조는 특정 업무에 묶여 있지 않습니다. 다만 현재 기본 예시와 일부 규칙(소계·합계 행 구분 등)은 연구과제 **예실대비표**에서 가장 많이 검증되었습니다.
 
 ## Preview
 
@@ -29,128 +28,99 @@
 ### 🤖 AI 분석 결과
 ![AI Analysis Result](./docs/images/preview-result.png)
 
-## 주요 기능 (Features)
+## 무엇을 할 수 있나요
 
-| Feature | Description |
-| --- | --- |
-| Excel / CSV Upload | `xlsx/xls/csv` 파일 업로드 지원 |
-| Multi File | 여러 파일 동시 업로드 및 파일별 분석 |
-| Multi Sheet | 시트 선택 후 원하는 데이터 분석 |
-| Multi File × Sheet | 동시 분석 모드에서 파일별 시트를 여러 개 골라 시트 단위로 펼쳐 비교 |
-| Data Preview | 업로드 데이터 미리보기 및 기본 요약 |
-| AI Chat Analysis | 자연어 질문으로 필터·리스트·집계 분석 |
-| Summary Command | `파일을 요약해줘` 명령으로 빠른 요약 |
-| Schema Compare | 컬럼 목록·공통 컬럼·dtype/결측·타입 분류 등 스키마 비교 |
-| Suggested Prompts | 업로드 컬럼 기반 추천 질문 자동 생성 |
-| HTML Table Result | 분석 결과를 표 형태로 출력 |
-| Bar Chart Render | 집계 결과 기반 막대 차트 생성 |
-| Local LLM | Ollama 로컬 모델 연동 |
-| Native Theme | Streamlit 설정(☰)에서 Light / Dark 전환 |
-| Code Guardrails | 생성된 분석 코드 점검·재시도, 사이드바에서 실행 코드 표시 |
-| Input Normalize | 컬럼명·타입 정규화로 다양한 엑셀 형식 흡수 |
-| Quality Report | 결측/중복/혼합타입 등 품질 경고·가이드 |
-| File Merge Export | 공통 키 기준 N개 파일 병합 후 xlsx 다운로드 |
-| Budget Table Mode | 예실대비표 전용 요약·footer 행 제외 (옵트인) |
+예실대비표로 실제로 돌려 보고 결과 숫자까지 확인한 예제입니다.
 
-## Architecture
+| 하고 싶은 것 | 질문 예시 | 결과 |
+| --- | --- | --- |
+| 행과 열 바꾸기 | 비목분류별 계획예산, 실행예산 합계, 집행계 합계 표를 만들고 행과 열을 바꿔줘 | 분류별 요약표의 행과 열을 바꿔서 표시 |
+| 고른 행을 뽑아서 바꾸기 | 국내여비, 국외여비, 회의비의 계획예산과 집행계 합계를 표로 보여주고 행과 열을 바꿔줘 | 바꾸기 전 표(① 추출한 표)와 바꾼 표(② 행과 열을 바꾼 표)를 차례로 표시 |
+| 고른 행의 합계 | 국내여비, 국외여비, 회의비의 계획예산 합계를 구해줘 | 어떤 행을 더했는지 `구분` 열에 함께 표시 |
+| 고른 행의 평균 | 연구활동비 항목들의 실행예산 합계 평균을 구해줘 | `연구활동비 (10개 항목)` 행에 `실행예산_합계`와 `실행예산_합계_평균`을 함께 표시 |
+| 행마다 합계 | 연구활동비 항목들의 이월예산과 당해예산을 항목별로 더해줘 | 행마다 새 열로 계산 |
+| 비율(집행률) | 연구활동비 항목들의 실행예산 합계 대비 집행계 합계 집행률을 항목별로 구해줘 | `집행률(%)` 열로 백분율 표시 |
+| 전체 합계 | 계획예산 전체 합계를 구해줘 | `전체 (N개 항목)` 행으로 표시 |
+
+그 밖에 파일 요약, 컬럼·결측치 확인, 조건으로 행 고르기, 정렬·상위 N개, 그룹별 집계, 여러 파일 비교·병합도 지원합니다.
+
+## 동작 방식
 
 ```mermaid
 flowchart TD
-    A[Excel File] --> B[Normalize / Quality]
-    B --> C[DataFrame]
-    C --> D{Prompt Router}
-    D -->|스키마·요약·집계 등| E[Rule Path]
-    D -->|자유 질문| F[PandasAI]
-    F --> G[Ollama Local LLM]
-    E --> H[Analysis Result]
-    G --> H
-    H --> I[Streamlit UI]
+    A[엑셀 업로드] --> B[정규화 · 행 종류 구분<br/>상세 / 소계 / 합계 / 하단 메모]
+    B --> C[질문]
+    C --> D[LLM: 분석 계획 JSON 작성<br/>qwen2.5:7b · Ollama]
+    D --> E{계획 검사}
+    E -->|문제 있음| F[고쳐서 다시 요청<br/>최대 3회]
+    F --> D
+    E -->|통과| G[pandas로 계산<br/>정해진 연산만 실행]
+    G --> H{결과 검사}
+    H -->|통과| I[표 정리<br/>행·열 바꾸기 · % 표시]
+    I --> J[결과 표 + 엑셀 다운로드]
+    H -->|실패| K[안전하게 실패 안내<br/>또는 대체 경로]
 ```
+
+1. **행 종류 구분:** 엑셀에 섞여 있는 소계·합계·빈 행·하단 메모를 먼저 구분합니다. 그래서 "합계"를 물어도 소계가 두 번 더해지지 않습니다.
+2. **분석 계획:** LLM은 코드 대신 정해진 형식의 계획(JSON)만 씁니다. 사용할 수 있는 연산은 `filter_rows`, `aggregate`, `derive_column`, `ratio_of_aggregates`, `sort`, `limit`, `select_columns`, `compare_groups`, `top_per_group`, `correlation` 등으로 정해져 있습니다.
+3. **검사와 재시도:** 없는 열 이름, 맞지 않는 연산 순서처럼 실행 전에 잡을 수 있는 문제는 계획을 고치거나 다시 받아서 해결합니다(최대 3회).
+4. **계산:** 통과한 계획만 pandas로 실행합니다. 같은 계획이면 항상 같은 숫자가 나옵니다.
+5. **결과 검사와 표시:** 결과가 질문과 맞는지 한 번 더 확인합니다. 그 뒤 행과 열을 바꾸거나, 비율 열에 `(%)`를 붙입니다.
+6. **대체 경로:** 계획으로 풀 수 없는 질문은 값 찾기, 단순 그룹 집계, PandasAI 순서로 시도하고, 그래도 안 되면 틀린 답 대신 "처리하지 못했다"고 알려 줍니다.
+
+## 현재 한계
+
+- **그룹별 비율:** "비목분류별 집행률"처럼 그룹으로 묶은 뒤 비율을 구하는 질문은 아직 비율 열이 빠진 채 나올 수 있습니다.
+- **표 구조 인식:** 소계·합계 행 구분은 예실대비표에서 가장 잘 검증되었습니다. 다른 형식의 표에서는 구분이 덜 정확할 수 있습니다.
+- **모델 크기:** 7B 모델이라 질문이 길거나 조건이 많으면 계획을 잘못 세울 수 있습니다. 이때는 재시도와 검사가 막아 주지만, 질문을 나눠서 하는 편이 정확합니다.
+- **해석 문장:** 결과 표 아래 설명 문장은 아직 다듬는 중입니다. `EXCEL_ANALYZER_DISABLE_INTERPRET=1`로 끌 수 있습니다.
+- **대체 경로:** PandasAI 대체 경로는 결과 검증이 계획 경로만큼 촘촘하지 않습니다.
 
 ## Tech Stack
 
-- **Frontend**
-  - Streamlit (네이티브 Light/Dark 테마)
-- **Backend**
-  - Python 3.12
-- **AI**
-  - PandasAI
-  - Ollama (Local LLM)
-- **Data Processing**
-  - pandas
-  - openpyxl / xlrd
-  - PyYAML
-- **Visualization**
-  - matplotlib
-  - HTML table rendering (Streamlit)
-- **Test / CI**
-  - pytest
-  - GitHub Actions
+- **UI:** Streamlit
+- **Backend:** Python 3.12, pandas, openpyxl / xlrd, PyYAML
+- **LLM:** Ollama + 오픈 모델 `qwen2.5:7b` (사내 서버에서 실행)
+- **대체 경로:** PandasAI
+- **시각화:** matplotlib
+- **Test / CI:** pytest, GitHub Actions
 
 ## Project Structure
 
 ```text
 excel_ai_analyzer/
-├── app.py
+├── app.py                 # Streamlit 앱 진입점
 ├── core/
-│   ├── routing/      # 의도 판별·단일/다중 라우팅
-│   ├── analysis/     # 채팅 분석 계획 파이프라인
-│   ├── integrate/    # 다중 파일 구조화 통합
-│   ├── pai/          # PandasAI / Ollama 어댑터
-│   ├── filter/       # 값·조건 필터
-│   ├── summary/      # 파일 요약
-│   ├── schema/       # 스키마·품질·행 분류
-│   ├── io/           # 로딩·정규화·병합·export
-│   ├── display/      # 결과 표시·차트
-│   ├── common/       # plan retry 등 공통 헬퍼
-│   ├── aggregates.py
-│   ├── profile_loader.py
-│   └── ...
-├── ui/
-├── profiles/
-│   ├── generic.yaml
-│   ├── generic_en.yaml
-│   ├── budget.yaml
-│   ├── sales.yaml
-│   ├── inventory.yaml
-│   ├── custom.yaml
-│   ├── column_hints.yaml
-│   └── column_meanings.yaml
-├── docs/images/
-├── tests/
+│   ├── analysis/          # 분석 계획 작성·검사·실행·결과 검사 (핵심)
+│   ├── routing/           # 질문 종류 판별, 단일/다중 파일 라우팅
+│   ├── schema/            # 스키마·품질·행 종류 구분
+│   ├── io/                # 로딩·정규화·병합·export
+│   ├── display/           # 결과 표시·차트
+│   ├── integrate/         # 여러 파일 구조화 통합
+│   ├── filter/            # 값·조건 필터
+│   ├── summary/           # 파일 요약
+│   ├── pai/               # PandasAI / Ollama 어댑터 (대체 경로)
+│   ├── application/       # 화면 없이 호출하는 headless API · CLI
+│   └── common/            # 재시도 등 공통 헬퍼
+├── ui/                    # 업로드·미리보기·채팅·사이드바 화면
+├── profiles/              # 표 종류별 규칙 YAML (generic, budget, sales, inventory …)
+├── tests/                 # pytest 테스트
+├── docs/                  # 문서·이미지
 ├── scripts/
-│   └── clean_artifacts.sh
-├── data/uploads/
-├── exports/charts/
-├── exports/merges/
 ├── .streamlit/config.toml
-├── .github/workflows/
-├── pytest.ini
 ├── requirements.txt
 └── run.sh
 ```
 
-- `app.py`: Streamlit 앱 진입점
-- `core/`: 도메인 패키지로 나눈 핵심 로직 (라우팅·분석·통합·필터·요약 등)
-- `ui/`: 업로드/미리보기/채팅/사이드바 등 화면 구성
-- `profiles/`: 일반·예산 프로필, 컬럼 힌트·의미 규칙 YAML
-- `docs/images/`: README 프리뷰 스크린샷
-- `tests/`: 주요 로직 단위 테스트
-- `scripts/clean_artifacts.sh`: 차트·병합 산출물·`__pycache__` 정리
-- `data/uploads/`: 업로드 파일 임시 저장 (로컬 샘플 포함, git 미추적)
-- `exports/charts/`: 생성된 차트 파일 저장
-- `exports/merges/`: 병합 결과 엑셀 저장
-- `.streamlit/`: 포트·테마 등 Streamlit 설정
-
 ## Quick Start
 
-**요구사항:** Python 3.12, [Ollama](https://ollama.com/) 실행 중
+**요구사항:** Python 3.12, Ollama 실행 중
 
 ```bash
-# 1) Ollama 모델 (기본값: qwen2.5:7b)
+# 1) 모델 받기 (기본값: qwen2.5:7b)
 ollama pull qwen2.5:7b
 
-# 2) 의존성
+# 2) 설치
 git clone https://github.com/Jihei-Boun/excel_ai_analyzer.git
 cd excel_ai_analyzer
 python -m venv .venv
@@ -161,86 +131,63 @@ pip install -r requirements.txt
 # 그 다음 requirements.txt의 나머지 패키지를 설치
 
 # 3) 실행
-streamlit run app.py
-# 또는: ./run.sh
+./run.sh                       # 기본 포트 8502
+STREAMLIT_PORT=8503 ./run.sh   # 다른 포트로 실행
 ```
 
-기본 실행 포트는 `8502`, Ollama 기본 URL은 `http://localhost:11434`입니다.  
-사이드바에서 Ollama 연결 상태와 분석 모델을 확인할 수 있습니다.
+### 환경 변수
 
-## Example Prompts
+| 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 주소 |
+| `OLLAMA_MODEL` | `qwen2.5:7b` | 분석 계획을 쓸 모델 |
+| `STREAMLIT_PORT` | `8502` | `run.sh` 실행 포트 |
+| `EXCEL_ANALYZER_DISABLE_INTERPRET` | (꺼짐) | `1`이면 결과 해석 문장 생성을 끔 |
 
-### 일반 모드 (기본)
+### 화면 없이 호출하기
 
-매출·재고 등 일반 표에 적합합니다. 업로드한 컬럼을 바탕으로 추천 질문이 자동 생성되기도 합니다.
+웹 화면 없이도 같은 분석을 쓸 수 있습니다. `core.application.headless.analyze_excel`을 직접 호출하거나, JSON 요청을 표준 입력으로 넘겨 CLI로 실행합니다.
 
-- 파일을 요약해줘
-- 각 컬럼의 데이터 타입과 결측치 개수를 알려줘
-- 컬럼 목록을 보여줘
-- 상품별 매출 합계를 표로 보여줘
-- 지역별 행 개수를 표로 보여줘
-- 상위 10개 항목을 표로 보여줘
-- 파일별로 숫자형 컬럼 합계를 표로 비교해줘
+```bash
+python -m core.application.cli < request.json
+```
 
-### 예산 표 모드 (사이드바에서 ON)
+### 테스트
 
-예실대비표·연구과제 예산 표에 맞춘 예시입니다.
-
-- 파일을 요약해줘
-- 연구활동비 합계를 알려줘
-- 비용명이 121인 데이터만 보여줘
-- 내부인건비 리스트로 정리해줘
-- 파일별로 실행예산 합계를 비교해줘
-- 파일별 실행예산 합계를 차트로 보여줘
-- 집행률이 높은 순으로 정렬해줘
+```bash
+pytest
+```
 
 ## Roadmap
 
-### ✅ Completed
+### ✅ 완료
 
-- [x] Excel Upload (`xlsx/xls`)
-- [x] Multi File / Multi Sheet 분석
-- [x] Data Preview
-- [x] AI 자연어 분석 (규칙 라우팅 + PandasAI + Ollama)
-- [x] 파일 요약 명령 지원
-- [x] 스키마 비교 (컬럼 의미 추정은 LLM 경로)
-- [x] 컬럼 기반 추천 질문
-- [x] 집계 결과 표/막대 차트 출력
-- [x] Streamlit 네이티브 Light / Dark Theme
-- [x] 분석 코드 가드레일·실행 코드 표시
-- [x] 입력 정규화·품질 진단
-- [x] N개 파일 비교 병합 및 xlsx export
-- [x] 일반·예산 모드 UX 분리 (추천 질문·프로필)
-- [x] CSV 업로드 지원
-- [x] 사이드바 도메인 프로필 선택 (`profiles/*.yaml`)
-- [x] 도메인 프로필 YAML 확장 샘플 (`inventory` / `custom`)
+- [x] 엑셀(`xlsx/xls`)·CSV 업로드, 여러 파일·여러 시트 분석
+- [x] 데이터 미리보기, 파일 요약, 스키마·품질 진단
+- [x] **LLM 분석 계획 + pandas 계산** 구조로 전환 (계획 검사·최대 3회 재시도·결과 검사)
+- [x] 소계·합계·하단 메모 행 자동 구분
+- [x] 고른 행의 합계·평균에 행 이름(`구분`)과 합계 열 함께 표시
+- [x] 행·열 바꾸기 전 표와 바꾼 표를 함께 표시
+- [x] 비율 열을 `(%)` 백분율로 표시
+- [x] 결과 표 엑셀(xlsx) 다운로드
+- [x] 여러 파일 비교 병합 및 xlsx export
+- [x] 표 종류별 규칙을 YAML 프로필로 분리, 업로드 기반 프로필 자동 추천
+- [x] 화면 없이 호출하는 headless API · CLI
 
-### 🚀 Planned
+### 🚀 다음 보완
 
-- [ ] PDF 데이터 입력 지원
-- [ ] 여러 파일 간 자동 비교 리포트 강화 (수치·품질 요약 포함)
+- [ ] 그룹별 비율(예: 비목분류별 집행률) 지원
+- [ ] 예실대비표가 아닌 표에서도 소계·합계 행 구분 정확도 높이기
+- [ ] 결과 해석 문장 다듬기
+- [ ] PandasAI 대체 경로 결과 검증 강화
+- [ ] 더 큰 모델과 정확도·속도 비교
+
+### 🔭 확장 방향
+
+- [ ] 예실대비표 외 업무 표(매출·재고·인사 등) 프로필 확대
+- [ ] 여러 파일 자동 비교 리포트
+- [ ] PDF 등 다른 입력 형식
 - [ ] 차트 유형 확장 (라인/파이 등)
-- [ ] 분석 결과 Export 강화 (리포트 템플릿)
-
-### ✅ Generality hardening (recent)
-
-- [x] 예산 컬럼 prefs·계획 가이던스를 프로필/`use_budget_profile` 뒤로 이동
-- [x] `preferred_labels` / `footer_labels` / `plan_guidance` 프로필 주입
-- [x] 프로필 화이트리스트 해제 (`profiles/<name>.yaml` 동적 로드)
-- [x] CSV 업로드 + 사이드바 프로필 선택 UI
-- [x] `column_prefs` / `roles` 를 YAML로 이전 (`analysis_column_prefs` 하드코딩 제거)
-- [x] 공유 `column_hints.yaml` 예산 토큰 → `budget.column_hint_extras` 분리
-- [x] UI·라우팅 `profile_name` 우선 (`use_budget_profile` shim 제거)
-- [x] 업로드 기반 프로필 자동 추천 + 수동 변경 고정
-- [x] `distribution_summary` 필드명 일반화 (`denominator_column` / `numerator_column`)
-- [x] 계획 폴백 라벨·메트릭을 프로필 `preferred_labels`/`roles`/`column_prefs`로 이관
-- [x] 구조화/복잡 의도 키워드 프로필화 (`structured_analysis_keywords` / `complex_analysis_keywords`)
-- [x] 분포·해석 표시 라벨·가이던스 외부화 (`display_labels` / `interpret_guidance`)
-- [x] 공유 힌트에서 비용명·세목을 예산 extras로만 유지
-- [x] PandasAI 가드레일·스키마 힌트 예시 `guardrail_hints` 프로필화
-- [x] 의도 키워드 토큰 매칭 개선 (`keyword_in_text`, 행⊂집행률 오탐 제거)
-- [x] `summary_builder` 레지스트리 (`core/summary_builders.py`)
-- [x] 언어 프로필화 (`locale` / `language_instruction`, `generic_en` 샘플)
 
 ---
 
