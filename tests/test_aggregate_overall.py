@@ -39,7 +39,7 @@ def test_aggregate_groups_empty_group_by_sums_detail_rows_only() -> None:
         metrics=[{"column": "계획", "fn": "sum"}, {"column": "집행", "fn": "sum"}],
     )
     assert list(result.columns) == [OVERALL_LABEL_COLUMN, "계획", "집행"]
-    assert result.iloc[0][OVERALL_LABEL_COLUMN] == OVERALL_LABEL
+    assert result.iloc[0][OVERALL_LABEL_COLUMN] == f"{OVERALL_LABEL} (5개 항목)"
     assert result.iloc[0]["계획"] == 210
     assert result.iloc[0]["집행"] == 140
     assert meta["overall"]["detail_rows"] == 5
@@ -51,7 +51,9 @@ def test_aggregate_overall_mean_uses_detail_rows() -> None:
     result, _ = aggregate_groups(
         _ledger_df(), group_by=[], metrics=[{"column": "계획", "fn": "mean"}]
     )
-    assert result.iloc[0]["계획"] == 42.0  # (100+50+30+20+10) / 5
+    assert list(result.columns) == [OVERALL_LABEL_COLUMN, "계획", "계획_평균"]
+    assert result.iloc[0]["계획"] == 210  # 평균의 근거가 되는 합계
+    assert result.iloc[0]["계획_평균"] == 42.0  # (100+50+30+20+10) / 5
 
 
 def test_aggregate_overall_warns_when_total_row_disagrees() -> None:
@@ -119,7 +121,9 @@ def test_steps_group_mean_via_filter() -> None:
         },
         _ledger_df(),
     )
-    assert result.iloc[0]["계획"] == 20.0
+    assert result.iloc[0]["계획_평균"] == 20.0
+    assert result.iloc[0]["계획"] == 60
+    assert result.iloc[0][OVERALL_LABEL_COLUMN] == "여비, 회의비, 인쇄비"
 
 
 def test_unknown_group_by_column_is_still_rejected() -> None:
@@ -407,3 +411,109 @@ def test_interpretation_can_be_disabled_by_env(monkeypatch) -> None:
     monkeypatch.delenv("EXCEL_ANALYZER_DISABLE_INTERPRET")
     on = run()
     assert "해석 문장" in on.reply
+
+
+def test_overall_label_lists_few_named_items() -> None:
+    result, _ = _run(
+        {
+            "steps": [
+                {"op": "annotate_row_types"},
+                {
+                    "op": "filter_rows",
+                    "include_row_types": ["detail"],
+                    "column_filters": [{"column": "항목명", "values": ["급여", "여비"]}],
+                },
+                {"op": "aggregate", "group_by": [], "metrics": [{"column": "계획", "fn": "sum"}]},
+            ]
+        },
+        _ledger_df(),
+    )
+    assert result.iloc[0][OVERALL_LABEL_COLUMN] == "급여, 여비"
+    assert result.iloc[0]["계획"] == 130
+
+
+def test_select_after_overall_mean_keeps_label_and_sum_and_mean() -> None:
+    # LLM이 집계 뒤에 없어진 분류 열과 원래 지표 이름만 고르는 계획
+    result, _ = _run(
+        {
+            "steps": [
+                {"op": "annotate_row_types"},
+                {
+                    "op": "filter_rows",
+                    "include_row_types": ["detail"],
+                    "column_filters": [{"column": "분류", "values": ["활동비"]}],
+                },
+                {"op": "aggregate", "group_by": [], "metrics": [{"column": "계획", "fn": "mean"}]},
+                {"op": "select_columns", "columns": ["분류", "계획"]},
+            ]
+        },
+        _ledger_df(),
+    )
+    assert list(result.columns) == [OVERALL_LABEL_COLUMN, "계획", "계획_평균"]
+    assert result.iloc[0].tolist() == ["여비, 회의비, 인쇄비", 60, 20.0]
+
+
+def test_overall_label_uses_shared_category_for_many_items() -> None:
+    df = pd.DataFrame(
+        {
+            "분류": ["인건비", "활동비", "활동비", "활동비", "활동비", "소 계", "합계"],
+            "항목명": ["급여", "여비", "회의비", "인쇄비", "행사비", None, None],
+            "계획": [100, 10, 20, 30, 40, 100, 200],
+        }
+    )
+    result, _ = _run(
+        {
+            "steps": [
+                {"op": "annotate_row_types"},
+                {
+                    "op": "filter_rows",
+                    "include_row_types": ["detail"],
+                    "column_filters": [{"column": "분류", "values": ["활동비"]}],
+                },
+                {"op": "aggregate", "group_by": [], "metrics": [{"column": "계획", "fn": "mean"}]},
+            ]
+        },
+        df,
+    )
+    assert result.iloc[0].tolist() == ["활동비 (4개 항목)", 100, 25.0]
+
+
+def test_pipeline_passes_pre_transpose_table() -> None:
+    from core.analysis.analysis_pipeline import PRE_TRANSPOSE_META_KEY
+
+    df = _ledger_df()
+    plan_json = {
+        "steps": [
+            {"op": "annotate_row_types"},
+            {
+                "op": "filter_rows",
+                "include_row_types": ["detail"],
+                "column_filters": [{"column": "항목명", "values": ["급여", "여비"]}],
+            },
+            {"op": "select_columns", "columns": ["항목명", "계획", "집행"]},
+            {"op": "transpose"},
+        ]
+    }
+    result = try_analysis_pipeline(
+        "급여, 여비의 계획과 집행을 보여주고 행과 열을 바꿔줘",
+        df,
+        base_url="http://unused",
+        model="unused",
+        profile_name="generic",
+        chat_json_fn=lambda *a, **k: plan_json,
+        chat_text_fn=lambda *a, **k: "",
+    )
+    assert result is not None
+    before = result.meta[PRE_TRANSPOSE_META_KEY]
+    assert list(before.columns) == ["항목명", "계획", "집행"]
+    assert list(before["항목명"]) == ["급여", "여비"]
+    assert list(result.dataframe.columns)[1:] == ["급여", "여비"]
+
+
+def test_route_meta_keeps_pre_transpose_table() -> None:
+    from core.routing.route_helpers import _merge_analysis_meta
+
+    before = pd.DataFrame({"항목명": ["급여"], "계획": [100]})
+    meta = _merge_analysis_meta({}, {"pre_transpose_dataframe": before, "code": ""})
+    assert meta["pre_transpose_dataframe"] is before
+    assert _merge_analysis_meta({}, {"pre_transpose_dataframe": before.iloc[0:0]}) == {}

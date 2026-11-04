@@ -196,3 +196,32 @@ def test_per_row_retry_feedback_includes_skeleton_from_previous_plan() -> None:
     text = "\n".join(lines)
     assert "retry_mode: regenerate" in text
     assert '"mean": ["이월", "당해"]' in text and '"국내여비"' in text
+
+
+def _ratio_plan(name: str):
+    df = _df()
+    return analysis_plan_from_dict(
+        _steps({"ratio": ["당해", "이월"]}, name=name), available_columns=list(df.columns), profile_name="generic"
+    )
+
+
+def test_rate_named_ratio_becomes_percent() -> None:
+    from core.analysis.analysis_plan_sanitize import prefer_percent_for_rate
+
+    plan = prefer_percent_for_rate(_ratio_plan("집행률"), "이월 대비 당해 집행률을 구해줘")
+    step = next(s for s in plan.steps if s.op == "derive_column")
+    assert step.payload["expr"] == {"percent_ratio": ["당해", "이월"]}
+    out, _ = execute_analysis_plan(_df(), plan)
+    assert list(out["집행률"]) == [300.0, 250.0]
+
+
+def test_plain_ratio_stays_ratio_without_percent_request() -> None:
+    from core.analysis.analysis_plan_sanitize import prefer_percent_for_rate
+
+    plan = prefer_percent_for_rate(_ratio_plan("배수"), "당해가 이월의 몇 배인지 구해줘")
+    step = next(s for s in plan.steps if s.op == "derive_column")
+    assert step.payload["expr"] == {"ratio": ["당해", "이월"]}
+    plan2 = prefer_percent_for_rate(_ratio_plan("배수"), "당해/이월을 %로 구해줘")
+    assert next(s for s in plan2.steps if s.op == "derive_column").payload["expr"] == {
+        "percent_ratio": ["당해", "이월"]
+    }

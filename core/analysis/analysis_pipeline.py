@@ -11,6 +11,7 @@ import pandas as pd
 
 from core.analysis.analysis_executor import execute_analysis_plan
 from core.analysis.analysis_interpret import interpret_analysis_result
+from core.analysis.analysis_plan_sanitize import prefer_percent_for_rate
 from core.analysis.ops_reshape import transpose_table
 from core.analysis.analysis_plan_builder import build_analysis_plan
 from core.analysis.analysis_plan_types import AnalysisPlan
@@ -52,6 +53,9 @@ class AnalysisPipelineResult:
 
 
 INTERPRET_DISABLE_ENV = "EXCEL_ANALYZER_DISABLE_INTERPRET"
+
+# 전치 요청 결과에서 행·열을 바꾸기 전 표 (화면이 두 표를 차례로 보여 준다).
+PRE_TRANSPOSE_META_KEY = "pre_transpose_dataframe"
 
 
 def interpretation_disabled() -> bool:
@@ -175,6 +179,7 @@ def try_analysis_pipeline(
             )
             return RetryAttempt(ok=False, errors=[f"plan_build: {exc}"])
 
+        plan = prefer_percent_for_rate(plan, prompt)
         plan_dict = plan.to_dict()
         signature = normalize_plan_signature(plan_dict)
         family = operation_family_signature(plan_dict)
@@ -380,12 +385,17 @@ def try_analysis_pipeline(
         warn_msgs = validation_warning_messages(report) + report_warnings_extra
         info_msgs = validation_info_messages(report)
         if plan.transpose:
-            # 결과 검증은 전치 전 표로 끝났다. 보여 줄 표만 행·열을 바꾼다.
+            # 결과 검증은 전치 전 표로 끝났다. 보여 줄 표만 행·열을 바꾸고, 전치 전 표도 함께 넘긴다.
+            pre_transpose_df = result_df.reset_index(drop=True)
             result_df, transpose_meta = transpose_table(
                 result_df,
                 label_column=plan.transpose_label_column or None,
             )
-            exec_meta = {**exec_meta, "transpose": transpose_meta}
+            exec_meta = {
+                **exec_meta,
+                "transpose": transpose_meta,
+                PRE_TRANSPOSE_META_KEY: pre_transpose_df,
+            }
         reply = _build_reply(result_df, plan, exec_meta)
         if plan.interpret and not interpretation_disabled():
             try:

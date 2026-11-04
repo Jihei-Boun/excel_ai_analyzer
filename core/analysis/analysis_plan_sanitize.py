@@ -669,3 +669,27 @@ def _normalize_row_aggregate_expr(expr: Any) -> Any:
         if kind:
             return {kind: next(iter(expr.values()))}
     return expr
+
+
+_PERCENT_PROMPT_MARKERS = ("%", "퍼센트", "백분율", "percent")
+_RATE_NAME_SUFFIXES = ("률", "율")
+
+
+def prefer_percent_for_rate(plan, prompt: str):
+    """‘~률/~율’ 이름이거나 %를 요청한 비율 계산은 백분율(× 100)로 바꾼다.
+
+    LLM이 ‘집행률’, ‘달성률’처럼 률을 묻는 질문에도 0~1 비율(ratio)을 고르는 경우가 많다.
+    한국어에서 률·율은 보통 %로 읽으므로 계산 방식만 percent_ratio로 바꾸고 피연산자는 그대로 둔다.
+    """
+    text = str(prompt or "").lower()
+    asks_percent = any(m in text for m in _PERCENT_PROMPT_MARKERS)
+    for step in plan.steps:
+        if step.op != "derive_column":
+            continue
+        expr = step.payload.get("expr")
+        if not isinstance(expr, dict) or list(expr.keys()) != ["ratio"]:
+            continue
+        name = str(step.payload.get("name") or "").strip()
+        if asks_percent or name.endswith(_RATE_NAME_SUFFIXES):
+            step.payload["expr"] = {"percent_ratio": expr["ratio"]}
+    return plan

@@ -295,7 +295,11 @@ def aggregate_overall(
         if int(mask.sum()):
             excluded[reason] = int(mask.sum())
 
-    row: dict[str, object] = {OVERALL_LABEL_COLUMN: OVERALL_LABEL}
+    label = _overall_selection_label(work, detail, dims, primary)
+    row: dict[str, object] = {OVERALL_LABEL_COLUMN: label}
+    sums: dict[str, float | None] = {}
+    column_map: dict[str, list[str]] = {}
+    requested_sums = {name for name, fn in metric_specs if fn == "sum"}
     for name, fn in metric_specs:
         if fn == "count":
             values = [
@@ -305,19 +309,33 @@ def aggregate_overall(
             ]
         else:
             values = pd.to_numeric(detail[name], errors="coerce").dropna().astype(float).tolist()
-        row[name] = _reduce_values(values, fn)
+        value = _reduce_values(values, fn)
+        if fn == "sum":
+            row[name] = value
+            sums[name] = value
+            column_map.setdefault(name, []).append(name)
+            continue
+        # 평균 등은 열 이름에 계산 방법을 붙이고, 평균에는 근거가 되는 합계를 앞에 함께 둔다.
+        if fn == "mean" and name not in requested_sums:
+            total = _reduce_values(values, "sum")
+            row[name] = total
+            sums[name] = total
+            column_map.setdefault(name, []).append(name)
+        out_name = f"{name}_{_OVERALL_FN_SUFFIX.get(fn, fn)}"
+        row[out_name] = value
+        column_map.setdefault(name, []).append(out_name)
 
     total_check: dict[str, dict[str, Any]] = {}
     total_rows = work.loc[row_types == "total"]
     if not total_rows.empty:
         last_total = total_rows.iloc[-1]
-        for name, fn in metric_specs:
-            if fn != "sum" or row[name] is None:
+        for name, d_sum in sums.items():
+            if d_sum is None:
                 continue
             t_val = pd.to_numeric(last_total.get(name), errors="coerce")
             if pd.isna(t_val):
                 continue
-            d_val = float(row[name])
+            d_val = float(d_sum)
             match = abs(float(t_val) - d_val) <= max(1.0, abs(d_val) * 0.01)
             total_check[name] = {"total_row": float(t_val), "detail_sum": d_val, "match": match}
             if not match:
@@ -337,9 +355,67 @@ def aggregate_overall(
             "detail_rows": int(len(detail)),
             "excluded_rows": excluded,
             "total_row_check": total_check,
+            "label": label,
+            "metric_columns": column_map,
         },
     }
-    return pd.DataFrame([row]), meta
+    out = pd.DataFrame([row])
+    out.attrs[OVERALL_ATTRS_KEY] = {"label_column": OVERALL_LABEL_COLUMN, "metric_columns": column_map}
+    return out, meta
+
+
+_OVERALL_FN_SUFFIX = {"mean": "평균", "median": "중앙값", "min": "최소", "max": "최대", "count": "개수"}
+
+# 전체 집계 결과 표에 붙여, 뒤 단계(열 선택)가 라벨 열과 함께 나온 열을 지키게 한다.
+OVERALL_ATTRS_KEY = "overall_aggregate"
+
+_LABEL_NAME_LIMIT = 3
+
+
+def _overall_selection_label(
+    work: pd.DataFrame,
+    detail: pd.DataFrame,
+    dims: list[str],
+    primary: str | None,
+) -> str:
+    """집계에 들어간 행을 사람이 알아볼 이름으로 적는다.
+
+    항목 이름이 몇 개뿐이면 그 이름을, 아니면 모든 행이 공유하는 분류 값을, 둘 다 아니면 ``전체``를 쓴다.
+    항목 이름 열은 숫자가 아닌 열 가운데 값 종류가 가장 많은 열이다 (코드 열은 제외).
+    병합 셀처럼 비어 있는 분류 칸은 위 행의 값을 이어 받아 판단한다.
+    """
+    count = int(len(detail))
+    if count == 0:
+        return OVERALL_LABEL
+    candidates = [c for c in dict.fromkeys([*dims, *(primary and [primary] or []), *work.columns])
+                  if c in work.columns and c not in META_COLUMNS_SET]
+    text_cols = [c for c in candidates if _is_text_label_column(detail[c])]
+    if not text_cols:
+        return f"{OVERALL_LABEL} ({count}개 항목)"
+    name_col = max(text_cols, key=lambda c: detail[c].map(cell_text).replace("", pd.NA).nunique())
+    names = [n for n in dict.fromkeys(cell_text(v) for v in detail[name_col]) if n]
+    if names and len(names) == count and count <= _LABEL_NAME_LIMIT:
+        return ", ".join(names)
+    for col in text_cols:
+        if col == name_col:
+            continue
+        filled = work[col].map(lambda v: cell_text(v) or None).ffill()
+        shared = {v for v in filled.loc[detail.index] if v}
+        if len(shared) == 1:
+            return f"{next(iter(shared))} ({count}개 항목)"
+    return f"{OVERALL_LABEL} ({count}개 항목)"
+
+
+def _is_text_label_column(series: pd.Series) -> bool:
+    """숫자형이 아니고, 채워진 값이 모두 숫자 모양(코드)도 아닌 열."""
+    if pd.api.types.is_numeric_dtype(series):
+        return False
+    values = [cell_text(v) for v in series]
+    values = [v for v in values if v]
+    if not values:
+        return False
+    numeric = pd.to_numeric(pd.Series(values), errors="coerce").notna()
+    return not bool(numeric.all())
 
 
 def ratio_of_columns(

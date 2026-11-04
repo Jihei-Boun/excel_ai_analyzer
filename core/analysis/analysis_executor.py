@@ -118,6 +118,7 @@ def _run_step(
             keep = [c for c in df.columns if c not in META_COLUMNS]
             return (df[keep] if keep else df), {}
         cols, added = _with_split_name_columns(df, cols)
+        cols = _keep_overall_columns(df, cols)
         out = df[cols].copy()
         renames = step.payload.get("renames") or {}
         valid = {k: v for k, v in renames.items() if k in out.columns and v}
@@ -243,6 +244,23 @@ def _run_step(
         return result, {"top_per_group": top_meta}
 
     raise ValueError(f"지원하지 않는 연산: {op!r}")
+
+
+def _keep_overall_columns(df: pd.DataFrame, cols: list[str]) -> list[str]:
+    """전체 집계 표에서 열을 고를 때 라벨 열과, 고른 지표와 함께 만든 열(합계·평균)을 지킨다."""
+    from core.analysis.ops_aggregate import OVERALL_ATTRS_KEY
+
+    info = df.attrs.get(OVERALL_ATTRS_KEY)
+    if not isinstance(info, dict):
+        return cols
+    label = info.get("label_column")
+    mapping = info.get("metric_columns") or {}
+    out: list[str] = [label] if label in df.columns and label not in cols else []
+    for col in cols:
+        for name in mapping.get(col, [col]):
+            if name in df.columns and name not in out:
+                out.append(name)
+    return out
 
 
 def _with_split_name_columns(df: pd.DataFrame, cols: list[str]) -> tuple[list[str], list[str]]:

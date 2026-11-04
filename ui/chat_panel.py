@@ -148,10 +148,12 @@ def _render_chat_history() -> None:
                     groups=list_groups if isinstance(list_groups, dict) else None,
                 )
             elif isinstance(attached, pd.DataFrame) and not attached.empty:
-                height = min(520, max(120, 38 * (min(len(attached), 15) + 1)))
-                render_dataframe(attached, hide_index=True, height=height)
-                if role == "assistant":
-                    _render_table_download(message, attached, index)
+                before = message.get("pre_transpose_dataframe")
+                if isinstance(before, pd.DataFrame) and not before.empty:
+                    st.caption("① 추출한 표")
+                    _render_result_table(message, before, index, part="before")
+                    st.caption("② 행과 열을 바꾼 표")
+                _render_result_table(message, attached, index)
 
             workbook_bytes = message.get("workbook_bytes")
             if workbook_bytes:
@@ -174,20 +176,29 @@ def _render_chat_history() -> None:
                     st.code(code, language="python")
 
 
-def _render_table_download(message: dict, df: pd.DataFrame, index: int) -> None:
+def _render_result_table(message: dict, df: pd.DataFrame, index: int, *, part: str = "") -> None:
+    height = min(520, max(120, 38 * (min(len(df), 15) + 1)))
+    render_dataframe(df, hide_index=True, height=height)
+    if message.get("role") == "assistant":
+        _render_table_download(message, df, index, part=part)
+
+
+def _render_table_download(message: dict, df: pd.DataFrame, index: int, *, part: str = "") -> None:
     """채팅 결과 표를 그대로 xlsx로 내려받는 버튼. 바이트는 메시지에 한 번만 만든다."""
     from core.io.export_utils import dataframe_to_xlsx_bytes
 
-    data = message.get("table_xlsx_bytes")
+    suffix = f"_{part}" if part else ""
+    cache_key = f"table_xlsx_bytes{suffix}"
+    data = message.get(cache_key)
     if not data:
         data = dataframe_to_xlsx_bytes(df, sheet_name="결과")
-        message["table_xlsx_bytes"] = data
+        message[cache_key] = data
     st.download_button(
-        "Excel 다운로드",
+        "Excel 다운로드" + (" (추출한 표)" if part == "before" else ""),
         data=data,
-        file_name=f"analysis_result_{index + 1}.xlsx",
+        file_name=f"analysis_result_{index + 1}{suffix}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key=f"dl_table_{index}",
+        key=f"dl_table_{index}{suffix}",
         use_container_width=True,
     )
 
