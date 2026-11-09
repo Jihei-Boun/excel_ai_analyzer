@@ -20,6 +20,7 @@ from core.analysis.analysis_plan_types import (
 )
 from core.integrate.plan_types import ValidationIssue, ValidationReport
 from core.schema.row_classify import ROW_TYPE_COL
+from core.analysis.ops_aggregate import OVERALL_LABEL_COLUMN
 
 _NUMERIC_AGGS = frozenset({"sum", "mean", "median", "avg", "min", "max", "std", "var"})
 _SUPPORTED_FILTER_OPS = frozenset(
@@ -130,6 +131,8 @@ def validate_analysis_plan(
                     known.add(col)
             for g in payload.get("group_by") or []:
                 known.add(str(g))
+            if not payload.get("group_by"):
+                known.add(OVERALL_LABEL_COLUMN)
             continue
 
         if op == "ratio_of_aggregates":
@@ -213,9 +216,414 @@ def validate_analysis_plan(
             user_prompt=user_prompt,
         )
     )
+    issues.extend(_validate_overall_aggregate(plan, df, available, user_prompt=user_prompt))
+    issues.extend(_validate_grouped_selection(plan, df, user_prompt=user_prompt))
+    issues.extend(_validate_per_row_combination(plan, user_prompt=user_prompt))
+    issues.extend(_validate_derive_operands_requested(plan, user_prompt=user_prompt))
 
     errors = [i for i in issues if i.level == "error"]
     return ValidationReport(ok=not errors, issues=issues)
+
+
+def _validate_overall_aggregate(
+    plan: AnalysisPlan,
+    df: pd.DataFrame,
+    available: set[str],
+    *,
+    user_prompt: str | None,
+) -> list[ValidationIssue]:
+    """group_by=[] 집계는 한 숫자로 끝나므로, 조용히 틀리는 두 경우를 막는다.
+
+    1) LLM이 쓴 지표 열 이름이 실제 열로 풀리지 않으면 버리지 않고 오류로 돌려준다.
+    2) 요청에 라벨 열의 실제 값이 있는데 행 필터가 없으면 오류로 돌려준다.
+    """
+    overall_index = next(
+        (
+            i
+            for i, s in enumerate(plan.steps)
+            if s.op == "aggregate" and not (s.payload or {}).get("group_by")
+        ),
+        None,
+    )
+    if overall_index is None:
+        return []
+    from core.analysis.analysis_plan_compile import _resolve_metric_column
+
+    issues: list[ValidationIssue] = []
+    unresolved = [
+        name
+        for name in _raw_aggregate_metric_names(plan.raw or {})
+        if not _resolve_metric_column(name, available)
+    ]
+    if unresolved:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "unknown_metric_column",
+                f"aggregate metric column(s) {sorted(set(unresolved))} do not exist. "
+                "Use only existing columns as metrics. To total specific items, "
+                "filter those rows with filter_rows column_filters, then aggregate group_by=[].",
+            )
+        )
+
+    selected = any(
+        s.op == "filter_rows"
+        and ((s.payload or {}).get("column_filters") or (s.payload or {}).get("numeric_filters"))
+        for s in plan.steps[:overall_index]
+    )
+    if not selected and user_prompt:
+        mentioned = _prompt_mentioned_values(df, str(user_prompt))
+        if mentioned:
+            col, values = mentioned
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "overall_aggregate_missing_selection",
+                    f"The request names values of column `{col}` ({', '.join(values)}) "
+                    "but the plan aggregates ALL rows. Add filter_rows with "
+                    f'column_filters=[{{"column":"{col}","values":{json_list(values)}}}] '
+                    "before aggregate group_by=[].",
+                )
+            )
+    return issues
+
+
+def json_list(values: list[str]) -> str:
+    import json
+
+    return json.dumps(values, ensure_ascii=False)
+
+
+def _raw_aggregate_metric_names(raw: dict[str, Any]) -> list[str]:
+    """LLM 원본 계획에서 aggregate 지표 열 이름을 모은다 (sanitize 전)."""
+    blocks: list[dict[str, Any]] = []
+    if str(raw.get("operation") or "") == "aggregate":
+        blocks.append(raw)
+    for step in raw.get("steps") or []:
+        if isinstance(step, dict) and str(step.get("op") or step.get("operation") or "") == "aggregate":
+            blocks.append(step)
+    names: list[str] = []
+    for block in blocks:
+        metrics = block.get("metrics") or []
+        if isinstance(metrics, dict):
+            metrics = [metrics]
+        for metric in metrics if isinstance(metrics, list) else []:
+            if isinstance(metric, dict):
+                name = str(metric.get("column") or metric.get("name") or "").strip()
+                if name:
+                    names.append(name)
+    return names
+
+
+_GENERIC_NAME_PARTS = frozenset({"합계", "평균", "총계", "소계", "합", "total", "sum", "mean", "avg"})
+
+
+def _column_mentioned(column: str, prompt_compact: str) -> bool:
+    """열 이름 전체나 ``_``로 나눈 의미 있는 조각이 요청에 그대로 나오면 언급된 것으로 본다."""
+    name = column.replace(" ", "")
+    if name and name.lower() in prompt_compact:
+        return True
+    for part in name.split("_"):
+        if len(part) >= 2 and part.lower() not in _GENERIC_NAME_PARTS and part.lower() in prompt_compact:
+            return True
+    return False
+
+
+def _validate_derive_operands_requested(
+    plan: AnalysisPlan,
+    *,
+    user_prompt: str | None,
+) -> list[ValidationIssue]:
+    """행마다 더하기/평균에 요청에 없는 열이 섞이는 것을 막는다.
+
+    요청이 피연산자 일부를 이름으로 집었는데 나머지는 요청에 없으면 오류.
+    요청이 열 이름을 하나도 쓰지 않았으면(동의어 등) 판단하지 않는다.
+    """
+    if not user_prompt:
+        return []
+    prompt_compact = str(user_prompt).replace(" ", "").lower()
+    issues: list[ValidationIssue] = []
+    for step in plan.steps:
+        expr = (step.payload or {}).get("expr")
+        if step.op != "derive_column" or not isinstance(expr, dict):
+            continue
+        kind = next(iter(expr), "")
+        if kind not in {"sum", "mean"}:
+            continue
+        operands = [str(c) for c in expr.get(kind) or []]
+        mentioned = [c for c in operands if _column_mentioned(c, prompt_compact)]
+        extra = [c for c in operands if c not in mentioned]
+        if mentioned and extra:
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "derive_operand_not_requested",
+                    f"derive `{kind}` uses {json_list(extra)} which the request did not ask for. "
+                    f"Use only the requested columns: {json_list(mentioned)} "
+                    f'(expr={{"{kind}":{json_list(mentioned)}}}).',
+                )
+            )
+    return issues
+
+
+def _per_row_skeleton(previous_plan: dict[str, Any] | None) -> str:
+    """이전 계획의 필터·지표 열로 '행마다 계산' 단계 골격을 만든다 (새 열을 만들지 않는다)."""
+    import json
+
+    plan = previous_plan if isinstance(previous_plan, dict) else {}
+    blocks = [plan] + [s for s in plan.get("steps") or [] if isinstance(s, dict)]
+    column_filters: list[Any] = []
+    metric_cols: list[str] = []
+    fn = "mean"
+    for block in blocks:
+        if block.get("column_filters"):
+            column_filters = block["column_filters"]
+        if str(block.get("op") or block.get("operation") or "") == "aggregate":
+            for metric in block.get("metrics") or []:
+                if isinstance(metric, dict) and metric.get("column"):
+                    metric_cols.append(str(metric["column"]))
+                    fn = str(metric.get("fn") or fn)
+    filter_step: dict[str, Any] = {"op": "filter_rows", "include_row_types": ["detail"]}
+    if column_filters:
+        filter_step["column_filters"] = column_filters
+    steps = [
+        {"op": "annotate_row_types"},
+        filter_step,
+        {"op": "derive_column", "name": "<new name>", "expr": {fn if fn in {"sum", "mean"} else "mean": metric_cols or ["<A>", "<B>"]}},
+        {"op": "select_columns", "columns": ["<item name column>", *metric_cols, "<new name>"]},
+    ]
+    return json.dumps({"steps": steps}, ensure_ascii=False)
+
+
+_PER_ROW_MARKERS = ("항목별", "행별", "항목마다", "행마다", "각 항목", "각각", "per row", "each row", "per item")
+
+
+def _validate_per_row_combination(
+    plan: AnalysisPlan,
+    *,
+    user_prompt: str | None,
+) -> list[ValidationIssue]:
+    """'A와 B 평균을 항목별로'처럼 행마다 열을 묶으라는 요청을 열 집계로 처리한 계획을 막는다."""
+    text = str(user_prompt or "").lower()
+    if not any(marker in text for marker in _PER_ROW_MARKERS):
+        return []
+    if any(
+        s.op == "derive_column"
+        and isinstance((s.payload or {}).get("expr"), dict)
+        and set(s.payload["expr"]) & {"sum", "mean"}
+        for s in plan.steps
+    ):
+        return []
+    for step in plan.steps:
+        if step.op != "aggregate":
+            continue
+        metrics = [m for m in (step.payload or {}).get("metrics") or [] if isinstance(m, dict)]
+        by_fn: dict[str, list[str]] = {}
+        for metric in metrics:
+            fn = str(metric.get("fn") or "").lower()
+            if fn in {"sum", "mean"}:
+                by_fn.setdefault(fn, []).append(str(metric.get("column") or ""))
+        for fn, cols in by_fn.items():
+            if len(cols) >= 2:
+                return [
+                    ValidationIssue(
+                        "error",
+                        "per_row_combination_as_aggregate",
+                        f"The request asks for the {fn} of {', '.join(cols)} for EACH item/row "
+                        "(항목별/행별). Do not aggregate down the columns. Use derive_column "
+                        f'{{"name":"...","expr":{{"{fn}":{json_list(cols)}}}}} on detail rows '
+                        "(filter the named items/group first), then select_columns with the item "
+                        "name column, the source columns and the new column.",
+                    )
+                ]
+    return []
+
+
+def _validate_grouped_selection(
+    plan: AnalysisPlan,
+    df: pd.DataFrame,
+    *,
+    user_prompt: str | None,
+) -> list[ValidationIssue]:
+    """그룹 이름을 집어 물었는데 모든 그룹을 내는 집계를 막는다.
+
+    예: '연구활동비 항목들의 평균'에 group_by=[비목분류]만 있고 include_groups가 없으면
+    7개 그룹이 다 나온다. 그 그룹만 남기도록 되돌려 보낸다.
+    """
+    if not user_prompt:
+        return []
+    issues: list[ValidationIssue] = []
+    listing_issue = _missing_listing_selection(plan, df, str(user_prompt))
+    if listing_issue is not None:
+        issues.append(listing_issue)
+    for index, step in enumerate(plan.steps):
+        payload = step.payload or {}
+        group_by = [str(g) for g in payload.get("group_by") or []]
+        if step.op != "aggregate" or not group_by or payload.get("include_groups"):
+            continue
+        group_col = group_by[0]
+        if group_col not in df.columns:
+            continue
+        # 앞 단계 필터든 뒤 단계 필터·그룹 비교든, 그 그룹을 고르는 단계가 있으면 통과.
+        selects_group = any(
+            (
+                s.op == "filter_rows"
+                and any(
+                    str(f.get("column") or "") == group_col
+                    for f in (s.payload or {}).get("column_filters") or []
+                    if isinstance(f, dict)
+                )
+            )
+            or (
+                s.op == "compare_groups"
+                and str((s.payload or {}).get("group_column") or "") == group_col
+                and (s.payload or {}).get("groups")
+            )
+            for i, s in enumerate(plan.steps)
+            if i != index
+        )
+        if selects_group:
+            continue
+        mentioned = _prompt_mentioned_values(df, str(user_prompt), columns=[group_col])
+        if not mentioned:
+            item_issue = _missing_item_selection(plan, df, str(user_prompt), index, group_col)
+            if item_issue is not None:
+                issues.append(item_issue)
+            continue
+        _, values = mentioned
+        from core.pai.pandasai_frame import is_total_label
+        from core.summary.summary_utils import cell_text
+
+        all_groups = {
+            cell_text(v).strip()
+            for v in df[group_col].dropna().unique()
+            if cell_text(v).strip() and not is_total_label(cell_text(v))
+        }
+        if all_groups and all_groups.issubset(set(values)):
+            continue
+        issues.append(
+            ValidationIssue(
+                "error",
+                "aggregate_missing_group_selection",
+                f"The request names group(s) {', '.join(values)} of `{group_col}` but the "
+                "aggregate returns every group. Keep only the named group(s): set "
+                f"include_groups={json_list(values)} on this aggregate, or filter_rows "
+                f'column_filters=[{{"column":"{group_col}","values":{json_list(values)}}}] '
+                "then aggregate group_by=[] for one number.",
+            )
+        )
+    return issues
+
+
+_GROUPING_OPS = frozenset(
+    {"aggregate", "compare_groups", "top_per_group", "distribution_summary", "correlation"}
+)
+
+
+def _missing_listing_selection(
+    plan: AnalysisPlan,
+    df: pd.DataFrame,
+    prompt: str,
+) -> ValidationIssue | None:
+    """집계 없이 행을 보여 주는 계획인데, 요청이 집은 항목·그룹을 고르지 않은 경우.
+
+    예: '연구활동비 항목들의 A와 B를 보여줘'에 filter 없이 select_columns만 있으면
+    모든 행이 나온다.
+    """
+    if any(s.op in _GROUPING_OPS for s in plan.steps):
+        return None
+    if not any(s.op in {"select_columns", "filter_rows"} for s in plan.steps):
+        return None
+    if any(
+        (s.payload or {}).get("column_filters") or (s.payload or {}).get("numeric_filters")
+        for s in plan.steps
+        if s.op == "filter_rows"
+    ):
+        return None
+    mentioned = _prompt_mentioned_values(df, prompt)
+    if not mentioned:
+        return None
+    col, values = mentioned
+    return ValidationIssue(
+        "error",
+        "listing_missing_selection",
+        f"The request names {', '.join(values)} (values of column `{col}`) but the plan "
+        "returns every row. Keep only those rows: filter_rows "
+        f'column_filters=[{{"column":"{col}","values":{json_list(values)}}}] '
+        "before select_columns.",
+    )
+
+
+def _missing_item_selection(
+    plan: AnalysisPlan,
+    df: pd.DataFrame,
+    prompt: str,
+    index: int,
+    group_col: str,
+) -> ValidationIssue | None:
+    """요청이 다른 열의 항목 이름을 집었는데 그 항목을 고르지 않고 그룹으로 묶는 계획을 막는다.
+
+    예: '국내여비, 국외여비, 회의비의 …'(항목명 열 값)인데 group_by=[분류]만 있는 경우.
+    """
+    mentioned = _prompt_mentioned_values(df, prompt)
+    if not mentioned:
+        return None
+    item_col, values = mentioned
+    if item_col == group_col:
+        return None
+    filtered = any(
+        s.op == "filter_rows"
+        and any(
+            str(f.get("column") or "") == item_col
+            for f in (s.payload or {}).get("column_filters") or []
+            if isinstance(f, dict)
+        )
+        for s in plan.steps[:index]
+    )
+    if filtered:
+        return None
+    return ValidationIssue(
+        "error",
+        "aggregate_missing_item_selection",
+        f"The request names item(s) {', '.join(values)} of column `{item_col}`, but the plan "
+        f"groups by `{group_col}` without selecting them. First filter_rows "
+        f'column_filters=[{{"column":"{item_col}","values":{json_list(values)}}}]; then either '
+        "list those rows (select_columns, no aggregate) or aggregate by "
+        f"`{item_col}` / group_by=[] for one number.",
+    )
+
+
+def _prompt_mentioned_values(
+    df: pd.DataFrame,
+    prompt: str,
+    *,
+    columns: list[str] | None = None,
+) -> tuple[str, list[str]] | None:
+    """요청 문장에 그대로 나온 라벨 열 값을 찾는다. 가장 많이 나온 열 하나를 돌려준다."""
+    from core.pai.pandasai_frame import is_total_label
+    from core.summary.summary_utils import cell_text
+
+    prompt_norm = prompt.replace(" ", "")
+    best: tuple[str, list[str]] | None = None
+    for col in df.columns if columns is None else [c for c in columns if c in df.columns]:
+        name = str(col)
+        if name in META_COLUMNS or name.startswith("_"):
+            continue
+        if pd.api.types.is_numeric_dtype(df[col]):
+            continue
+        found: list[str] = []
+        for value in df[col].dropna().unique():
+            text = cell_text(value).strip()
+            compact = text.replace(" ", "")
+            if len(compact) < 2 or not any(not ch.isdigit() and ch not in ".,-" for ch in compact):
+                continue
+            if is_total_label(text) or text in found:
+                continue
+            if compact in prompt_norm:
+                found.append(text)
+        if found and (best is None or len(found) > len(best[1])):
+            best = (name, found)
+    return best
 
 
 def _validate_plan_composition(
@@ -253,6 +661,8 @@ def _validate_plan_composition(
                     produced.add(col)
             for g in payload.get("group_by") or []:
                 produced.add(str(g))
+            if not payload.get("group_by"):
+                produced.add(OVERALL_LABEL_COLUMN)
         elif op == "ratio_of_aggregates":
             saw_ratio = True
             name = str(payload.get("name") or "").strip()
@@ -802,6 +1212,13 @@ def format_plan_validation_feedback(
             "If the request relates two numeric columns in the schema, choose an approach "
             "that uses that column relationship instead."
         )
+    if "per_row_combination_as_aggregate" in code_set:
+        skeleton = _per_row_skeleton(previous_plan)
+        lines.append(
+            "Hint: 항목별/각각 = one row per item. Keep your row filter and columns, but compute "
+            "the value ACROSS the columns on each row (derive_column), not down the column "
+            "(aggregate). Shape: " + skeleton
+        )
 
     if df is not None and not df.empty:
         candidates = suggest_column_candidates(df, profile_name=profile_name)
@@ -1198,6 +1615,23 @@ def _validate_select_columns(step: AnalysisStep, known: set[str]) -> list[Valida
     return issues
 
 
+def _is_split_code_column(df: pd.DataFrame, col: str) -> bool:
+    """병합 헤더가 숫자 코드 ``X``와 텍스트 이름 ``X_2``로 갈린 경우의 ``X``인가."""
+    twin = f"{col}_2"
+    if col not in df.columns or twin not in df.columns:
+        return False
+    return _is_numeric_compatible(df[col]) and not _is_numeric_compatible(df[twin])
+
+
+def _code_column_issue(col: str, where: str) -> ValidationIssue:
+    return ValidationIssue(
+        "error",
+        "code_column_metric",
+        f"`{col}` holds codes for the names in `{col}_2`, not amounts. "
+        f"Do not use it in {where}; use it (or `{col}_2`) only as a label.",
+    )
+
+
 def _validate_derive(
     step: AnalysisStep,
     known: set[str],
@@ -1226,7 +1660,9 @@ def _validate_derive(
                     f"derive_column `{step.payload.get('name')}` depends on missing column `{name}`.",
                 )
             )
-        elif name in df.columns and kind in {"ratio", "percent_ratio", "diff", "abs_diff"}:
+        elif kind in {"sum", "mean", "diff", "abs_diff"} and _is_split_code_column(df, name):
+            issues.append(_code_column_issue(name, f"derive `{kind}`"))
+        elif name in df.columns and kind in {"ratio", "percent_ratio", "diff", "abs_diff", "sum", "mean"}:
             if not _is_numeric_compatible(df[name]):
                 issues.append(
                     ValidationIssue(
@@ -1290,6 +1726,9 @@ def _validate_aggregate(
             continue
         if col not in known and col not in available:
             issues.append(_missing_column_issue("missing_metric_column", col, available))
+            continue
+        if fn in _NUMERIC_AGGS and _is_split_code_column(df, col):
+            issues.append(_code_column_issue(col, f"aggregate `{fn}`"))
             continue
         if fn in _NUMERIC_AGGS and col in df.columns and not _is_numeric_compatible(df[col]):
             issues.append(
@@ -1723,7 +2162,13 @@ def _validate_row_mix_for_plan(
             s.op == "aggregate" and bool(s.payload.get("prefer_subtotals"))
             for s in plan.steps
         )
-        level = "warning" if prefer_sub or saw_annotate else "error"
+        # group_by=[] 집계는 실행기가 상세 행만 골라 집계한다 (aggregate_overall).
+        overall_only = all(
+            s.op == "aggregate" and not (s.payload or {}).get("group_by")
+            for s in plan.steps
+            if s.op in _AGG_LIKE_OPS
+        )
+        level = "warning" if prefer_sub or saw_annotate or overall_only else "error"
         issues.append(
             ValidationIssue(
                 level,

@@ -18,7 +18,7 @@ Return ONLY a JSON object.
 ## Allowed atomic ops
 annotate_row_types, filter_rows, select_columns, derive_column, sort, limit,
 drop_columns, aggregate, ratio_of_aggregates, compare_groups,
-distribution_summary, correlation, filter_vs_mean, top_per_group.
+distribution_summary, correlation, filter_vs_mean, top_per_group, transpose (last step only).
 
 ## Compact high-level forms (compiled to atomic steps)
 Prefer atomic steps when unsure. These generic sugars are OK:
@@ -32,14 +32,50 @@ prefer group_comparison / rate_vs_mean instead.
 ## Operation contracts (required fields MUST be present)
 
 ### aggregate
-required: group_by (array of existing columns), metrics (array of {column, fn})
-optional: prefer_subtotals (sum only), include_groups, output_columns, criteria_note, interpret
+required: group_by (array of existing columns, or [] for one overall row), metrics (array of {column, fn})
+optional: prefer_subtotals (sum only), include_groups, column_filters, output_columns, criteria_note, interpret
+group_by=[] returns ONE row (label column "구분" = "전체") over detail rows only;
+subtotal/total/footer rows are excluded automatically. Use it for an overall total/mean,
+and for a total/mean of specific rows: filter those rows first
+(column_filters[{column, values}] on the item/label column), then aggregate with group_by=[].
+Do NOT group by the item column when the user wants ONE number for selected items.
+If the user names specific groups (e.g. "mean of group G"), set include_groups=[G] so only
+those groups are returned — never return every group for a named-group request.
 fn MUST be one of: sum | mean | median | min | max | count (avg→mean). NEVER omit fn.
 metrics MUST use shape [{ "column": "<existing>", "fn": "sum" }].
 Do NOT invent aliases like sales_sum / 매출액_합계 as column names.
 Do NOT use { "매출액_합계": "sum" } — that shape is invalid.
 IMPORTANT: after aggregate, the metric column KEEP its source name (e.g. 매출).
 Later sort/select/compare MUST use that same name — NEVER invent 매출_합계 / amount_sum / score_mean.
+
+### Show selected items (no aggregate)
+When the user asks to SHOW/LIST items or "items of group G" with some columns
+(e.g. "G 항목들의 A와 B를 보여줘", "X, Y, Z의 A와 B를 표로 보여줘"), return their detail rows:
+annotate → filter_rows(detail + column_filters) → select_columns([item label, A, B]).
+Do NOT aggregate unless the user asks for ONE total/mean (합계를 구해/평균을 구해/총).
+A column NAME may contain 합계/Total (e.g. "B 합계" = column B_합계): that names a column,
+it is NOT an instruction to sum. Include the item NAME column: the TEXT column that names
+each row. If a header was split into a numeric code column `X` and a text column `X_2`,
+the names are in `X_2` — select `X_2` (optionally also `X`), never only the code column.
+
+### derive_column — per-row sum / mean ACROSS columns
+"A와 B를 더해줘", "A, B, C의 합/평균을 항목별로" = combine several COLUMNS on each row:
+{"op":"derive_column","name":"<new name>","expr":{"sum":["A","B"]}}   (or {"mean":[...]})
+Then select_columns([item label, A, B, <new name>]). Keep one row per item; do NOT aggregate.
+This is different from a column total/mean over rows (aggregate). Use aggregate only when
+the user asks for ONE number down a column ("A 전체 합계", "A의 평균").
+"A와 B(의) 평균을 항목별로/행별로/각각" = per-row mean of A and B → derive_column mean,
+one row per item. "항목별/행별/각" means keep one row per item — never collapse to one row.
+Other derive exprs: diff, abs_diff, ratio, percent_ratio (2 operands), abs, sign_label.
+Never use code columns (a numeric `X` whose names are in `X_2`) as amounts.
+
+### transpose (swap rows and columns of the FINAL table)
+Use when the user asks to swap/flip rows and columns (행과 열을 바꿔/뒤집어, 전치, transpose).
+Put {"op":"transpose"} as the LAST step, or set "transpose": true on a high-level operation.
+It runs after every other step, so first build the table the user wants, then transpose.
+The first non-numeric column (e.g. the group/label column) becomes the new header row.
+For "transpose this whole table", return {"operation":"transpose"} with no other steps.
+Never emulate transpose with pivot/aggregate/select tricks.
 
 ### ratio_of_aggregates
 required: name (explicit output id), numerator, denominator (existing columns after aggregate)
@@ -243,6 +279,41 @@ prefer_subtotals applies to sum only.
   {"op":"aggregate","group_by":["rep"],"metrics":[{"column":"amount","fn":"sum"}]},
   {"op":"filter_vs_mean","column":"amount","relation":"above"}
 ],"interpret":false}
+
+8) Overall total of one column (generic):
+{"operation":"aggregate","group_by":[],"metrics":[{"column":"amount","fn":"sum"}],"interpret":false}
+
+9) Total / mean of selected rows only (generic):
+{"steps":[
+  {"op":"annotate_row_types"},
+  {"op":"filter_rows","include_row_types":["detail"],
+   "column_filters":[{"column":"item","values":["A","B","C"]}]},
+  {"op":"aggregate","group_by":[],"metrics":[{"column":"amount","fn":"sum"}]}
+],"interpret":false}
+For "mean of the items in group G": filter column_filters on the group column = G,
+then aggregate group_by=[] with fn=mean.
+
+10) Group totals, then swap rows and columns (generic):
+{"operation":"aggregate","group_by":["region"],
+ "metrics":[{"column":"amount","fn":"sum"},{"column":"cost","fn":"sum"}],
+ "transpose":true,"interpret":false}
+
+11) Show selected items' columns, then swap rows and columns (generic):
+{"steps":[
+  {"op":"annotate_row_types"},
+  {"op":"filter_rows","include_row_types":["detail"],
+   "column_filters":[{"column":"category","values":["G"]}]},
+  {"op":"select_columns","columns":["item","amount","cost_total"]},
+  {"op":"transpose"}
+],"interpret":false}
+
+12) Add two columns on each row (generic):
+{"steps":[
+  {"op":"annotate_row_types"},
+  {"op":"filter_rows","include_row_types":["detail"]},
+  {"op":"derive_column","name":"q1_q2","expr":{"sum":["q1","q2"]}},
+  {"op":"select_columns","columns":["item","q1","q2","q1_q2"]}
+],"interpret":false}
 """.strip()
 
 
@@ -265,6 +336,8 @@ COMPOSITION_CATEGORIES = (
 # Field-level fixes: keep composition, fix names/fields
 _REPAIR_ISSUE_CODES = frozenset(
     {
+        "derive_operand_not_requested",
+        "code_column_metric",
         "missing_sort_column",
         "missing_select_column",
         "missing_metric_before_sort",
@@ -279,6 +352,7 @@ _REPAIR_ISSUE_CODES = frozenset(
 # Composition family wrong: full regenerate
 _REGENERATE_ISSUE_CODES = frozenset(
     {
+        "per_row_combination_as_aggregate",
         "entity_ranking_missing_aggregate",
         "misused_top_per_group",
         "global_ranking_misclassified",

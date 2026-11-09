@@ -15,6 +15,7 @@ from core.analysis.analysis_ops import (
     distribution_summary,
     ensure_row_types,
     filter_vs_mean,
+    primary_label_column,
     ratio_of_columns,
     top_per_group,
 )
@@ -116,12 +117,14 @@ def _run_step(
         if not cols:
             keep = [c for c in df.columns if c not in META_COLUMNS]
             return (df[keep] if keep else df), {}
+        cols, added = _with_split_name_columns(df, cols)
+        cols = _keep_overall_columns(df, cols)
         out = df[cols].copy()
         renames = step.payload.get("renames") or {}
         valid = {k: v for k, v in renames.items() if k in out.columns and v}
         if valid:
             out = out.rename(columns=valid)
-        return out, {}
+        return out, ({"added_name_columns": added} if added else {})
 
     if op == "drop_columns":
         cols = [c for c in step.payload.get("columns", []) if c in df.columns]
@@ -243,6 +246,44 @@ def _run_step(
     raise ValueError(f"지원하지 않는 연산: {op!r}")
 
 
+def _keep_overall_columns(df: pd.DataFrame, cols: list[str]) -> list[str]:
+    """전체 집계 표에서 열을 고를 때 라벨 열과, 고른 지표와 함께 만든 열(합계·평균)을 지킨다."""
+    from core.analysis.ops_aggregate import OVERALL_ATTRS_KEY
+
+    info = df.attrs.get(OVERALL_ATTRS_KEY)
+    if not isinstance(info, dict):
+        return cols
+    label = info.get("label_column")
+    mapping = info.get("metric_columns") or {}
+    out: list[str] = [label] if label in df.columns and label not in cols else []
+    for col in cols:
+        for name in mapping.get(col, [col]):
+            if name in df.columns and name not in out:
+                out.append(name)
+    return out
+
+
+def _with_split_name_columns(df: pd.DataFrame, cols: list[str]) -> tuple[list[str], list[str]]:
+    """병합 헤더가 숫자 코드 열 ``X``와 이름 열 ``X_2``로 갈렸을 때 이름 열을 함께 남긴다.
+
+    ``X``만 고르면 행 이름이 코드 숫자로만 보인다. 값은 바꾸지 않고 라벨 열만 더한다.
+    """
+    out: list[str] = []
+    added: list[str] = []
+    for col in cols:
+        out.append(col)
+        twin = f"{col}_2"
+        if twin in cols or twin in out or twin not in df.columns:
+            continue
+        if not pd.api.types.is_numeric_dtype(df[col]):
+            continue
+        if pd.api.types.is_numeric_dtype(df[twin]):
+            continue
+        out.append(twin)
+        added.append(twin)
+    return out, added
+
+
 def _filter_rows(
     df: pd.DataFrame,
     payload: dict[str, Any],
@@ -271,12 +312,8 @@ def _filter_rows(
             )
         if dims:
             present = [c for c in dims if c in work.columns]
-            if present:
-                primary = present[0]
-                for cand in present:
-                    if str(cand).endswith("_2") or "명" in str(cand):
-                        primary = cand
-                        break
+            primary = primary_label_column(present)
+            if primary is not None:
                 has_label = work[primary].map(lambda v: bool(cell_text(v)))
                 mask &= has_label
 
@@ -341,6 +378,20 @@ def _derive_column(df: pd.DataFrame, payload: dict[str, Any]) -> pd.DataFrame:
         else:
             denom = right.replace(0, pd.NA)
             work[name] = left / denom
+        return work
+
+    if kind in {"sum", "mean"}:
+        if len(operands) < 2:
+            raise ValueError(f"{kind}는 피연산자 2개 이상이 필요합니다.")
+        missing = [c for c in operands if c not in work.columns]
+        if missing:
+            raise ValueError(f"derive 피연산자 없음: {missing}")
+        values = work[operands].apply(pd.to_numeric, errors="coerce")
+        if kind == "sum":
+            # 모든 값이 비면 0이 아니라 빈 값으로 둔다.
+            work[name] = values.sum(axis=1, min_count=1)
+        else:
+            work[name] = values.mean(axis=1)
         return work
 
     raise ValueError(f"지원하지 않는 derive 식: {kind!r}")

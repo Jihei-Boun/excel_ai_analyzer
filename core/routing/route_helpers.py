@@ -155,6 +155,9 @@ def _merge_analysis_meta(meta: dict, analysis_meta: dict | None) -> dict:
         value = analysis_meta.get(key)
         if value:
             meta[key] = value
+    before = analysis_meta.get("pre_transpose_dataframe")
+    if isinstance(before, pd.DataFrame) and not before.empty:
+        meta["pre_transpose_dataframe"] = before
     return meta
 
 

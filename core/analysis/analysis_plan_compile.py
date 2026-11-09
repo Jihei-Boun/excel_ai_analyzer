@@ -392,13 +392,14 @@ def _compile_aggregate(data: dict[str, Any], columns: set[str]) -> dict[str, Any
     """고수준 aggregate → annotate/filter/aggregate 원자 steps."""
     from core.analysis.analysis_plan_sanitize import _resolve_columns
 
-    group_by = data.get("group_by") or data.get("group_column") or data.get(
+    raw_group_by = data.get("group_by") or data.get("group_column") or data.get(
         "dimension_columns"
     ) or []
-    if isinstance(group_by, str):
-        group_by = [group_by]
-    group_by = _resolve_columns([str(c) for c in group_by], columns)
-    if not group_by:
+    if isinstance(raw_group_by, str):
+        raw_group_by = [raw_group_by]
+    group_by = _resolve_columns([str(c) for c in raw_group_by], columns)
+    # 빈 group_by는 전체 집계다. 이름을 줬는데 하나도 못 찾으면 컴파일하지 않는다.
+    if raw_group_by and not group_by:
         return {}
 
     resolved_metrics = _parse_metric_specs(
@@ -431,27 +432,37 @@ def _compile_aggregate(data: dict[str, Any], columns: set[str]) -> dict[str, Any
     if isinstance(include_groups, str):
         include_groups = [include_groups]
 
+    from core.analysis.ops_aggregate import OVERALL_LABEL_COLUMN
+
     metric_names = [m["column"] for m in resolved_metrics]
     out_cols: list[str] = []
     seen: set[str] = set()
-    for col in [*group_by, *metric_names]:
+    leading = list(group_by) if group_by else [OVERALL_LABEL_COLUMN]
+    for col in [*leading, *metric_names]:
         if col not in seen:
             out_cols.append(col)
             seen.add(col)
-    for col in data.get("output_columns") or []:
-        name = str(col)
-        resolved = _resolve_metric_column(name, columns)
-        if resolved and resolved not in seen:
-            out_cols.append(resolved)
-            seen.add(resolved)
+    if group_by:
+        # 전체 집계 결과는 라벨 열과 지표 열뿐이라 추가 출력 열을 붙이지 않는다.
+        for col in data.get("output_columns") or []:
+            name = str(col)
+            resolved = _resolve_metric_column(name, columns)
+            if resolved and resolved not in seen:
+                out_cols.append(resolved)
+                seen.add(resolved)
+
+    filter_step: dict[str, Any] = {
+        "op": "filter_rows",
+        "include_row_types": ["detail"],
+        "drop_blank_dimensions": True,
+    }
+    column_filters = _compile_column_filters(data.get("column_filters"), columns)
+    if column_filters:
+        filter_step["column_filters"] = column_filters
 
     steps: list[dict[str, Any]] = [
         {"op": "annotate_row_types"},
-        {
-            "op": "filter_rows",
-            "include_row_types": ["detail"],
-            "drop_blank_dimensions": True,
-        },
+        filter_step,
         {
             "op": "aggregate",
             "group_by": group_by,
@@ -470,6 +481,28 @@ def _compile_aggregate(data: dict[str, Any], columns: set[str]) -> dict[str, Any
         "output_columns": out_cols,
         "interpret": interpret,
     }
+
+def _compile_column_filters(raw: Any, columns: set[str]) -> list[dict[str, Any]]:
+    """``[{column, values}]`` 중 실제 열과 값이 있는 항목만 남긴다."""
+    from core.analysis.analysis_plan_sanitize import _resolve_columns
+
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for spec in raw:
+        if not isinstance(spec, dict):
+            continue
+        resolved = _resolve_columns([str(spec.get("column") or "")], columns)
+        values = spec.get("values") or spec.get("value") or []
+        if isinstance(values, str):
+            values = [values]
+        values = [str(v) for v in values if str(v).strip()]
+        if resolved and values:
+            out.append({"column": resolved[0], "values": values})
+    return out
+
 
 def _compile_top_n_per_group(data: dict[str, Any], columns: set[str]) -> dict[str, Any]:
     """그룹마다 값 기준 상위/하위 n행 → 정렬 → 최소 열."""

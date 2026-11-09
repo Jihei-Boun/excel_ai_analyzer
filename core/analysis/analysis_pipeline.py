@@ -5,10 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+import os
+
 import pandas as pd
 
 from core.analysis.analysis_executor import execute_analysis_plan
 from core.analysis.analysis_interpret import interpret_analysis_result
+from core.analysis.analysis_plan_sanitize import percent_column_labels, prefer_percent_for_rate
+from core.analysis.ops_reshape import transpose_table
 from core.analysis.analysis_plan_builder import build_analysis_plan
 from core.analysis.analysis_plan_types import AnalysisPlan
 from core.analysis.analysis_plan_validate import (
@@ -46,6 +50,17 @@ class AnalysisPipelineResult:
     plan: AnalysisPlan
     validation: ValidationReport
     meta: dict[str, Any] = field(default_factory=dict)
+
+
+INTERPRET_DISABLE_ENV = "EXCEL_ANALYZER_DISABLE_INTERPRET"
+
+# 전치 요청 결과에서 행·열을 바꾸기 전 표 (화면이 두 표를 차례로 보여 준다).
+PRE_TRANSPOSE_META_KEY = "pre_transpose_dataframe"
+
+
+def interpretation_disabled() -> bool:
+    """환경변수로 LLM 해석 문장을 끈다 (예: 화면 캡처). 기본은 켜짐."""
+    return os.environ.get(INTERPRET_DISABLE_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def should_try_analysis_pipeline(df: pd.DataFrame, *, wants_dataframe: bool) -> bool:
@@ -164,6 +179,7 @@ def try_analysis_pipeline(
             )
             return RetryAttempt(ok=False, errors=[f"plan_build: {exc}"])
 
+        plan = prefer_percent_for_rate(plan, prompt)
         plan_dict = plan.to_dict()
         signature = normalize_plan_signature(plan_dict)
         family = operation_family_signature(plan_dict)
@@ -368,8 +384,26 @@ def try_analysis_pipeline(
 
         warn_msgs = validation_warning_messages(report) + report_warnings_extra
         info_msgs = validation_info_messages(report)
+        # 결과 검증이 끝난 뒤 보여 줄 이름만 바꾼다: 백분율 열은 이름에 (%)를 붙인다.
+        percent_labels = {
+            k: v for k, v in percent_column_labels(plan).items() if k in result_df.columns
+        }
+        if percent_labels:
+            result_df = result_df.rename(columns=percent_labels)
+        if plan.transpose:
+            # 결과 검증은 전치 전 표로 끝났다. 보여 줄 표만 행·열을 바꾸고, 전치 전 표도 함께 넘긴다.
+            pre_transpose_df = result_df.reset_index(drop=True)
+            result_df, transpose_meta = transpose_table(
+                result_df,
+                label_column=plan.transpose_label_column or None,
+            )
+            exec_meta = {
+                **exec_meta,
+                "transpose": transpose_meta,
+                PRE_TRANSPOSE_META_KEY: pre_transpose_df,
+            }
         reply = _build_reply(result_df, plan, exec_meta)
-        if plan.interpret:
+        if plan.interpret and not interpretation_disabled():
             try:
                 interpretation = interpret_analysis_result(
                     prompt,

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from core.analysis.ops_aggregate import (
+    OVERALL_LABEL,
+    OVERALL_LABEL_COLUMN,
     aggregate_groups,
     filter_vs_mean,
     ratio_of_columns,
@@ -14,6 +16,7 @@ from core.analysis.ops_filters import (
     apply_column_filters,
     apply_numeric_filters,
     ensure_row_types,
+    primary_label_column,
     project_readable_columns,
 )
 from core.analysis.ops_stats import (
@@ -27,9 +30,12 @@ __all__ = [
     "AGGREGATE_FNS",
     "CORR_ZERO_EPS",
     "NUMERIC_FILTER_OPS",
+    "OVERALL_LABEL",
+    "OVERALL_LABEL_COLUMN",
     "ensure_row_types",
     "apply_column_filters",
     "apply_numeric_filters",
+    "primary_label_column",
     "project_readable_columns",
     "top_per_group",
     "filter_vs_mean",

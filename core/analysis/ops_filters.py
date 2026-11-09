@@ -38,6 +38,16 @@ def ensure_row_types(
     )
 
 
+def primary_label_column(dimension_columns: list[str]) -> str | None:
+    """차원 열 중 행 라벨(항목명)을 대표하는 열을 고른다. 없으면 None."""
+    if not dimension_columns:
+        return None
+    for cand in dimension_columns:
+        if str(cand).endswith("_2") or "명" in str(cand):
+            return cand
+    return dimension_columns[0]
+
+
 def apply_column_filters(
     df: pd.DataFrame,
     column_filters: list[dict[str, Any]] | None,

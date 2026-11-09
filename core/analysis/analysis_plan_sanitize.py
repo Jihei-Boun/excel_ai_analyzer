@@ -169,6 +169,7 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
     if op == "derive_column":
         name = str(item.get("name") or "").strip()
         expr = item.get("expr") or item.get("formula")
+        expr = _normalize_row_aggregate_expr(expr)
         if isinstance(expr, dict) and "type" in expr and len(expr) > 1:
             # {type: ratio, numerator, denominator} → {ratio: [num, den]}
             kind = str(expr.get("type"))
@@ -186,9 +187,11 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
                     left = str(expr.get("left") or expr.get("numerator") or "")
                     right = str(expr.get("right") or expr.get("denominator") or "")
                     expr = {kind: [left, right]}
-        if not name or not isinstance(expr, dict) or not expr:
+        if not isinstance(expr, dict) or not expr:
             return None
         kind = str(next(iter(expr.keys())))
+        if not name and kind not in {"sum", "mean"}:
+            return None
         if kind not in SUPPORTED_DERIVE_EXPRS:
             return None
         operands = expr.get(kind) or []
@@ -201,6 +204,11 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
             return None
         if kind in {"diff", "abs_diff", "ratio", "percent_ratio"} and len(operands) != 2:
             return None
+        if kind in {"sum", "mean"}:
+            if len(operands) < 2:
+                return None
+            if not name:
+                name = ("+".join(operands) if kind == "sum" else f"평균({','.join(operands)})")
         # sign_label 1피연산자는 직전 파생열(차이)일 수 있어 columns 소속을 강제하지 않는다.
         if kind == "sign_label" and len(operands) == 1:
             return AnalysisStep(op, {"name": name, "expr": {kind: operands}})
@@ -246,11 +254,12 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
         return AnalysisStep(op, {"columns": [str(c) for c in cols]})
 
     if op == "aggregate":
-        group_by = item.get("group_by") or item.get("group_column") or []
-        if isinstance(group_by, str):
-            group_by = [group_by]
-        group_by = _resolve_columns([str(c) for c in group_by], columns)
-        if not group_by:
+        raw_group_by = item.get("group_by") or item.get("group_column") or []
+        if isinstance(raw_group_by, str):
+            raw_group_by = [raw_group_by]
+        group_by = _resolve_columns([str(c) for c in raw_group_by], columns)
+        # 빈 group_by는 전체 집계다. 이름을 줬는데 하나도 못 찾으면 버린다.
+        if raw_group_by and not group_by:
             return None
         from core.analysis.analysis_plan_compile import (
             _metric_alias_candidates,
@@ -633,3 +642,67 @@ def _parse_embedded_numeric_compare(
         return op, None, float(rhs.replace(",", ""))
     except ValueError:
         return None
+
+
+_ROW_AGG_ALIASES = {
+    "sum": "sum", "add": "sum", "plus": "sum", "row_sum": "sum", "total": "sum",
+    "mean": "mean", "avg": "mean", "average": "mean", "row_mean": "mean",
+}
+
+
+def _normalize_row_aggregate_expr(expr: Any) -> Any:
+    """행마다 여러 열을 더하거나 평균 내는 식의 여러 표기를 ``{sum|mean: [cols]}``로 맞춘다.
+
+    예: ``{"type":"sum","columns":[A,B]}``, ``{"add":[A,B]}``, ``{"avg":[A,B,C]}``.
+    """
+    if not isinstance(expr, dict) or not expr:
+        return expr
+    if "type" in expr:
+        kind = _ROW_AGG_ALIASES.get(str(expr.get("type") or "").strip().lower())
+        cols = expr.get("columns") or expr.get("operands")
+        if kind and isinstance(cols, list):
+            return {kind: [str(c) for c in cols]}
+        return expr
+    if len(expr) == 1:
+        key = str(next(iter(expr.keys()))).strip().lower()
+        kind = _ROW_AGG_ALIASES.get(key)
+        if kind:
+            return {kind: next(iter(expr.values()))}
+    return expr
+
+
+_PERCENT_PROMPT_MARKERS = ("%", "퍼센트", "백분율", "percent")
+
+
+def percent_column_labels(plan) -> dict[str, str]:
+    """백분율로 계산한 열에 ``(%)``를 붙인 표시 이름. 이미 %가 들어간 이름은 그대로 둔다."""
+    labels: dict[str, str] = {}
+    for step in plan.steps:
+        if step.op != "derive_column":
+            continue
+        expr = step.payload.get("expr")
+        name = str(step.payload.get("name") or "").strip()
+        if isinstance(expr, dict) and "percent_ratio" in expr and name and "%" not in name:
+            labels[name] = f"{name}(%)"
+    return labels
+_RATE_NAME_SUFFIXES = ("률", "율")
+
+
+def prefer_percent_for_rate(plan, prompt: str):
+    """‘~률/~율’ 이름이거나 %를 요청한 비율 계산은 백분율(× 100)로 바꾼다.
+
+    LLM이 ‘집행률’, ‘달성률’처럼 률을 묻는 질문에도 0~1 비율(ratio)을 고르는 경우가 많다.
+    한국어에서 률·율은 보통 %로 읽으므로 계산 방식만 percent_ratio로 바꾸고 피연산자는 그대로 둔다.
+    """
+    text = str(prompt or "").lower()
+    asks_percent = any(m in text for m in _PERCENT_PROMPT_MARKERS)
+    for step in plan.steps:
+        if step.op != "derive_column":
+            continue
+        expr = step.payload.get("expr")
+        if not isinstance(expr, dict) or list(expr.keys()) != ["ratio"]:
+            continue
+        name = str(step.payload.get("name") or "").strip()
+        if asks_percent or name.endswith(_RATE_NAME_SUFFIXES):
+            step.payload["expr"] = {"percent_ratio": expr["ratio"]}
+    return plan
