@@ -201,20 +201,15 @@ def route_multi_prompt(
                 )
 
         # 범용 구조화 통합: LLM 스키마·계획 → 결정론 엔진 (도메인 전용 함수 호출 없음)
+        # 실행 예외는 여기서 삼키지 않는다. 바깥 처리가 원 예외를 다시 올린다.
         if looks_like_structural_integrate(prompt) and len(prepared) >= 2:
-            integrate_error: str | None = None
-            integrated = None
-            try:
-                integrated = try_integrate_pipeline(
-                    prompt,
-                    prepared,
-                    base_url=base_url,
-                    model=model,
-                    profile_name=profile_name,
-                )
-            except Exception as exc:
-                integrate_error = str(exc)
-                integrated = None
+            integrated = try_integrate_pipeline(
+                prompt,
+                prepared,
+                base_url=base_url,
+                model=model,
+                profile_name=profile_name,
+            )
 
             if integrated is not None and integrated.validation.ok:
                 return _finish(
@@ -227,6 +222,7 @@ def route_multi_prompt(
                         clear_operation=True,
                         set_operation_result=integrated.integrated,
                         operation_name="structured_integrate",
+                        structural_validation="passed",
                     )
                 )
             if integrated is not None and not integrated.validation.ok:
@@ -246,18 +242,7 @@ def route_multi_prompt(
                         keep_as_filter=False,
                         replace_selection=False,
                         operation_name="structured_integrate_failed",
-                    )
-                )
-            if integrate_error:
-                return _finish(
-                    SingleRouteOutcome(
-                        reply=(
-                            "구조화 통합 파이프라인 실행 중 오류가 발생했습니다. "
-                            f"{integrate_error}"
-                        ),
-                        dataframe=None,
-                        keep_as_filter=False,
-                        replace_selection=False,
+                        structural_validation="failed",
                     )
                 )
 

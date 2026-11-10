@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from core.profile_loader import load_budget_profile, load_column_hints
@@ -15,6 +16,22 @@ EXPORTS_DIR = PROJECT_ROOT / "exports"
 CHARTS_DIR = EXPORTS_DIR / "charts"
 MERGES_DIR = EXPORTS_DIR / "merges"
 PROFILES_DIR = PROJECT_ROOT / "profiles"
+
+
+def active_merges_dir() -> Path:
+    """환경 변수가 있으면 그 경로, 없으면 기존 exports/merges."""
+    override = os.environ.get("EXCEL_ANALYZER_MERGES_DIR", "").strip()
+    if override:
+        return Path(override)
+    return MERGES_DIR
+
+
+def active_charts_dir() -> Path:
+    """환경 변수가 있으면 그 경로, 없으면 기존 exports/charts."""
+    override = os.environ.get("EXCEL_ANALYZER_CHARTS_DIR", "").strip()
+    if override:
+        return Path(override)
+    return CHARTS_DIR
 
 # ---------------------------------------------------------------------------
 # Ollama / PandasAI 기본값

@@ -26,6 +26,9 @@ def test_single_summary_early_route(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert response["text"]
     assert response["data"]["route"] == "route_single_prompt"
     assert response["data"]["preview_records"] == []
+    assert response["safety"]["validation_status"] == "passed"
+    assert response["safety"]["validation"]["structural"]["state"] == "not_run"
+    assert response["safety"]["validation"]["structural"]["covers_semantic_correctness"] is False
 
 
 def test_single_schema_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -56,6 +59,7 @@ def test_single_quality_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     )
     assert response["status"] == "success"
     assert "품질" in response["text"] or "판정" in response["text"]
+    assert response["safety"]["validation"]["structural"]["state"] == "not_run"
 
 
 def test_single_analysis_uses_fake_dependency(
@@ -92,6 +96,18 @@ def test_single_analysis_uses_fake_dependency(
     # request_id is not used as a raw path component
     assert ".." not in artifact_path.parts
     assert artifact_path.resolve().is_relative_to((tmp_path / "out").resolve())
+
+
+def test_legitimate_zero_row_stays_success(tmp_path: Path) -> None:
+    path = write_table(tmp_path / "sales.xlsx", {"지역": ["서울", "부산"], "매출": [10, 20]})
+    response = analyze_excel(
+        base_request(tmp_path, paths=[path], prompt="결측값이 있는 행만 보여줘")
+    )
+    assert response["status"] == "success"
+    assert response["data"]["shape"] == [0, 0]
+    assert response["artifacts"] == []
+    assert response["safety"]["validation_status"] == "passed"
+    assert response["safety"]["validation"]["structural"]["state"] == "not_run"
 
 
 def test_headless_single_does_not_import_streamlit(tmp_path: Path) -> None:

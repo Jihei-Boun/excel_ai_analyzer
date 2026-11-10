@@ -30,6 +30,8 @@ def test_valid_single_request_contract(tmp_path: Path) -> None:
     assert response["data"]["route"] == "route_single_prompt"
     assert isinstance(response["artifacts"], list)
     assert response["safety"]["validation_status"] == "passed"
+    assert response["safety"]["validation"]["structural"]["state"] == "not_run"
+    assert response["safety"]["validation"]["structural"]["covers_semantic_correctness"] is False
 
 
 def test_valid_multi_request_contract(tmp_path: Path) -> None:

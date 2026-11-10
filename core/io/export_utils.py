@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from core.constants import MERGES_DIR
+from core.constants import active_merges_dir
 
 
 def dataframe_to_xlsx_bytes(df: pd.DataFrame, *, sheet_name: str = "Sheet1") -> bytes:
@@ -36,7 +36,7 @@ def export_sheets_xlsx(
     directory: Path | None = None,
 ) -> Path:
     """다중 시트 DataFrame을 exports/merges 등에 저장한다."""
-    target_dir = Path(directory) if directory is not None else MERGES_DIR
+    target_dir = Path(directory) if directory is not None else active_merges_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
     if not filename:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -59,7 +59,7 @@ def export_dataframe_xlsx(
     sheet_name: str = "Sheet1",
 ) -> Path:
     """DataFrame을 exports/merges 등에 저장하고 경로를 반환한다."""
-    target_dir = Path(directory) if directory is not None else MERGES_DIR
+    target_dir = Path(directory) if directory is not None else active_merges_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
 
     if not filename:

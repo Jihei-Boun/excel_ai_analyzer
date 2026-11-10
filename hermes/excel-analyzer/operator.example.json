@@ -1,0 +1,21 @@
+{
+  "python_path": "/절대/경로/excel_ai_analyzer/.venv/bin/python",
+  "repo_cwd": "/절대/경로/excel_ai_analyzer",
+  "allowed_input_roots": ["/절대/경로/excel_ai_analyzer/docs/development/dev0/fixtures"],
+  "workspace_root": "/절대/경로/hermes-excel-work",
+  "publish_root": "/절대/경로/hermes-excel-publish",
+  "model_base_url": "http://127.0.0.1:11434",
+  "model_name": "qwen2.5:7b",
+  "allowed_profiles": ["generic"],
+  "max_input_files": 1,
+  "max_file_bytes": 5000000,
+  "max_total_bytes": 5000000,
+  "max_request_bytes": 1000000,
+  "max_timeout_seconds": 120,
+  "default_timeout_seconds": 60,
+  "grace_seconds": 2,
+  "lock_wait_seconds": 5,
+  "max_stdout_bytes": 1000000,
+  "max_stderr_bytes": 1000000,
+  "allowed_extensions": [".xlsx", ".xls", ".xlsm", ".csv"]
+}

@@ -48,6 +48,7 @@ from core.application.contracts import (
     SafetyInfo,
     TimingInfo,
     WarningItem,
+    structural_validation_info,
     empty_result_data,
     error_response,
 )
@@ -477,7 +478,14 @@ def _normalize_outcome(
     dest_dir: Path,
     elapsed_ms: int,
 ) -> AnalyzeResponse:
-    validation_failed = outcome.operation_name == "structured_integrate_failed"
+    structural_state = (
+        outcome.structural_validation
+        if outcome.structural_validation in {"passed", "failed"}
+        else "not_run"
+    )
+    if outcome.operation_name == "structured_integrate_failed":
+        structural_state = "failed"
+    validation_failed = structural_state == "failed"
     unsafe_blocked = _looks_like_unsafe_block(outcome.reply)
     warnings = _warnings_from_outcome(outcome)
     artifacts: list[Artifact] = []
@@ -510,6 +518,7 @@ def _normalize_outcome(
     safety = SafetyInfo(
         validation_status="failed" if validation_failed else "passed",
         unsafe_output_blocked=unsafe_blocked,
+        validation=structural_validation_info(structural_state),
     )
     if validation_failed:
         return AnalyzeResponse(
@@ -685,7 +694,7 @@ def _exception_response(
     exc: BaseException,
     elapsed_ms: int,
 ) -> AnalyzeResponse:
-    status, code, stage, retryable = _classify_exception(exc)
+    status, code, stage, retryable, exception_type = _classify_exception(exc)
     return error_response(
         request_id=request_id,
         status=status,
@@ -694,41 +703,78 @@ def _exception_response(
         stage=stage,
         retryable=retryable,
         elapsed_ms=elapsed_ms,
+        exception_type=exception_type,
         safety=SafetyInfo(
             validation_status="not_applicable",
             unsafe_output_blocked=_looks_like_unsafe_block(str(exc)),
+            validation=structural_validation_info("not_run"),
         ),
     )
 
 
-def _classify_exception(exc: BaseException) -> tuple[str, str, str, bool]:
-    if isinstance(exc, KeyboardInterrupt):
-        return "cancelled", "cancelled", "execution", True
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen and len(chain) < 8:
+        seen.add(id(current))
+        chain.append(current)
+        cause = current.__cause__
+        if cause is None and not getattr(current, "__suppress_context__", False):
+            cause = current.__context__
+        current = cause
+    return chain
+
+
+def _classify_exception(exc: BaseException) -> tuple[str, str, str, bool, str]:
+    chain = _exception_chain(exc)
+    if any(isinstance(item, KeyboardInterrupt) for item in chain):
+        return "cancelled", "cancelled", "execution", True, "KeyboardInterrupt"
     try:
         import requests
     except ImportError:
         requests = None  # type: ignore[assignment]
     if requests is not None:
-        if isinstance(exc, requests.exceptions.Timeout):
-            return "timeout", "model_timeout", "model", True
-        if isinstance(exc, requests.exceptions.ConnectionError):
-            return "model_unavailable", "model_unavailable", "model", True
-        if isinstance(exc, requests.exceptions.HTTPError):
-            text = str(exc).lower()
-            if "404" in text or "not found" in text:
-                return "model_unavailable", "model_not_found", "model", True
-    if isinstance(exc, TimeoutError):
-        return "timeout", "timeout", "execution", True
-    name = exc.__class__.__name__.lower()
-    text = str(exc).lower()
-    if "cancelled" in name:
-        return "cancelled", "cancelled", "execution", True
-    if "timeout" in name or "timed out" in text:
-        return "timeout", "timeout", "execution", True
-    if "connection refused" in text or "failed to establish" in text:
-        return "model_unavailable", "model_unavailable", "model", True
-    if "model" in text and ("not found" in text or "does not exist" in text):
-        return "model_unavailable", "model_not_found", "model", True
-    if "cannot_plan" in text:
-        return "cannot_plan", "cannot_plan", "planning", False
-    return "execution_failed", "execution_failed", "execution", True
+        for item in chain:
+            if isinstance(item, requests.exceptions.Timeout):
+                return "timeout", "model_timeout", "model", True, type(item).__name__
+            if isinstance(item, requests.exceptions.ConnectionError):
+                return (
+                    "model_unavailable",
+                    "model_unavailable",
+                    "model",
+                    True,
+                    type(item).__name__,
+                )
+            if isinstance(item, requests.exceptions.HTTPError):
+                text = str(item).lower()
+                if "404" in text or "not found" in text:
+                    return (
+                        "model_unavailable",
+                        "model_not_found",
+                        "model",
+                        True,
+                        type(item).__name__,
+                    )
+    for item in chain:
+        if isinstance(item, TimeoutError):
+            return "timeout", "timeout", "execution", True, type(item).__name__
+        name = item.__class__.__name__.lower()
+        text = str(item).lower()
+        if "cancelled" in name:
+            return "cancelled", "cancelled", "execution", True, type(item).__name__
+        if "timeout" in name or "timed out" in text:
+            return "timeout", "timeout", "execution", True, type(item).__name__
+        if "connection refused" in text or "failed to establish" in text:
+            return (
+                "model_unavailable",
+                "model_unavailable",
+                "model",
+                True,
+                type(item).__name__,
+            )
+        if "model" in text and ("not found" in text or "does not exist" in text):
+            return "model_unavailable", "model_not_found", "model", True, type(item).__name__
+        if "cannot_plan" in text:
+            return "cannot_plan", "cannot_plan", "planning", False, type(item).__name__
+    return "execution_failed", "execution_failed", "execution", True, type(exc).__name__

@@ -10,7 +10,7 @@ from typing import Any
 
 import pandas as pd
 
-from core.constants import CHART_MAX_CATEGORIES, CHARTS_DIR as _CHARTS_DIR
+from core.constants import CHART_MAX_CATEGORIES, active_charts_dir
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp"}
 _CONTEXT_LABEL_SEP = " · "
@@ -21,8 +21,9 @@ _DATA_URI_RE = re.compile(
 
 
 def charts_dir() -> Path:
-    _CHARTS_DIR.mkdir(parents=True, exist_ok=True)
-    return _CHARTS_DIR
+    path = active_charts_dir()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def materialize_chart(value: Any) -> str | None:

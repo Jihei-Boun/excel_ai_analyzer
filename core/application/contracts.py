@@ -164,16 +164,37 @@ class WarningItem:
         return {"code": self.code, "message": self.message, "stage": self.stage}
 
 
+STRUCTURAL_VALIDATION_STATES = frozenset({"not_run", "passed", "failed"})
+STRUCTURAL_VALIDATION_SCOPE = "integration_result_structure"
+
+
+def structural_validation_info(state: str) -> dict[str, Any]:
+    """수행 여부를 구분하는 선택 정보. 의미 정확성을 보증하지 않는다."""
+    if state not in STRUCTURAL_VALIDATION_STATES:
+        state = "not_run"
+    return {
+        "structural": {
+            "state": state,
+            "scope": STRUCTURAL_VALIDATION_SCOPE,
+            "covers_semantic_correctness": False,
+        }
+    }
+
+
 @dataclass
 class SafetyInfo:
     validation_status: str
     unsafe_output_blocked: bool = False
+    validation: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "validation_status": self.validation_status,
             "unsafe_output_blocked": bool(self.unsafe_output_blocked),
         }
+        if self.validation is not None:
+            payload["validation"] = self.validation
+        return payload
 
 
 @dataclass
@@ -182,14 +203,18 @@ class ErrorInfo:
     message: str
     stage: str
     retryable: bool = False
+    exception_type: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "code": self.code,
             "message": self.message,
             "stage": self.stage,
             "retryable": bool(self.retryable),
         }
+        if self.exception_type:
+            payload["exception_type"] = self.exception_type
+        return payload
 
 
 @dataclass
@@ -255,9 +280,16 @@ def error_response(
     safety: SafetyInfo | None = None,
     data: dict[str, Any] | None = None,
     artifacts: list[Artifact] | None = None,
+    exception_type: str | None = None,
 ) -> AnalyzeResponse:
     if status not in SUPPORTED_STATUSES:
         status = "execution_failed"
+    safety = safety or SafetyInfo(
+        validation_status="not_applicable",
+        unsafe_output_blocked=False,
+    )
+    if safety.validation is None:
+        safety.validation = structural_validation_info("not_run")
     return AnalyzeResponse(
         contract_version=CONTRACT_VERSION,
         request_id=str(request_id or ""),
@@ -266,13 +298,13 @@ def error_response(
         data=data or empty_result_data(),
         artifacts=list(artifacts or ()),
         warnings=list(warnings or ()),
-        safety=safety
-        or SafetyInfo(validation_status="not_applicable", unsafe_output_blocked=False),
+        safety=safety,
         timing=TimingInfo(elapsed_ms=elapsed_ms),
         error=ErrorInfo(
             code=code,
             message=message,
             stage=stage,
             retryable=retryable,
+            exception_type=exception_type,
         ),
     )

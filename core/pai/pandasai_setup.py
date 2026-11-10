@@ -63,12 +63,12 @@ def create_llm(base_url: str, model: str) -> Any:
 
 
 def _pandasai_config(base_url: str, model: str) -> dict[str, Any]:
-    _CHARTS_DIR.mkdir(parents=True, exist_ok=True)
+    chart_path = charts_dir()
     return {
         "llm": create_llm(base_url, model),
         "enable_cache": False,
         "save_charts": True,
-        "save_charts_path": str(_CHARTS_DIR),
+        "save_charts_path": str(chart_path),
         "open_charts": False,
         "save_logs": False,
         "verbose": False,
