@@ -323,10 +323,19 @@ def test_two_processes_serialize_and_lock_releases_on_death(tmp_path: Path) -> N
         "sys.stdout.write(json.dumps({'code': code, 'status': response['status']}))\n",
         encoding="utf-8",
     )
+    # The first job holds the lock until the test releases it, so the second
+    # job's "busy" result does not depend on how fast the machine starts it.
+    release = tmp_path / "release-first"
+    hold_lock = (
+        "import os\n"
+        "deadline=time.monotonic()+8\n"
+        f"while not os.path.exists({str(release)!r}) and time.monotonic()<deadline:\n"
+        "    time.sleep(0.05)\n"
+    )
     slow_script = (
         "import json,sys,time\n"
         "req=json.load(sys.stdin)\n"
-        "time.sleep(1.2)\n"
+        + hold_lock +
         "body={'contract_version':'1.0','request_id':req['request_id'],'status':'success','text':'slow',"
         "'data':{'shape':[0,0],'columns':[],'preview_records':[]},'artifacts':[],'warnings':[],"
         "'safety':{'validation_status':'passed','unsafe_output_blocked':False,"
@@ -334,7 +343,7 @@ def test_two_processes_serialize_and_lock_releases_on_death(tmp_path: Path) -> N
         "'timing':{'elapsed_ms':1}}\n"
         "print(json.dumps(body))\n"
     )
-    fast_script = slow_script.replace("time.sleep(1.2)\n", "")
+    fast_script = slow_script.replace(hold_lock, "")
     payload_a = json.dumps(_request(sales, request_id="lock-a"))
     payload_b = json.dumps(_request(sales, request_id="lock-b"))
     first = subprocess.Popen(
@@ -355,6 +364,7 @@ def test_two_processes_serialize_and_lock_releases_on_death(tmp_path: Path) -> N
         text=True,
     )
     out_b, err_b = second.communicate(timeout=10)
+    release.write_text("", encoding="utf-8")
     out_a, err_a = first.communicate(timeout=10)
     assert second.returncode == 0, err_b
     parsed_b = json.loads(out_b)
