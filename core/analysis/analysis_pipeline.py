@@ -11,7 +11,11 @@ import pandas as pd
 
 from core.analysis.analysis_executor import execute_analysis_plan
 from core.analysis.analysis_interpret import interpret_analysis_result
-from core.analysis.analysis_plan_sanitize import percent_column_labels, prefer_percent_for_rate
+from core.analysis.analysis_plan_sanitize import (
+    add_ratio_from_prompt,
+    percent_column_labels,
+    prefer_percent_for_rate,
+)
 from core.analysis.ops_reshape import transpose_table
 from core.analysis.analysis_plan_builder import build_analysis_plan
 from core.analysis.analysis_plan_types import AnalysisPlan
@@ -179,6 +183,7 @@ def try_analysis_pipeline(
             )
             return RetryAttempt(ok=False, errors=[f"plan_build: {exc}"])
 
+        plan = add_ratio_from_prompt(plan, prompt)
         plan = prefer_percent_for_rate(plan, prompt)
         plan_dict = plan.to_dict()
         signature = normalize_plan_signature(plan_dict)

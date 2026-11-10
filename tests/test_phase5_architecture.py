@@ -377,3 +377,14 @@ def test_pipeline_success_with_correct_sales_plan() -> None:
     assert result is not None
     assert result.meta.get("aggregation", {}).get("operation") == "analysis_plan"
     assert len(result.dataframe) >= 1
+
+
+def test_legacy_groupby_declines_rate_requests() -> None:
+    """합계만 만드는 fallback이 비율 열 없이 성공을 내지 않게 한다."""
+    df = _budget()
+    for prompt in (
+        "비목분류별 실행예산 합계 대비 집행계 합계 집행률을 구해줘",
+        "비목분류별 집행률을 보여줘",
+        "비목분류별 계획예산 대비 집행계 비율",
+    ):
+        assert try_legacy_simple_groupby_fallback(df, prompt, profile_name="budget") is None
