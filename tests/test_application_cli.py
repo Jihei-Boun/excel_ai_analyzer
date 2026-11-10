@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from core.application.contracts import CLI_EXIT_CODES
 from tests.application_support import base_request, write_table
@@ -78,3 +81,46 @@ def test_cli_invalid_request_exit_code(tmp_path: Path) -> None:
     if result.stderr:
         json.loads(result.stdout)  # stdout still exclusive JSON
         assert result.stdout.strip() != result.stderr.strip()
+
+
+def test_cli_closed_port_integrate_exit_code(tmp_path: Path) -> None:
+    left = write_table(tmp_path / "customers.xlsx", {"고객ID": ["C1"], "매출": [10]})
+    right = write_table(tmp_path / "grades.xlsx", {"고객ID": ["C1"], "등급": ["A"]})
+    payload = base_request(
+        tmp_path,
+        paths=[left, right],
+        prompt="선택한 파일들을 통합해줘",
+        timeout_seconds=5,
+        extra={"model": {"base_url": "http://127.0.0.1:9", "name": "qwen2.5:7b"}},
+    )
+    result = _run_cli(json.dumps(payload))
+    parsed = json.loads(result.stdout)
+    assert parsed["status"] == "model_unavailable"
+    assert parsed["error"]["code"] == "model_unavailable"
+    assert parsed["error"]["exception_type"] == "ConnectionError"
+    assert parsed["artifacts"] == []
+    assert result.returncode == CLI_EXIT_CODES["model_unavailable"]
+    assert result.returncode != 0
+
+
+def test_cli_generic_integrate_exception_exit_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("integrate stage failed")
+
+    monkeypatch.setattr("core.routing.route_multi.try_integrate_pipeline", boom)
+    left = write_table(tmp_path / "left.xlsx", {"항목": ["A"], "값": [1]})
+    right = write_table(tmp_path / "right.xlsx", {"항목": ["B"], "값": [2]})
+    payload = base_request(tmp_path, paths=[left, right], prompt="선택한 파일들을 통합해줘")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    from core.application.cli import main
+
+    code = main()
+    parsed = json.loads(capsys.readouterr().out)
+    assert parsed["status"] == "execution_failed"
+    assert parsed["error"]["exception_type"] == "RuntimeError"
+    assert parsed["artifacts"] == []
+    assert code == CLI_EXIT_CODES["execution_failed"]

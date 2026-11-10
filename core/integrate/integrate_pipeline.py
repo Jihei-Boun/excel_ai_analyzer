@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable
 
 import pandas as pd
 
 from core.constants import MERGES_DIR
 from core.io.export_utils import export_sheets_xlsx, sheets_to_xlsx_bytes
+
+
+def _export_merges_dir() -> Path:
+    """래퍼가 환경 변수를 넣은 프로세스에서만 요청별 경로를 쓴다."""
+    override = os.environ.get("EXCEL_ANALYZER_MERGES_DIR", "").strip()
+    if override:
+        return Path(override)
+    return MERGES_DIR
 from core.llm_client import chat_json
 from core.integrate.plan_builder import build_execution_plan
 from core.integrate.plan_engine import execute_plan
@@ -177,7 +187,7 @@ def run_integrate_pipeline(
         saved = export_sheets_xlsx(
             last_exec["sheets"],
             filename=f"integrated_{stamp}.xlsx",
-            directory=MERGES_DIR,
+            directory=_export_merges_dir(),
         )
         workbook_path = str(saved)
     elif last_validation.ok:

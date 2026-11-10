@@ -1,0 +1,72 @@
+{
+  "file": "cells.xlsx",
+  "sha256": "587a43b518f4d3de9e85cff2af8252abf049627697cd8f600843b7951b6022e7",
+  "sheet_name": "Data",
+  "sheet_index": 0,
+  "cells": {
+    "B2": {
+      "value": 10,
+      "value_type": "number",
+      "formula": null,
+      "cached_value": null,
+      "cached_value_state": "not_applicable",
+      "merge": null
+    },
+    "A4": {
+      "value": "기준",
+      "value_type": "string",
+      "formula": null,
+      "cached_value": null,
+      "cached_value_state": "not_applicable",
+      "merge": {
+        "role": "anchor",
+        "anchor": "A4",
+        "range": "A4:B4"
+      }
+    },
+    "B4": {
+      "value": null,
+      "value_type": "empty",
+      "formula": null,
+      "cached_value": null,
+      "cached_value_state": "not_applicable",
+      "merge": {
+        "role": "covered",
+        "anchor": "A4",
+        "range": "A4:B4"
+      }
+    },
+    "C4": {
+      "value": null,
+      "value_type": "empty",
+      "formula": null,
+      "cached_value": null,
+      "cached_value_state": "not_applicable",
+      "merge": null
+    },
+    "A5": {
+      "value": null,
+      "value_type": "formula",
+      "formula": "=1-1",
+      "cached_value": 0,
+      "cached_value_state": "stored",
+      "merge": null
+    },
+    "B5": {
+      "value": null,
+      "value_type": "formula",
+      "formula": "=2+2",
+      "cached_value": null,
+      "cached_value_state": "absent",
+      "merge": null
+    },
+    "C5": {
+      "value": null,
+      "value_type": "empty",
+      "formula": null,
+      "cached_value": null,
+      "cached_value_state": "not_applicable",
+      "merge": null
+    }
+  }
+}

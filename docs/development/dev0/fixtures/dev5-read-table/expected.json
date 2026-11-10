@@ -1,0 +1,402 @@
+{
+  "file": "tables.xlsx",
+  "sha256": "51875f5543a4045b8c5c9c583cc4f50303a390e01c485a077fd769881cae4a46",
+  "cases": {
+    "codes": {
+      "sheet": "Codes",
+      "sheet_index": 0,
+      "address": "A3:C4",
+      "header": "3",
+      "header_rows": [
+        3
+      ],
+      "columns": [
+        {
+          "source_column": "A",
+          "key": "이름",
+          "display_name": "이름"
+        },
+        {
+          "source_column": "B",
+          "key": "코드",
+          "display_name": "코드"
+        },
+        {
+          "source_column": "C",
+          "key": "수량",
+          "display_name": "수량"
+        }
+      ],
+      "headers": {
+        "A3": {
+          "value": "이름",
+          "value_type": "string",
+          "merge": null
+        },
+        "B3": {
+          "value": "코드",
+          "value_type": "string",
+          "merge": null
+        },
+        "C3": {
+          "value": "수량",
+          "value_type": "string",
+          "merge": null
+        }
+      },
+      "rows": [
+        {
+          "source_row": 4,
+          "cells": {
+            "A4": {
+              "value": "가",
+              "value_type": "string",
+              "number_format": "General",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            },
+            "B4": {
+              "value": "00123",
+              "value_type": "string",
+              "number_format": "General",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            },
+            "C4": {
+              "value": 123,
+              "value_type": "number",
+              "number_format": "00000",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            }
+          }
+        }
+      ]
+    },
+    "merge": {
+      "sheet": "Merge",
+      "sheet_index": 1,
+      "address": "A3:F6",
+      "header": "3,4",
+      "header_rows": [
+        3,
+        4
+      ],
+      "columns": [
+        {
+          "source_column": "A",
+          "key": "구분",
+          "display_name": "구분",
+          "display_derived": true
+        },
+        {
+          "source_column": "B",
+          "key": "매출_1월",
+          "display_name": "매출_1월"
+        },
+        {
+          "source_column": "C",
+          "key": "column_C",
+          "display_name": "매출_1월",
+          "display_derived": true
+        },
+        {
+          "source_column": "D",
+          "key": "column_D",
+          "display_name": null
+        },
+        {
+          "source_column": "E",
+          "key": "column_E",
+          "display_name": null
+        },
+        {
+          "source_column": "F",
+          "key": "column_F",
+          "display_name": null,
+          "display_derived": true
+        }
+      ],
+      "headers": {
+        "A3": {
+          "value": "구분",
+          "value_type": "string",
+          "merge": {
+            "role": "anchor",
+            "anchor": "A3",
+            "range": "A3:A4"
+          }
+        },
+        "A4": {
+          "value": null,
+          "value_type": "empty",
+          "merge": {
+            "role": "covered",
+            "anchor": "A3",
+            "range": "A3:A4"
+          }
+        },
+        "B3": {
+          "value": "매출",
+          "value_type": "string",
+          "merge": {
+            "role": "anchor",
+            "anchor": "B3",
+            "range": "B3:C3"
+          }
+        },
+        "B4": {
+          "value": "1월",
+          "value_type": "string",
+          "merge": null
+        },
+        "C3": {
+          "value": null,
+          "value_type": "empty",
+          "merge": {
+            "role": "covered",
+            "anchor": "B3",
+            "range": "B3:C3"
+          }
+        },
+        "C4": {
+          "value": "1월",
+          "value_type": "string",
+          "merge": null
+        },
+        "D3": {
+          "value": null,
+          "value_type": "empty",
+          "merge": null
+        },
+        "D4": {
+          "value": null,
+          "value_type": "empty",
+          "merge": null
+        },
+        "E3": {
+          "value": null,
+          "value_type": "empty",
+          "merge": {
+            "role": "anchor",
+            "anchor": "E3",
+            "range": "E3:F3"
+          }
+        },
+        "E4": {
+          "value": null,
+          "value_type": "empty",
+          "merge": null
+        },
+        "F3": {
+          "value": null,
+          "value_type": "empty",
+          "merge": {
+            "role": "covered",
+            "anchor": "E3",
+            "range": "E3:F3"
+          }
+        },
+        "F4": {
+          "value": null,
+          "value_type": "empty",
+          "merge": null
+        }
+      },
+      "rows": [
+        {
+          "source_row": 5,
+          "cells": {
+            "A5": {
+              "value": "사과",
+              "value_type": "string",
+              "number_format": "General",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            },
+            "B5": {
+              "value": 10,
+              "value_type": "number",
+              "number_format": "General",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            },
+            "C5": {
+              "value": null,
+              "value_type": "empty",
+              "number_format": "General",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            },
+            "D5": {
+              "value": null,
+              "value_type": "empty",
+              "number_format": "General",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            },
+            "E5": {
+              "value": null,
+              "value_type": "empty",
+              "number_format": "General",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            },
+            "F5": {
+              "value": null,
+              "value_type": "empty",
+              "number_format": "General",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            }
+          }
+        },
+        {
+          "source_row": 6,
+          "cells": {
+            "A6": {
+              "value": null,
+              "value_type": "empty",
+              "number_format": "General",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            },
+            "B6": {
+              "value": null,
+              "value_type": "empty",
+              "number_format": "General",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            },
+            "C6": {
+              "value": null,
+              "value_type": "empty",
+              "number_format": "General",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            },
+            "D6": {
+              "value": null,
+              "value_type": "empty",
+              "number_format": "General",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            },
+            "E6": {
+              "value": null,
+              "value_type": "empty",
+              "number_format": "General",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            },
+            "F6": {
+              "value": null,
+              "value_type": "empty",
+              "number_format": "General",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            }
+          }
+        }
+      ]
+    },
+    "plain": {
+      "sheet": "Plain",
+      "sheet_index": 2,
+      "address": "A1:B2",
+      "header": "none",
+      "header_rows": [],
+      "columns": [
+        {
+          "source_column": "A",
+          "key": "column_A",
+          "display_name": null
+        },
+        {
+          "source_column": "B",
+          "key": "column_B",
+          "display_name": null
+        }
+      ],
+      "headers": {},
+      "rows": [
+        {
+          "source_row": 1,
+          "cells": {
+            "A1": {
+              "value": 0,
+              "value_type": "number",
+              "number_format": "General",
+              "formula": "=1-1",
+              "cached_value": 0,
+              "cached_value_state": "stored"
+            },
+            "B1": {
+              "value": null,
+              "value_type": "formula",
+              "number_format": "General",
+              "formula": "=2+2",
+              "cached_value": null,
+              "cached_value_state": "absent"
+            }
+          }
+        },
+        {
+          "source_row": 2,
+          "cells": {
+            "A2": {
+              "value": "가",
+              "value_type": "string",
+              "number_format": "General",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            },
+            "B2": {
+              "value": 1,
+              "value_type": "number",
+              "number_format": "General",
+              "formula": null,
+              "cached_value": null,
+              "cached_value_state": "not_applicable"
+            }
+          }
+        }
+      ]
+    },
+    "invalid_header": {
+      "sheet": "Codes",
+      "address": "A3:C4",
+      "header": "2",
+      "code": "invalid_header",
+      "exit_code": 2
+    }
+  },
+  "cache_xml": {
+    "sheet": "Plain",
+    "stored": {
+      "A1": [
+        "1-1",
+        "0"
+      ]
+    },
+    "absent": {
+      "B1": "2+2"
+    }
+  }
+}

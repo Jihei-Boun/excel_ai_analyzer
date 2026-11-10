@@ -111,6 +111,10 @@ def test_structural_integration_success(tmp_path: Path, monkeypatch: pytest.Monk
     assert response["status"] == "success"
     assert response["data"]["operation_name"] == "structured_integrate"
     assert response["safety"]["validation_status"] == "passed"
+    structural = response["safety"]["validation"]["structural"]
+    assert structural["state"] == "passed"
+    assert structural["scope"] == "integration_result_structure"
+    assert structural["covers_semantic_correctness"] is False
     kinds = {item["kind"] for item in response["artifacts"]}
     assert "workbook" in kinds
     workbook_art = next(item for item in response["artifacts"] if item["kind"] == "workbook")
@@ -161,7 +165,9 @@ def test_structural_validation_failure_blocks_workbook(
     assert response["error"]["code"] == "structural_validation_failed"
     assert response["error"]["stage"] == "structural_validation"
     assert response["safety"]["validation_status"] == "failed"
+    assert response["safety"]["validation"]["structural"]["state"] == "failed"
     assert response["artifacts"] == []
+    assert not any(item["kind"] in {"table", "workbook"} for item in response["artifacts"])
     out_root = (tmp_path / "out").resolve()
     leaked_files = list(out_root.rglob("*")) if out_root.exists() else []
     assert not any(path.suffix.lower() == ".xlsx" for path in leaked_files if path.is_file())
@@ -197,3 +203,69 @@ def test_duplicate_display_name_keeps_stable_source_id(
     assert "file-2" in captured["labels"][1]
     assert payload["inputs"][0]["source_id"] == "file-1"
     assert payload["inputs"][1]["source_id"] == "file-2"
+
+
+def _integrate_payload(tmp_path: Path) -> dict:
+    left, right = _two_files(tmp_path)
+    return base_request(tmp_path, paths=[left, right], prompt="선택한 파일들을 통합해줘")
+
+
+def test_integrate_connection_error_is_not_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import requests
+
+    def boom(*_a, **_k):
+        raise requests.exceptions.ConnectionError("connection refused")
+
+    monkeypatch.setattr("core.routing.route_multi.try_integrate_pipeline", boom)
+    response = analyze_excel(_integrate_payload(tmp_path))
+    assert response["status"] == "model_unavailable"
+    assert response["error"]["code"] == "model_unavailable"
+    assert response["error"]["stage"] == "model"
+    assert response["error"]["retryable"] is True
+    assert response["error"]["exception_type"] == "ConnectionError"
+    assert response["artifacts"] == []
+    assert response["safety"]["validation_status"] == "not_applicable"
+    assert response["safety"]["validation"]["structural"]["state"] == "not_run"
+    assert "exception_type" not in response["safety"]
+
+
+def test_wrapped_connection_error_uses_cause(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import requests
+
+    def boom(*_a, **_k):
+        try:
+            raise requests.exceptions.ConnectionError("connection refused")
+        except requests.exceptions.ConnectionError as exc:
+            raise RuntimeError("pipeline wrapper") from exc
+
+    monkeypatch.setattr("core.routing.route_multi.try_integrate_pipeline", boom)
+    response = analyze_excel(_integrate_payload(tmp_path))
+    assert response["status"] == "model_unavailable"
+    assert response["error"]["exception_type"] == "ConnectionError"
+    assert response["error"]["stage"] == "model"
+    assert response["error"]["retryable"] is True
+    assert response["artifacts"] == []
+
+
+def test_generic_integrate_exception_is_execution_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*_a, **_k):
+        raise RuntimeError("integrate stage failed")
+
+    monkeypatch.setattr("core.routing.route_multi.try_integrate_pipeline", boom)
+    response = analyze_excel(_integrate_payload(tmp_path))
+    assert response["status"] == "execution_failed"
+    assert response["error"]["code"] == "execution_failed"
+    assert response["error"]["stage"] == "execution"
+    assert response["error"]["exception_type"] == "RuntimeError"
+    assert response["artifacts"] == []
+    assert not any(item["kind"] in {"table", "workbook"} for item in response["artifacts"])
+    assert response["safety"]["validation"]["structural"]["state"] == "not_run"

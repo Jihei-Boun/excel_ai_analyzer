@@ -24,3 +24,4 @@ class SingleRouteOutcome:
     operation_name: str | None = None
     reset_filter: bool = False
     filter_auto_reset: bool = False
+    structural_validation: str | None = None

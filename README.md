@@ -102,6 +102,7 @@ excel_ai_analyzer/
 │   ├── pai/               # PandasAI / Ollama 어댑터 (대체 경로)
 │   ├── application/       # 화면 없이 호출하는 headless API · CLI
 │   └── common/            # 재시도 등 공통 헬퍼
+├── hermes/excel-analyzer/ # Hermes Agent skill (지침·연결 스크립트·설치 스크립트)
 ├── ui/                    # 업로드·미리보기·채팅·사이드바 화면
 ├── profiles/              # 표 종류별 규칙 YAML (generic, budget, sales, inventory …)
 ├── tests/                 # pytest 테스트
@@ -152,6 +153,14 @@ STREAMLIT_PORT=8503 ./run.sh   # 다른 포트로 실행
 python -m core.application.cli < request.json
 ```
 
+### 다른 에이전트에서 쓰기 (Hermes Agent)
+
+[Hermes Agent](https://hermes-agent.nousresearch.com/docs)의 skill로 이 분석기를 부를 수 있습니다. 에이전트는 무엇을 물을지만 정하고, 계산은 이 분석기가 합니다.
+현재는 파일 요약·스키마·품질 진단과 셀·표 읽기를 지원합니다. 자유 질문 분석은 다음 작업입니다.
+
+- 구조와 요청·응답 형식: [`docs/development/hermes.md`](docs/development/hermes.md)
+- 설치와 실행: [`hermes/excel-analyzer/README.md`](hermes/excel-analyzer/README.md)
+
 ### 테스트
 
 ```bash
@@ -173,9 +182,11 @@ pytest
 - [x] 여러 파일 비교 병합 및 xlsx export
 - [x] 표 종류별 규칙을 YAML 프로필로 분리, 업로드 기반 프로필 자동 추천
 - [x] 화면 없이 호출하는 headless API · CLI
+- [x] Hermes Agent skill 연결 (요약·스키마·품질, 셀·표 읽기)
 
 ### 🚀 다음 보완
 
+- [ ] Hermes skill에 자유 질문 분석 추가
 - [ ] 그룹별 비율(예: 비목분류별 집행률) 지원
 - [ ] 예실대비표가 아닌 표에서도 소계·합계 행 구분 정확도 높이기
 - [ ] 결과 해석 문장 다듬기
