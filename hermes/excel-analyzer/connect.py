@@ -24,6 +24,8 @@ TASKS = {
     "schema": "컬럼 목록을 보여줘",
     "quality": "이 파일의 데이터 품질을 분석해줘",
 }
+ANALYZE_TASK = "analyze"
+QUESTION_MAX_CHARS = 500
 READ_TASK = "read_range"
 READ_KEYS = ("values_from", "source", "requested", "returned", "cells")
 TABLE_TASK = "read_table"
@@ -52,13 +54,17 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(None, exc.code, exc.message, request_id="", hidden=_argv_hidden(raw))
     task = str(args.task)
     hidden = _read_hidden(args.file) if task in READ_TASKS else None
-    if task not in TASKS and task not in READ_TASKS:
+    if task not in TASKS and task not in READ_TASKS and task != ANALYZE_TASK:
         return _fail(
             task,
             "unsupported_task",
-            "지원 작업은 summary, schema, quality, read_range, read_table뿐이다.",
+            "지원 작업은 summary, schema, quality, analyze, read_range, read_table뿐이다.",
             request_id=args.request_id,
         )
+    if task == ANALYZE_TASK and (args.question is None or not str(args.question).strip()):
+        return _fail(task, "missing_question", "analyze에는 --question이 필요하다.", request_id=args.request_id)
+    if task != ANALYZE_TASK and args.question is not None:
+        return _fail(task, "forbidden_argument", "--question은 analyze에만 쓴다.", request_id=args.request_id, hidden=hidden)
     if task in READ_TASKS and (args.address is None or not str(args.address).strip()):
         return _fail(task, "missing_address", f"{task}에는 --address가 필요하다.", request_id=args.request_id, hidden=hidden)
     if task not in READ_TASKS and args.address is not None:
@@ -67,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(task, "forbidden_argument", "--header는 read_table에만 쓴다.", request_id=args.request_id, hidden=hidden)
     try:
         header = _header(args.header) if task == TABLE_TASK else None
+        question = _question(args.question) if task == ANALYZE_TASK else None
         request_id = _request_id(args.request_id)
         source = _absolute_file(args.file)
         sheet = _sheet(args.sheet)
@@ -89,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
         payload = {
             "contract_version": "1.0",
             "request_id": request_id,
-            "user_prompt": TASKS[task],
+            "user_prompt": question if task == ANALYZE_TASK else TASKS[task],
             "inputs": inputs,
             "profile_name": "generic",
             "analysis_mode": "single",
@@ -126,6 +133,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--request-id", required=True)
     parser.add_argument("--address")
     parser.add_argument("--header")
+    parser.add_argument("--question")
     return parser
 
 
@@ -140,6 +148,16 @@ def _request_id(value: str) -> str:
     text = str(value).strip()
     if not text or len(text) > 128 or "\x00" in text:
         raise _BridgeError("invalid_request_id", "request_id는 1자 이상 128자 이하여야 한다.")
+    return text
+
+
+def _question(value: str) -> str:
+    """사용자 질문은 그대로 엔진에 넘긴다. 길이와 제어 문자만 막는다."""
+    text = str(value).strip()
+    if len(text) > QUESTION_MAX_CHARS:
+        raise _BridgeError("question_too_long", f"질문은 {QUESTION_MAX_CHARS}자 이하여야 한다.")
+    if any(ord(ch) < 32 and ch not in "\t\n" for ch in text):
+        raise _BridgeError("invalid_question", "질문에 제어 문자가 들어 있다.")
     return text
 
 
@@ -222,8 +240,22 @@ def _emit_wrapper(task: str, request_id: str, returncode: int, stdout: bytes) ->
         body["text"] = None
         body["data"] = None
         body["artifacts"] = []
+    if task == ANALYZE_TASK:
+        warnings = _warnings(response.get("warnings")) if status == "success" else []
+        body["warnings"] = warnings
+        body["fallback_unverified"] = any(w["code"] == "unverified_fallback" for w in warnings)
     _write(body)
     return returncode
+
+
+def _warnings(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        {"code": item["code"], "message": item["message"]}
+        for item in value
+        if isinstance(item, dict) and isinstance(item.get("code"), str) and isinstance(item.get("message"), str)
+    ]
 
 
 def _public(task: str, request_id: str, response: dict[str, Any], returncode: int, *, status: str) -> dict[str, Any]:

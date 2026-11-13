@@ -958,7 +958,7 @@ def test_analysis_tasks_send_unchanged_request(tmp_path: Path, task: str) -> Non
 
 
 SKILL = ROOT / "hermes" / "excel-analyzer" / "SKILL.md"
-_SKILL_VERSION_LINE = "version: 1.2.0"
+_SKILL_VERSION_LINE = "version: 1.3.0"
 _COVERED_SENTENCES = (
     "`merge.role`이 `covered`인 칸은 병합에 덮인 칸이다.",
     "그 칸의 `value`는 null이고 `value_type`은 `empty`다.",

@@ -12,7 +12,7 @@
   "max_total_bytes": 5000000,
   "max_request_bytes": 1000000,
   "max_timeout_seconds": 120,
-  "default_timeout_seconds": 60,
+  "default_timeout_seconds": 120,
   "grace_seconds": 2,
   "lock_wait_seconds": 5,
   "max_stdout_bytes": 1000000,
