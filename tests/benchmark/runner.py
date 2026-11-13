@@ -10,6 +10,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import traceback
 from pathlib import Path
@@ -27,7 +28,14 @@ from tests.benchmark.evaluate import (
     observe_route,
 )
 from tests.benchmark.generate_datasets import ensure_datasets
-from tests.benchmark.metrics import CaseResult, LevelScores, compare_summaries, save_summary, summarize_results
+from tests.benchmark.metrics import (
+    CaseResult,
+    LevelScores,
+    classify_outcome,
+    compare_summaries,
+    save_summary,
+    summarize_results,
+)
 from tests.benchmark.schema import BenchmarkCase, load_all_cases
 
 
@@ -228,7 +236,16 @@ def run_case_deterministic(
         failure_category = "safe_failure_ok"
         ok = True
 
+    outcome = classify_outcome(
+        crashed=crashed,
+        expect_safe_failure=case.expected.expect_safe_failure,
+        ok=ok,
+        exec_ok=exec_ok,
+        has_result=isinstance(result_df, pd.DataFrame) and not result_df.empty,
+        route_observed=route_observed,
+    )
     return CaseResult(
+        outcome=outcome,
         case_id=case.id,
         domain=case.domain,
         profile=case.profile,
@@ -385,7 +402,16 @@ def run_case_live(
     if (legacy_fallback or pandasai_fallback) and case.expected.route == "analysis_plan" and not ok:
         failure_category = "fallback"
 
+    outcome = classify_outcome(
+        crashed=crashed,
+        expect_safe_failure=case.expected.expect_safe_failure,
+        ok=ok,
+        exec_ok=exec_ok,
+        has_result=isinstance(result_df, pd.DataFrame) and not result_df.empty,
+        route_observed=route_observed,
+    )
     return CaseResult(
+        outcome=outcome,
         case_id=case.id,
         domain=case.domain,
         profile=case.profile,
@@ -417,10 +443,14 @@ def run_suite(
     model: str = "qwen2.5:14b",
     datasets_dir: Path | None = None,
     save: bool = True,
+    profile_override: str | None = None,
 ) -> dict[str, Any]:
     datasets_dir = datasets_dir or DATASETS_DIR
     ensure_datasets(datasets_dir, force=False)
     cases = load_all_cases(domains=domains)
+    if profile_override:
+        # 손으로 쓴 도메인 프로필 없이 얼마나 되는지 재려고 모든 사례의 프로필을 바꾼다.
+        cases = [dataclasses.replace(case, profile=profile_override) for case in cases]
     results: list[CaseResult] = []
     for case in cases:
         if live:
@@ -443,6 +473,7 @@ def run_suite(
         results,
         model=model if live else "fixed_plan",
         mode="live" if live else "deterministic",
+        profile_override=profile_override,
     )
     if save:
         path = save_summary(summary, RESULTS_DIR)
@@ -459,6 +490,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default="qwen2.5:7b")
     parser.add_argument("--compare", default=None, help="Compare against a previous summary JSON")
     parser.add_argument("--no-save", action="store_true")
+    parser.add_argument("--profile", default=None, help="Run every case with this profile (e.g. generic)")
     args = parser.parse_args(argv)
 
     if args.compare and not (args.deterministic or args.live):
@@ -481,6 +513,7 @@ def main(argv: list[str] | None = None) -> int:
         base_url=args.base_url,
         model=args.model,
         save=not args.no_save,
+        profile_override=args.profile,
     )
     overall = summary.get("overall") or {}
     print(
@@ -488,7 +521,9 @@ def main(argv: list[str] | None = None) -> int:
             {
                 "mode": summary.get("mode"),
                 "saved_to": summary.get("saved_to"),
+                "profile_override": summary.get("profile_override"),
                 "total_cases": summary.get("total_cases"),
+                "outcomes": overall.get("outcomes"),
                 "overall_ok_rate": overall.get("overall_ok_rate"),
                 "analysis_plan_direct_rate": overall.get("analysis_plan_direct_rate"),
                 "fallback_rate": overall.get("fallback_rate"),
