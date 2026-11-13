@@ -33,7 +33,7 @@ def test_analyze_sends_question_unchanged(tmp_path) -> None:
     )
     assert completed.returncode == 0, completed.stderr
     body = _single_json(completed.stdout)
-    assert set(body) == _ANALYSIS_PUBLIC_KEYS | {"warnings", "fallback_unverified", "question_sent", "answer_table"}
+    assert set(body) == _ANALYSIS_PUBLIC_KEYS | {"warnings", "fallback_unverified", "question_sent", "answer_table", "answer"}
     assert body["question_sent"] == question.strip()
     assert body["answer_table"] is None  # 가짜 래퍼는 빈 표를 돌려준다
     assert body["task"] == "analyze"
@@ -109,6 +109,8 @@ def test_unverified_fallback_is_flagged(monkeypatch, tmp_path) -> None:
     assert body["fallback_unverified"] is True
     assert body["warnings"] == [{"code": "unverified_fallback", "message": "not validated"}]
     assert body["data"]["columns"] == ["부서", "집행률"]
+    assert body["answer"].startswith("이 결과는 검증 단계를 거치지 않았으니 원본과 대조해 확인해 주세요.")
+    assert body["answer_table"] in body["answer"]
 
 
 def test_cannot_plan_passes_clarification(monkeypatch, tmp_path) -> None:
@@ -131,6 +133,8 @@ def test_cannot_plan_passes_clarification(monkeypatch, tmp_path) -> None:
     assert body["warnings"] == [] and body["fallback_unverified"] is False
     assert body["answer_table"] is None
     assert body["question_sent"] == QUESTION
+    assert f"> {message}" in body["answer"]
+    assert "질문을 고쳐 다시 물어 주세요." in body["answer"]
 
 
 def test_skill_documents_analyze_rules() -> None:
@@ -143,6 +147,7 @@ def test_skill_documents_analyze_rules() -> None:
         "100을 다시 곱하지 않는다.",
         "`answer_table`을 한 글자도 바꾸지 않고 그대로 붙인다.",
         "`question_sent`는 분석기에 실제로 보낸 질문이다.",
+        "`answer` 전체를 한 글자도 바꾸지 않고 그대로 옮긴 것이다.",
     ):
         assert sentence in skill, sentence
 
@@ -176,6 +181,61 @@ def test_answer_table_formats_without_changing_values(monkeypatch, tmp_path) -> 
     ]
     # 원본 값은 data에 그대로 남는다.
     assert body["data"]["preview_records"][0]["예산"] == 1234500.0
+
+
+def _success(records, columns, shape=None) -> dict:
+    return {
+        "status": "success", "request_id": "p", "execution_id": "e", "text": "결과",
+        "data": {"shape": shape or [len(records), len(columns)], "columns": columns, "preview_records": records},
+        "artifacts": [], "error": None, "structural_state": "passed", "warnings": [],
+    }
+
+
+def test_percent_values_always_show_two_decimals(monkeypatch, tmp_path) -> None:
+    _mock(
+        monkeypatch,
+        _success(
+            [{"부서": "영업", "집행률(%)": 0.38281234}, {"부서": "연구", "집행률(%)": 20.0}],
+            ["부서", "집행률(%)"],
+        ),
+        0,
+    )
+    _, body = _invoke(monkeypatch, tmp_path, _args("p"))
+    assert body["answer_table"].splitlines()[2:] == ["| 영업 | 0.38 |", "| 연구 | 20.00 |"]
+
+
+def test_percent_row_in_transposed_table_shows_two_decimals(monkeypatch, tmp_path) -> None:
+    _mock(
+        monkeypatch,
+        _success(
+            [{"항목": "예산", "영업": 1500.0, "연구": 0.5}, {"항목": "집행률(%)", "영업": 0.38281234, "연구": 20.0}],
+            ["항목", "영업", "연구"],
+        ),
+        0,
+    )
+    _, body = _invoke(monkeypatch, tmp_path, _args("p"))
+    assert body["answer_table"].splitlines()[2:] == ["| 예산 | 1,500 | 0.5000 |", "| 집행률(%) | 0.38 | 20.00 |"]
+
+
+def test_answer_wraps_table_in_korean(monkeypatch, tmp_path) -> None:
+    _mock(monkeypatch, _success([{"합계": 4321.0}], ["합계"]), 0)
+    _, body = _invoke(monkeypatch, tmp_path, _args("p"))
+    assert body["answer"] == "분석 결과입니다.\n\n| 합계 |\n| --- |\n| 4,321 |"
+
+
+def test_answer_is_none_for_other_failures(monkeypatch, tmp_path) -> None:
+    _mock(
+        monkeypatch,
+        {
+            "status": "execution_failed", "request_id": "f", "execution_id": "e", "text": None,
+            "data": None, "artifacts": [], "structural_state": "not_run",
+            "error": {"code": "x", "message": "실패"}, "warnings": [],
+        },
+        1,
+    )
+    code, body = _invoke(monkeypatch, tmp_path, _args("f"))
+    assert code == 1
+    assert body["answer"] is None
 
 
 def _with_profile(config, value) -> None:

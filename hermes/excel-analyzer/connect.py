@@ -254,6 +254,7 @@ def _emit_wrapper(
         body["warnings"] = warnings
         body["fallback_unverified"] = any(w["code"] == "unverified_fallback" for w in warnings)
         body["answer_table"] = _answer_table(body["data"]) if status == "success" else None
+        body["answer"] = _answer(str(status), body)
     _write(body)
     return returncode
 
@@ -271,9 +272,20 @@ def _answer_table(data: dict[str, Any] | None) -> str | None:
         "| " + " | ".join(_cell(name) for name in names) + " |",
         "| " + " | ".join("---" for _ in names) + " |",
     ]
+    percent_columns = {name for name in names if _PERCENT_MARK in name}
     for record in records:
-        if isinstance(record, dict):
-            lines.append("| " + " | ".join(_cell(record.get(name)) for name in names) + " |")
+        if not isinstance(record, dict):
+            continue
+        # 행·열을 바꾼 표는 첫 열의 행 이름에 "(%)"가 붙는다.
+        label = record.get(names[0])
+        percent_row = isinstance(label, str) and _PERCENT_MARK in label
+        lines.append(
+            "| "
+            + " | ".join(
+                _cell(record.get(name), percent=percent_row or name in percent_columns) for name in names
+            )
+            + " |"
+        )
     shape = data.get("shape")
     total = shape[0] if isinstance(shape, list) and shape and isinstance(shape[0], int) else None
     if total is not None and total > len(records):
@@ -282,11 +294,42 @@ def _answer_table(data: dict[str, Any] | None) -> str | None:
     return "\n".join(lines)
 
 
-def _cell(value: Any) -> str:
+_PERCENT_MARK = "(%)"
+_UNVERIFIED_NOTICE = "이 결과는 검증 단계를 거치지 않았으니 원본과 대조해 확인해 주세요."
+
+
+def _answer(status: str, body: dict[str, Any]) -> str | None:
+    """에이전트가 그대로 전할 한국어 답변 본문. 성공과 cannot_plan만 만든다."""
+    if status == "cannot_plan":
+        error = body.get("error")
+        message = error.get("message") if isinstance(error, dict) else None
+        if not isinstance(message, str) or not message.strip():
+            return None
+        return f"분석기가 질문을 계산 방법으로 바꾸지 못했습니다.\n\n> {message.strip()}\n\n질문을 고쳐 다시 물어 주세요."
+    if status != "success":
+        return None
+    table = body.get("answer_table")
+    if not table:
+        return "분석은 끝났지만 결과 표가 비어 있습니다."
+    parts = []
+    if body.get("fallback_unverified"):
+        parts.append(_UNVERIFIED_NOTICE)
+    parts.append("분석 결과입니다.")
+    parts.append(table)
+    if _PERCENT_MARK in table:
+        parts.append("`(%)`가 붙은 값은 백분율입니다.")
+    return "\n\n".join(parts)
+
+
+def _cell(value: Any, *, percent: bool = False) -> str:
     if value is None:
         return ""
     if isinstance(value, bool):
         text = str(value)
+    elif isinstance(value, (int, float)) and percent:
+        if value != value:  # NaN
+            return ""
+        text = f"{value:,.2f}"
     elif isinstance(value, int):
         text = f"{value:,}"
     elif isinstance(value, float):
