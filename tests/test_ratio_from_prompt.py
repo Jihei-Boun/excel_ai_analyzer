@@ -94,3 +94,67 @@ def test_existing_ratio_step_is_left_alone() -> None:
     before = [s.to_dict() for s in plan.steps]
     plan = _fix(plan, "부서별 예산 합계 대비 집행 합계 집행률")
     assert [s.to_dict() for s in plan.steps] == before
+
+
+def _run_pipeline(prompt: str, plans: list[dict]):
+    from core.analysis.analysis_pipeline import try_analysis_pipeline
+
+    calls: list[int] = []
+
+    def chat_json(*_a, **_k):
+        calls.append(1)
+        return plans[min(len(calls), len(plans)) - 1]
+
+    result = try_analysis_pipeline(
+        prompt,
+        _df(),
+        base_url="http://localhost:11434",
+        model="mock",
+        chat_json_fn=chat_json,
+        chat_text_fn=lambda *_a, **_k: "",
+        exhaust_meta={},
+        max_retries=3,
+    )
+    return result, len(calls)
+
+
+def test_pipeline_fills_rate_when_it_is_the_only_problem() -> None:
+    plan = {
+        "operation": "aggregate",
+        "group_by": ["부서"],
+        "metrics": [{"column": "예산_합계", "fn": "sum"}, {"column": "집행_합계", "fn": "sum"}],
+    }
+    result, calls = _run_pipeline("부서별 예산 합계 대비 집행 합계 집행률을 구해줘", [plan])
+    assert calls == 1
+    assert result is not None
+    assert "집행률(%)" in result.dataframe.columns
+
+
+def test_pipeline_keeps_feedback_when_plan_has_other_errors(monkeypatch) -> None:
+    """다른 오류도 있으면 고치지 않고 다시 계획하게 한다(예제 6 회귀)."""
+    import core.analysis.analysis_pipeline as pipeline_mod
+    from core.integrate.plan_types import ValidationIssue, ValidationReport
+
+    seen: list[list[str]] = []
+    orig = pipeline_mod.validate_analysis_plan
+
+    def with_extra_error(plan, df, **kwargs):
+        report = orig(plan, df, **kwargs)
+        codes = [i.code for i in report.errors]
+        seen.append(codes)
+        if len(seen) == 1:
+            return ValidationReport(
+                ok=False,
+                issues=[*report.issues, ValidationIssue("error", "other_problem", "x")],
+            )
+        return report
+
+    plan = {
+        "operation": "aggregate",
+        "group_by": ["부서"],
+        "metrics": [{"column": "예산_합계", "fn": "sum"}, {"column": "집행_합계", "fn": "sum"}],
+    }
+    monkeypatch.setattr(pipeline_mod, "validate_analysis_plan", with_extra_error)
+    _, calls = _run_pipeline("부서별 예산 합계 대비 집행 합계 집행률을 구해줘", [plan, plan])
+    assert seen[0] == ["missing_ratio_composition"]
+    assert calls >= 2  # 보정하지 않고 Planner에 다시 물었다

@@ -470,6 +470,14 @@ def _unique_frame_labels(loaded: list[_LoadedInput]) -> list[str]:
     return labels
 
 
+# 분석 계획이 실패해 답을 만들지 않은 경우. 성공이 아니라 cannot_plan으로 돌려준다.
+_CANNOT_PLAN_FALLBACKS = frozenset({"safe_plan_failure", "rate_needs_operands"})
+# 분석 계획 검증을 거치지 않은 결과. 성공이지만 검증 상태를 passed로 쓰지 않는다.
+_UNVERIFIED_FALLBACKS = frozenset(
+    {"pandasai_final_fallback", "simple_groupby_fallback", "retrieval_fallback"}
+)
+
+
 def _normalize_outcome(
     request: AnalyzeRequest,
     outcome: SingleRouteOutcome,
@@ -478,6 +486,27 @@ def _normalize_outcome(
     dest_dir: Path,
     elapsed_ms: int,
 ) -> AnalyzeResponse:
+    meta = outcome.meta if isinstance(outcome.meta, dict) else {}
+    fallback_reason = str(meta.get("fallback_reason") or "")
+    if fallback_reason in _CANNOT_PLAN_FALLBACKS:
+        return error_response(
+            request_id=request.request_id,
+            status="cannot_plan",
+            code=fallback_reason,
+            message=_public_error_message(str(outcome.reply or "")),
+            stage="planning",
+            retryable=False,
+            elapsed_ms=elapsed_ms,
+            text=str(outcome.reply or ""),
+            data=empty_result_data(route=route),
+            safety=SafetyInfo(
+                validation_status="not_applicable",
+                validation=structural_validation_info("not_run"),
+            ),
+        )
+    unverified = fallback_reason in _UNVERIFIED_FALLBACKS or (
+        outcome.operation_name == "PandasAI"
+    )
     structural_state = (
         outcome.structural_validation
         if outcome.structural_validation in {"passed", "failed"}
@@ -488,6 +517,17 @@ def _normalize_outcome(
     validation_failed = structural_state == "failed"
     unsafe_blocked = _looks_like_unsafe_block(outcome.reply)
     warnings = _warnings_from_outcome(outcome)
+    if unverified:
+        warnings.append(
+            WarningItem(
+                code="unverified_fallback",
+                message=(
+                    "The analysis plan was not validated; this result came from a "
+                    f"fallback path ({fallback_reason or 'PandasAI'}). Check it before use."
+                ),
+                stage="analysis",
+            )
+        )
     artifacts: list[Artifact] = []
 
     preview = dataframe_preview(outcome.dataframe, limit=PREVIEW_ROW_LIMIT)
@@ -516,7 +556,9 @@ def _normalize_outcome(
         write_manifest(dest_dir, artifacts)
 
     safety = SafetyInfo(
-        validation_status="failed" if validation_failed else "passed",
+        validation_status=(
+            "failed" if validation_failed else "not_run" if unverified else "passed"
+        ),
         unsafe_output_blocked=unsafe_blocked,
         validation=structural_validation_info(structural_state),
     )

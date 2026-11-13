@@ -195,6 +195,9 @@ def _run_analysis_impl(
         safe = _maybe_safe_plan_failure(pipeline_exhaust, prompt)
         if safe is not None:
             return safe
+        unclear_rate = _maybe_rate_needs_operands(pipeline_exhaust)
+        if unclear_rate is not None:
+            return unclear_rate
 
     # ------------------------------------------------------------------
     # Lightweight deterministic retrieval (exact value / list)
@@ -369,6 +372,35 @@ def _maybe_safe_plan_failure(
         {
             "aggregation": {"operation": "safe_failure"},
             "fallback_reason": "safe_plan_failure",
+            "prior_pipeline_reason": pipeline_exhaust.get("fallback_reason"),
+            "retry_log": retry_log,
+            "source": "analysis_plan_safe_failure",
+        },
+    )
+
+
+def _maybe_rate_needs_operands(
+    pipeline_exhaust: dict,
+) -> tuple[pd.DataFrame, str, dict] | None:
+    """비율 요청인데 계획이 분자·분모를 끝내 정하지 못하면 되묻는다.
+
+    PandasAI에 넘기면 분모를 임의로 골라 검증 없이 성공으로 나간다
+    (예: 실행예산 대신 계획예산, 1574% 같은 값).
+    """
+    retry_log = list(pipeline_exhaust.get("retry_log") or [])
+    joined = " ".join(
+        " ".join(str(x) for x in (r.get("validation_errors") or [])) for r in retry_log
+    )
+    if "missing_ratio_composition" not in joined:
+        return None
+    return (
+        pd.DataFrame(),
+        "비율을 무엇으로 나눠 구할지 정하지 못했습니다. "
+        "'A 대비 B 집행률'처럼 기준 열(분모)과 대상 열(분자)을 함께 적어 주세요. "
+        "예: 예산 합계 대비 집행 합계 집행률",
+        {
+            "aggregation": {"operation": "safe_failure"},
+            "fallback_reason": "rate_needs_operands",
             "prior_pipeline_reason": pipeline_exhaust.get("fallback_reason"),
             "retry_log": retry_log,
             "source": "analysis_plan_safe_failure",

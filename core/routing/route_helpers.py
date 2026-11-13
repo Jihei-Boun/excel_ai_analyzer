@@ -151,7 +151,7 @@ def _context_updates_from_filter(
 def _merge_analysis_meta(meta: dict, analysis_meta: dict | None) -> dict:
     if not analysis_meta:
         return meta
-    for key in ("code", "chart_path"):
+    for key in ("code", "chart_path", "fallback_reason"):
         value = analysis_meta.get(key)
         if value:
             meta[key] = value

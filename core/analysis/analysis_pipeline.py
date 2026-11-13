@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -183,7 +185,6 @@ def try_analysis_pipeline(
             )
             return RetryAttempt(ok=False, errors=[f"plan_build: {exc}"])
 
-        plan = add_ratio_from_prompt(plan, prompt)
         plan = prefer_percent_for_rate(plan, prompt)
         plan_dict = plan.to_dict()
         signature = normalize_plan_signature(plan_dict)
@@ -245,6 +246,23 @@ def try_analysis_pipeline(
             profile_name=profile_name,
             user_prompt=prompt,
         )
+        # 비율 계산만 빠졌으면 질문의 ‘A 대비 B’로 채워 다시 검사한다.
+        # 다른 오류가 함께 있으면 고치지 않는다. 그 피드백으로 Planner가 더 나은 계획을 낸다.
+        if not plan_report.ok and {i.code for i in plan_report.errors} == {
+            "missing_ratio_composition"
+        }:
+            fixed = prefer_percent_for_rate(
+                add_ratio_from_prompt(copy.deepcopy(plan), prompt), prompt
+            )
+            fixed_report = validate_analysis_plan(
+                fixed,
+                classified,
+                profile_name=profile_name,
+                user_prompt=prompt,
+            )
+            if fixed_report.ok:
+                plan, plan_report = fixed, fixed_report
+                plan_dict = plan.to_dict()
         if not plan_report.ok:
             codes = [i.code for i in plan_report.errors]
             fail_cat = composition_category_from_issues(codes) or comp_cat
