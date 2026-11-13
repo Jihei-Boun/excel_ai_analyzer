@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     if task in READ_TASKS:
         hidden = _read_hidden(str(source), operator["workspace_root"])
         return _emit_read(task, request_id, completed.returncode, completed.stdout, hidden)
-    return _emit_wrapper(task, request_id, completed.returncode, completed.stdout)
+    return _emit_wrapper(task, request_id, completed.returncode, completed.stdout, question=question)
 
 
 class _Parser(argparse.ArgumentParser):
@@ -218,7 +218,9 @@ def _operator_launch() -> tuple[Path, dict[str, str]]:
     }
 
 
-def _emit_wrapper(task: str, request_id: str, returncode: int, stdout: bytes) -> int:
+def _emit_wrapper(
+    task: str, request_id: str, returncode: int, stdout: bytes, *, question: str | None = None
+) -> int:
     try:
         response = json.loads(stdout.decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError):
@@ -242,10 +244,56 @@ def _emit_wrapper(task: str, request_id: str, returncode: int, stdout: bytes) ->
         body["artifacts"] = []
     if task == ANALYZE_TASK:
         warnings = _warnings(response.get("warnings")) if status == "success" else []
+        body["question_sent"] = question
         body["warnings"] = warnings
         body["fallback_unverified"] = any(w["code"] == "unverified_fallback" for w in warnings)
+        body["answer_table"] = _answer_table(body["data"]) if status == "success" else None
     _write(body)
     return returncode
+
+
+def _answer_table(data: dict[str, Any] | None) -> str | None:
+    """에이전트가 숫자를 옮겨 적지 않고 그대로 붙일 마크다운 표. 값은 바꾸지 않고 표시만 정한다."""
+    if not isinstance(data, dict):
+        return None
+    columns = data.get("columns")
+    records = data.get("preview_records")
+    if not isinstance(columns, list) or not columns or not isinstance(records, list) or not records:
+        return None
+    names = [str(column) for column in columns]
+    lines = [
+        "| " + " | ".join(_cell(name) for name in names) + " |",
+        "| " + " | ".join("---" for _ in names) + " |",
+    ]
+    for record in records:
+        if isinstance(record, dict):
+            lines.append("| " + " | ".join(_cell(record.get(name)) for name in names) + " |")
+    shape = data.get("shape")
+    total = shape[0] if isinstance(shape, list) and shape and isinstance(shape[0], int) else None
+    if total is not None and total > len(records):
+        lines.append("")
+        lines.append(f"(전체 {total:,}행 중 앞 {len(records):,}행)")
+    return "\n".join(lines)
+
+
+def _cell(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        text = str(value)
+    elif isinstance(value, int):
+        text = f"{value:,}"
+    elif isinstance(value, float):
+        if value != value:  # NaN
+            return ""
+        if value.is_integer() and abs(value) < 1e15:
+            text = f"{int(value):,}"
+        else:
+            # 1 이상은 소수 둘째 자리, 1 미만 비율은 넷째 자리까지 보여 0으로 뭉개지지 않게 한다.
+            text = f"{value:,.2f}" if abs(value) >= 1 else f"{value:.4f}"
+    else:
+        text = str(value)
+    return text.replace("|", "\\|").replace("\r", " ").replace("\n", " ")
 
 
 def _warnings(value: Any) -> list[dict[str, str]]:

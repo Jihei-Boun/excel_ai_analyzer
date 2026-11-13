@@ -33,7 +33,9 @@ def test_analyze_sends_question_unchanged(tmp_path) -> None:
     )
     assert completed.returncode == 0, completed.stderr
     body = _single_json(completed.stdout)
-    assert set(body) == _ANALYSIS_PUBLIC_KEYS | {"warnings", "fallback_unverified"}
+    assert set(body) == _ANALYSIS_PUBLIC_KEYS | {"warnings", "fallback_unverified", "question_sent", "answer_table"}
+    assert body["question_sent"] == question.strip()
+    assert body["answer_table"] is None  # 가짜 래퍼는 빈 표를 돌려준다
     assert body["task"] == "analyze"
     assert body["fallback_unverified"] is False
     seen = json.loads((records / "analyze-1.json").read_text(encoding="utf-8"))
@@ -127,6 +129,8 @@ def test_cannot_plan_passes_clarification(monkeypatch, tmp_path) -> None:
     assert body["error"] == {"code": "rate_needs_operands", "message": message}
     assert body["text"] is None and body["data"] is None
     assert body["warnings"] == [] and body["fallback_unverified"] is False
+    assert body["answer_table"] is None
+    assert body["question_sent"] == QUESTION
 
 
 def test_skill_documents_analyze_rules() -> None:
@@ -137,5 +141,38 @@ def test_skill_documents_analyze_rules() -> None:
         "이 결과는 검증 단계를 거치지 않았으니 원본과 대조해 확인해 주세요.",
         "질문을 스스로 고쳐 다시 실행하지 않는다.",
         "100을 다시 곱하지 않는다.",
+        "`answer_table`을 한 글자도 바꾸지 않고 그대로 붙인다.",
+        "`question_sent`는 분석기에 실제로 보낸 질문이다.",
     ):
         assert sentence in skill, sentence
+
+
+def test_answer_table_formats_without_changing_values(monkeypatch, tmp_path) -> None:
+    _mock(
+        monkeypatch,
+        {
+            "status": "success", "request_id": "t", "execution_id": "e", "text": "결과",
+            "data": {
+                "shape": [12, 4],
+                "columns": ["부서", "예산", "집행률(%)", "비율"],
+                "preview_records": [
+                    {"부서": "영업|본부", "예산": 1234500.0, "집행률(%)": 41.23456789, "비율": 0.0012345678},
+                    {"부서": "연구\n팀", "예산": 0, "집행률(%)": None, "비율": float("nan")},
+                ],
+            },
+            "artifacts": [], "error": None, "structural_state": "not_run", "warnings": [],
+        },
+        0,
+    )
+    code, body = _invoke(monkeypatch, tmp_path, _args("t"))
+    assert code == 0
+    assert body["answer_table"].splitlines() == [
+        "| 부서 | 예산 | 집행률(%) | 비율 |",
+        "| --- | --- | --- | --- |",
+        "| 영업\\|본부 | 1,234,500 | 41.23 | 0.0012 |",
+        "| 연구 팀 | 0 |  |  |",
+        "",
+        "(전체 12행 중 앞 2행)",
+    ]
+    # 원본 값은 data에 그대로 남는다.
+    assert body["data"]["preview_records"][0]["예산"] == 1234500.0
