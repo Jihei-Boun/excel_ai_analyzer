@@ -148,6 +148,7 @@ def test_skill_documents_analyze_rules() -> None:
         "`answer_table`을 한 글자도 바꾸지 않고 그대로 붙인다.",
         "`question_sent`는 분석기에 실제로 보낸 질문이다.",
         "`answer` 전체를 한 글자도 바꾸지 않고 그대로 옮긴 것이다.",
+        "표 뒤에 가장 높다·낮다, 순위, 증감 같은 비교나 판단을 덧붙이지 않는다.",
     ):
         assert sentence in skill, sentence
 

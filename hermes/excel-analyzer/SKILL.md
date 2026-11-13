@@ -1,7 +1,7 @@
 ---
 name: excel-analyzer
 description: 직접 호출 함수 아님. skills_list·skill_view로 읽고 지침대로 terminal 도구 사용
-version: 1.4.0
+version: 1.4.1
 platforms: [linux]
 metadata:
   hermes:
@@ -99,6 +99,7 @@ python3 ${HERMES_SKILL_DIR}/connect.py --task analyze --file /절대/경로/파�
 
 - `status`가 `success`이고 `wrapper_exit_code`가 0일 때만 분석 성공이다.
 - `answer`가 있으면 사용자에게 보내는 답변은 `answer` 전체를 한 글자도 바꾸지 않고 그대로 옮긴 것이다. 표를 빼거나 줄이거나 요약하지 않는다. 파일이나 필드 이름(`answer_table` 등)을 가리키며 "거기 있다"고 말하지 않는다. 덧붙이고 싶은 말은 `answer` 뒤에 한두 문장만 쓴다.
+- 표 뒤에 가장 높다·낮다, 순위, 증감 같은 비교나 판단을 덧붙이지 않는다. 사용자가 그것을 물었을 때만 표의 값 그대로 말한다. 표를 다시 읽어 비교하다 틀리기 쉽기 때문이다.
 - 답변은 사용자가 쓴 언어로 한다. 한국어 질문에는 한국어로 답한다. `answer`는 한국어로 되어 있다.
 - `answer`가 없을 때 답변의 표는 `answer_table`을 한 글자도 바꾸지 않고 그대로 붙인다. 숫자를 다시 쓰거나, 단위·통화 기호를 붙이거나, 행을 빼지 않는다. 행·열을 바꿔 달라고 한 질문이면 이 표가 이미 바뀐 표다.
 - 표 밖 문장에서 숫자를 말할 때는 `answer_table`에 있는 표기 그대로 쓴다. 표에 없는 숫자는 말하지 않는다.
