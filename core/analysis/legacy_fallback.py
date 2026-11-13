@@ -46,7 +46,13 @@ def try_legacy_simple_groupby_fallback(
     """Planner exhausted 후 단순 'X별 Y 합계/평균' deterministic fallback.
 
     Router에서 직접 호출하지 말 것. 의미 비교·비율·순위는 Planner 책임.
+    비율·률(예: 집행률)을 묻는 요청은 받지 않는다. 이 fallback은 합계·평균만
+    만들 수 있어, 받으면 비율 열이 빠진 표가 성공으로 나간다.
     """
+    from core.analysis.analysis_plan_validate import _looks_like_rate_request
+
+    if _looks_like_rate_request(prompt):
+        return None
     return build_groupby_aggregate_table(
         df,
         prompt,

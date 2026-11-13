@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from core.analysis.analysis_plan_types import (
@@ -705,4 +706,81 @@ def prefer_percent_for_rate(plan, prompt: str):
         name = str(step.payload.get("name") or "").strip()
         if asks_percent or name.endswith(_RATE_NAME_SUFFIXES):
             step.payload["expr"] = {"percent_ratio": expr["ratio"]}
+    return plan
+
+
+_RATIO_EXPR_KINDS = ("ratio", "percent_ratio")
+_RATE_WORD = re.compile(r"[가-힣A-Za-z]*(?:률|율)")
+
+
+def _compact(text: object) -> str:
+    return re.sub(r"[\s_]+", "", str(text or "")).lower()
+
+
+def _metrics_named_in(text: str, metrics: list[str]) -> list[str]:
+    """``text``에 이름이 나오는 집계 열. 전체 이름이 안 맞으면 첫 단어(``집행계_합계`` → ``집행계``)로 찾는다."""
+    compact = _compact(text)
+    full = [m for m in metrics if _compact(m) and _compact(m) in compact]
+    if full:
+        return full
+    heads = {m: _compact(re.split(r"[\s_]+", m.strip())[0]) for m in metrics}
+    return [m for m, head in heads.items() if head and head in compact]
+
+
+def add_ratio_from_prompt(plan, prompt: str):
+    """‘A 대비 B ~률’을 물었는데 계획에 비율 계산이 없으면 B ÷ A 열을 붙인다.
+
+    LLM이 A와 B를 집계만 하고 비율 계산을 빠뜨리는 경우가 많다. 그러면 비율 열이 없는 표가
+    나가거나, 계획 검증에 막혀 근거 없는 fallback으로 넘어간다.
+    계획이 이미 집계한 열 가운데 ‘대비’ 앞뒤에 하나씩만 이름이 맞을 때만 고친다. 새 열을 고르지 않는다.
+    """
+    text = str(prompt or "")
+    if "대비" not in text or not (_RATE_WORD.search(text) or "비율" in text):
+        return plan
+    for step in plan.steps:
+        if step.op == "ratio_of_aggregates":
+            return plan
+        expr = step.payload.get("expr") if step.op == "derive_column" else None
+        if isinstance(expr, dict) and any(k in expr for k in _RATIO_EXPR_KINDS):
+            return plan
+    agg_index = next(
+        (i for i in range(len(plan.steps) - 1, -1, -1) if plan.steps[i].op == "aggregate"),
+        None,
+    )
+    if agg_index is None:
+        return plan
+    metrics: list[str] = []
+    for metric in plan.steps[agg_index].payload.get("metrics") or []:
+        name = metric if isinstance(metric, str) else (
+            (metric.get("column") or metric.get("name")) if isinstance(metric, dict) else None
+        )
+        if name and str(name) not in metrics:
+            metrics.append(str(name))
+    if len(metrics) < 2:
+        return plan
+
+    before, _, after = text.partition("대비")
+    denominators = _metrics_named_in(before, metrics)
+    numerators = [m for m in _metrics_named_in(after, metrics) if m not in denominators]
+    if len(denominators) != 1 or len(numerators) != 1:
+        return plan
+
+    rate = _RATE_WORD.search(after)
+    name = rate.group(0) if rate and len(rate.group(0)) > 1 else "비율"
+    if name in metrics:
+        return plan
+    plan.steps.insert(
+        agg_index + 1,
+        AnalysisStep(
+            op="derive_column",
+            payload={"name": name, "expr": {"ratio": [numerators[0], denominators[0]]}},
+        ),
+    )
+    for step in plan.steps[agg_index + 2 :]:
+        if step.op == "select_columns":
+            cols = list(step.payload.get("columns") or [])
+            if name not in cols:
+                step.payload["columns"] = [*cols, name]
+    if plan.output_columns and name not in plan.output_columns:
+        plan.output_columns = [*plan.output_columns, name]
     return plan

@@ -87,6 +87,8 @@ python3 ${HERMES_SKILL_DIR}/connect.py --task summary --file /절대/경로/파�
 | `status`, `wrapper_exit_code` | `success`이고 `0`일 때만 성공 |
 | `text`, `data` | 요약·스키마·품질의 답변 근거 |
 | `cells` / `table` | 셀·표 읽기 결과. 빈 칸과 병합으로 가려진 칸도 그대로 |
+| `safety.validation_status` | (엔진·래퍼 응답) 분석 계획 검증을 통과했으면 `passed`. PandasAI 같은 대체 경로 결과면 `not_run` |
+| `warnings[].code` | (엔진·래퍼 응답) `unverified_fallback`이면 계획 검증 없이 대체 경로로 만든 결과 |
 | `structural_state` | 결과 구조 검사를 했는지(`passed`/`failed`/`not_run`/`unknown`). `passed`여도 의미가 맞다는 보증은 아님 |
 | `input_integrity` | 실행 전후 입력 파일 해시가 같으면 `unchanged` |
 | `artifacts` | 실제로 만들어진 결과 파일만. `exists`가 true일 때만 파일이 있다고 말함 |
@@ -97,12 +99,14 @@ python3 ${HERMES_SKILL_DIR}/connect.py --task summary --file /절대/경로/파�
 | `success` | 0 |
 | `execution_failed` | 1 |
 | `invalid_request` (예: `missing_file`, `missing_address`) | 2 |
-| `cannot_plan` | 3 |
+| `cannot_plan` (예: `rate_needs_operands` 비율 기준을 정하지 못함, `safe_plan_failure` 없는 열) | 3 |
 | `validation_failed` | 4 |
 | `model_unavailable` | 5 |
 | `timeout` | 6 |
 | `cancelled` | 7 |
 | `busy` | 8 |
+
+`safety`와 `warnings`는 엔진·래퍼 응답에만 있고, 지금의 `connect.py`는 에이전트에게 넘기지 않습니다. 고정 질문과 셀·표 읽기에는 대체 경로가 없기 때문입니다. 자유 질문(`analyze`)을 추가할 때 함께 넘겨야 합니다.
 
 ## 래퍼의 안전장치
 
