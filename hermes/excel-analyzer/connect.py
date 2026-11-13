@@ -24,6 +24,8 @@ TASKS = {
     "schema": "컬럼 목록을 보여줘",
     "quality": "이 파일의 데이터 품질을 분석해줘",
 }
+ANALYZE_TASK = "analyze"
+QUESTION_MAX_CHARS = 500
 READ_TASK = "read_range"
 READ_KEYS = ("values_from", "source", "requested", "returned", "cells")
 TABLE_TASK = "read_table"
@@ -52,13 +54,17 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(None, exc.code, exc.message, request_id="", hidden=_argv_hidden(raw))
     task = str(args.task)
     hidden = _read_hidden(args.file) if task in READ_TASKS else None
-    if task not in TASKS and task not in READ_TASKS:
+    if task not in TASKS and task not in READ_TASKS and task != ANALYZE_TASK:
         return _fail(
             task,
             "unsupported_task",
-            "지원 작업은 summary, schema, quality, read_range, read_table뿐이다.",
+            "지원 작업은 summary, schema, quality, analyze, read_range, read_table뿐이다.",
             request_id=args.request_id,
         )
+    if task == ANALYZE_TASK and (args.question is None or not str(args.question).strip()):
+        return _fail(task, "missing_question", "analyze에는 --question이 필요하다.", request_id=args.request_id)
+    if task != ANALYZE_TASK and args.question is not None:
+        return _fail(task, "forbidden_argument", "--question은 analyze에만 쓴다.", request_id=args.request_id, hidden=hidden)
     if task in READ_TASKS and (args.address is None or not str(args.address).strip()):
         return _fail(task, "missing_address", f"{task}에는 --address가 필요하다.", request_id=args.request_id, hidden=hidden)
     if task not in READ_TASKS and args.address is not None:
@@ -67,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(task, "forbidden_argument", "--header는 read_table에만 쓴다.", request_id=args.request_id, hidden=hidden)
     try:
         header = _header(args.header) if task == TABLE_TASK else None
+        question = _question(args.question) if task == ANALYZE_TASK else None
         request_id = _request_id(args.request_id)
         source = _absolute_file(args.file)
         sheet = _sheet(args.sheet)
@@ -89,9 +96,9 @@ def main(argv: list[str] | None = None) -> int:
         payload = {
             "contract_version": "1.0",
             "request_id": request_id,
-            "user_prompt": TASKS[task],
+            "user_prompt": question if task == ANALYZE_TASK else TASKS[task],
             "inputs": inputs,
-            "profile_name": "generic",
+            "profile_name": operator["analysis_profile"],
             "analysis_mode": "single",
         }
     print(f"wrapper_request_id={request_id} task={task}", file=sys.stderr)
@@ -110,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     if task in READ_TASKS:
         hidden = _read_hidden(str(source), operator["workspace_root"])
         return _emit_read(task, request_id, completed.returncode, completed.stdout, hidden)
-    return _emit_wrapper(task, request_id, completed.returncode, completed.stdout)
+    return _emit_wrapper(task, request_id, completed.returncode, completed.stdout, question=question)
 
 
 class _Parser(argparse.ArgumentParser):
@@ -126,6 +133,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--request-id", required=True)
     parser.add_argument("--address")
     parser.add_argument("--header")
+    parser.add_argument("--question")
     return parser
 
 
@@ -140,6 +148,16 @@ def _request_id(value: str) -> str:
     text = str(value).strip()
     if not text or len(text) > 128 or "\x00" in text:
         raise _BridgeError("invalid_request_id", "request_id는 1자 이상 128자 이하여야 한다.")
+    return text
+
+
+def _question(value: str) -> str:
+    """사용자 질문은 그대로 엔진에 넘긴다. 길이와 제어 문자만 막는다."""
+    text = str(value).strip()
+    if len(text) > QUESTION_MAX_CHARS:
+        raise _BridgeError("question_too_long", f"질문은 {QUESTION_MAX_CHARS}자 이하여야 한다.")
+    if any(ord(ch) < 32 and ch not in "\t\n" for ch in text):
+        raise _BridgeError("invalid_question", "질문에 제어 문자가 들어 있다.")
     return text
 
 
@@ -193,14 +211,22 @@ def _operator_launch() -> tuple[Path, dict[str, str]]:
     if not isinstance(python_path, str) or not python_path or not isinstance(repo_cwd, str) or not repo_cwd:
         raise _BridgeError("invalid_operator_config", "python_path와 repo_cwd가 필요하다.")
     workspace_root = payload.get("workspace_root")
+    # 분석 프로필은 운영자가 배포마다 정한다. 에이전트 인자로는 바꿀 수 없다.
+    # 래퍼가 allowed_profiles에 없는 프로필을 거절한다.
+    profile = payload.get("analysis_profile", "generic")
+    if not isinstance(profile, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", profile):
+        raise _BridgeError("invalid_operator_config", "analysis_profile은 영문·숫자·_·- 64자 이하여야 한다.")
     return path, {
         "python_path": python_path,
         "repo_cwd": repo_cwd,
         "workspace_root": workspace_root if isinstance(workspace_root, str) else "",
+        "analysis_profile": profile,
     }
 
 
-def _emit_wrapper(task: str, request_id: str, returncode: int, stdout: bytes) -> int:
+def _emit_wrapper(
+    task: str, request_id: str, returncode: int, stdout: bytes, *, question: str | None = None
+) -> int:
     try:
         response = json.loads(stdout.decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError):
@@ -222,8 +248,111 @@ def _emit_wrapper(task: str, request_id: str, returncode: int, stdout: bytes) ->
         body["text"] = None
         body["data"] = None
         body["artifacts"] = []
+    if task == ANALYZE_TASK:
+        warnings = _warnings(response.get("warnings")) if status == "success" else []
+        body["question_sent"] = question
+        body["warnings"] = warnings
+        body["fallback_unverified"] = any(w["code"] == "unverified_fallback" for w in warnings)
+        body["answer_table"] = _answer_table(body["data"]) if status == "success" else None
+        body["answer"] = _answer(str(status), body)
     _write(body)
     return returncode
+
+
+def _answer_table(data: dict[str, Any] | None) -> str | None:
+    """에이전트가 숫자를 옮겨 적지 않고 그대로 붙일 마크다운 표. 값은 바꾸지 않고 표시만 정한다."""
+    if not isinstance(data, dict):
+        return None
+    columns = data.get("columns")
+    records = data.get("preview_records")
+    if not isinstance(columns, list) or not columns or not isinstance(records, list) or not records:
+        return None
+    names = [str(column) for column in columns]
+    lines = [
+        "| " + " | ".join(_cell(name) for name in names) + " |",
+        "| " + " | ".join("---" for _ in names) + " |",
+    ]
+    percent_columns = {name for name in names if _PERCENT_MARK in name}
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        # 행·열을 바꾼 표는 첫 열의 행 이름에 "(%)"가 붙는다.
+        label = record.get(names[0])
+        percent_row = isinstance(label, str) and _PERCENT_MARK in label
+        lines.append(
+            "| "
+            + " | ".join(
+                _cell(record.get(name), percent=percent_row or name in percent_columns) for name in names
+            )
+            + " |"
+        )
+    shape = data.get("shape")
+    total = shape[0] if isinstance(shape, list) and shape and isinstance(shape[0], int) else None
+    if total is not None and total > len(records):
+        lines.append("")
+        lines.append(f"(전체 {total:,}행 중 앞 {len(records):,}행)")
+    return "\n".join(lines)
+
+
+_PERCENT_MARK = "(%)"
+_UNVERIFIED_NOTICE = "이 결과는 검증 단계를 거치지 않았으니 원본과 대조해 확인해 주세요."
+
+
+def _answer(status: str, body: dict[str, Any]) -> str | None:
+    """에이전트가 그대로 전할 한국어 답변 본문. 성공과 cannot_plan만 만든다."""
+    if status == "cannot_plan":
+        error = body.get("error")
+        message = error.get("message") if isinstance(error, dict) else None
+        if not isinstance(message, str) or not message.strip():
+            return None
+        return f"분석기가 질문을 계산 방법으로 바꾸지 못했습니다.\n\n> {message.strip()}\n\n질문을 고쳐 다시 물어 주세요."
+    if status != "success":
+        return None
+    table = body.get("answer_table")
+    if not table:
+        return "분석은 끝났지만 결과 표가 비어 있습니다."
+    parts = []
+    if body.get("fallback_unverified"):
+        parts.append(_UNVERIFIED_NOTICE)
+    parts.append("분석 결과입니다.")
+    parts.append(table)
+    if _PERCENT_MARK in table:
+        parts.append("`(%)`가 붙은 값은 백분율입니다.")
+    return "\n\n".join(parts)
+
+
+def _cell(value: Any, *, percent: bool = False) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        text = str(value)
+    elif isinstance(value, (int, float)) and percent:
+        if value != value:  # NaN
+            return ""
+        text = f"{value:,.2f}"
+    elif isinstance(value, int):
+        text = f"{value:,}"
+    elif isinstance(value, float):
+        if value != value:  # NaN
+            return ""
+        if value.is_integer() and abs(value) < 1e15:
+            text = f"{int(value):,}"
+        else:
+            # 1 이상은 소수 둘째 자리, 1 미만 비율은 넷째 자리까지 보여 0으로 뭉개지지 않게 한다.
+            text = f"{value:,.2f}" if abs(value) >= 1 else f"{value:.4f}"
+    else:
+        text = str(value)
+    return text.replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+
+
+def _warnings(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        {"code": item["code"], "message": item["message"]}
+        for item in value
+        if isinstance(item, dict) and isinstance(item.get("code"), str) and isinstance(item.get("message"), str)
+    ]
 
 
 def _public(task: str, request_id: str, response: dict[str, Any], returncode: int, *, status: str) -> dict[str, Any]:

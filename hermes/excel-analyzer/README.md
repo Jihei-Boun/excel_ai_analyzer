@@ -184,6 +184,37 @@ python -m pytest tests/test_hermes_read_table.py -q
 
 문구 검사 `test_skill_covered_wording_matches_expected_file_not_model_behavior`는 저장소 밖 기대 파일 `/home/raven323/Project/cursor-codex-trial-runtime/dev5-skill-expected.md`와 `SKILL.md`의 바이트를 비교한다. 문구 검사는 모델 동작 검증이 아니다.
 
+## 자유 질문 분석 (analyze)
+
+skill 1.3.0에서 추가했고 1.4.0에서 답변 본문(`answer`)을, 1.4.1에서 비교·순위 판단 금지 규칙을 더했다. 사용자 질문 원문을 엔진에 그대로 보내 계산한다.
+
+```bash
+export EXCEL_ANALYZER_OPERATOR_CONFIG="$HERMES_HOME/excel-analyzer-operator.json"
+python3 "$HERMES_HOME/skills/excel-analyzer/connect.py" \
+  --task analyze \
+  --file /home/raven323/Project/excel_ai_analyzer/docs/development/dev0/fixtures/sales.xlsx \
+  --sheet 0 \
+  --question '지역별 매출 합계를 구해줘' \
+  --request-id manual-analyze-1
+```
+
+- `--question`은 `analyze`에만 쓴다. 없거나 공백뿐이면 `missing_question`, 500자를 넘으면 `question_too_long`, 제어 문자가 있으면 `invalid_question`이다. 모두 종료 2이고 래퍼를 부르지 않는다.
+- 분석 프로필은 운영 설정의 `analysis_profile`이다. 없으면 `generic`이다. 에이전트 인자로는 바꿀 수 없다. 래퍼의 `allowed_profiles`에도 있어야 한다. 이 값은 `summary`, `schema`, `quality`에도 적용된다.
+- 공개 응답에는 공통 필드에 더해 `question_sent`, `warnings`(code와 message만), `fallback_unverified`, `answer_table`, `answer`가 있다.
+- `answer_table`은 `data.preview_records`를 마크다운 표로 바꾼 것이다. 천 단위 쉼표를 넣고, 정수인 실수는 정수로, 그 밖에는 1 이상은 소수 둘째 자리, 1 미만은 넷째 자리로 표시한다. 열 이름이나(행·열을 바꾼 표는) 행 이름에 `(%)`가 있으면 소수 둘째 자리로 고정한다. 앞부분만 담았으면 `(전체 N행 중 앞 M행)`을 붙인다. 원본 값은 `data`에 그대로 있다.
+- `answer`는 에이전트가 그대로 전할 한국어 답변이다. 성공이면 "분석 결과입니다."와 표, 검증 없는 대체 경로 결과면 맨 앞에 확인 문구가 붙는다. `cannot_plan`이면 엔진의 되묻는 문장을 인용한다. 그 밖의 상태에서는 null이다.
+
+### Hermes 종단 (2026-11-13)
+
+실제 예산 파일(저장소 밖)로 PPT 예제 7개와 집행률 질문 2개를 Hermes 세션으로 실행했다. 에이전트 모델은 `gemma4-excel-hermes`, 운영 설정 `analysis_profile`은 `budget`이다.
+
+- 9개 모두 질문 원문이 그대로 전달됐다.
+- 마지막 실행(skill 1.4.0, 수정한 `profile-soul.md`)에서 9개 중 8개가 표를 포함한 한국어 답변이었다. 1개는 표 없이 한 문장만 답했다.
+- PPT 예제 7개의 엔진 결과는 원본과 대조해 맞았다. `generic` 프로필에서는 7개 중 3~4개만 맞았다.
+- `profile-soul.md`의 Hermes 기본 문구 "끝낸 작업은 바꾼 것·확인한 것·남은 것을 보고한다" 때문에 분석 답변 대신 작업 보고서를 내는 경우가 있어, 데이터 질문에는 답 자체를 주라는 문장으로 바꿨다.
+- 에이전트가 표 뒤에 덧붙인 설명 문장은 틀릴 수 있다. 한 실행에서 가장 높은 집행률을 잘못 짚었다. skill 1.4.1에서 비교·순위 판단을 덧붙이지 않는 규칙을 더했고, 그 4개 질문(1.4.0에서 표가 빠진 질문 포함)을 다시 돌려 4개 모두 표가 있고 비교 문장이 없음을 확인했다.
+- "대비" 없이 "비목분류별 집행률"만 물으면 엔진이 분모 열을 스스로 고르고, 결과가 백분율이 아닌 비율(0~1)로 나온다.
+
 ## Hermes 종단 실행
 
 에이전트 모델과 Excel 엔진 모델은 다르다. 이번 검증의 에이전트는 로컬 Ollama `gemma4-excel-hermes`(`gemma4:latest`에서 `num_ctx 64000`만 지정한 파생 태그)이고, 엔진은 운영 설정의 `qwen2.5:7b`다. Hermes는 컨텍스트가 64000 미만이면 세션을 시작하지 않는다.
@@ -249,7 +280,7 @@ hermes chat --oneshot --yolo --reasoning none -t terminal,skills --max-turns 12 
 
 - 허용 입력 폴더는 위 fixture 폴더 하나뿐이다.
 - 같은 Linux 호스트의 절대 경로만 지원한다.
-- 다중 파일 통합, 자유 계산, 편집, 수식 재계산은 이 skill의 기능이 아니다.
+- 다중 파일 통합, 편집, 수식 재계산은 이 skill의 기능이 아니다. 자유 계산은 `analyze`로 한 번에 시트 하나, 질문 하나만 한다.
 - 자동 재시도는 없다.
 - `read_range`는 `.xlsx`만, 한 번에 2000칸까지 읽는다. Hermes 자연어 종단은 누적 5회이고 상한 5회에 도달했다. 첫 범위 사례의 답변은 래퍼 결과와 다르다. skill 1.1.1 재검증에서 범위 사례는 통과했고 `A5:B5` 수식 사례는 실패했다. skill 1.1.2 결합 세션에서 `A5:B5`와 `C5:A4`를 한 세션으로 처리했고 필수 기준을 충족했다. 독립 세션 두 번이 아니다. 한정된 DEV-4 종단 완료는 B2, 1.1.1의 A4:C5, 이 결합 세션까지이고 DEV-4 전체 완료가 아니다. 위 `read_range Hermes 종단 (2026-10-19)`, `covered 재검증`, `결합 세션`을 본다.
 - `read_table`은 `.xlsx`만, 헤더 포함 2000칸까지 읽는다. 헤더는 범위 첫 행에서 시작하는 두 줄까지다. Hermes 자연어 종단은 실행하지 않았다. 위 `표 조회 (read_table, DEV-5)`를 본다.

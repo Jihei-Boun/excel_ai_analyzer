@@ -35,7 +35,7 @@ flowchart LR
 ### 왜 이렇게 나눴나
 
 - **에이전트가 숫자를 만들지 못하게:** 에이전트 모델이 엑셀을 직접 열거나 Python으로 다시 계산하면 웹 앱이 가진 검사와 재시도를 모두 건너뜁니다. 그래서 skill 지침에 "직접 해석하거나 다시 계산하지 않는다"를 명시하고, 결과는 래퍼 JSON만 근거로 삼게 했습니다.
-- **에이전트가 실행 환경을 고르지 못하게:** Python 경로, 모델 주소, 출력 위치, 허용 폴더는 요청이 아니라 운영 설정 파일에만 있습니다. 에이전트가 넘길 수 있는 것은 작업 종류, 파일 경로, 시트, 요청 ID(와 셀 주소·헤더 행)뿐입니다.
+- **에이전트가 실행 환경을 고르지 못하게:** Python 경로, 모델 주소, 출력 위치, 허용 폴더는 요청이 아니라 운영 설정 파일에만 있습니다. 에이전트가 넘길 수 있는 것은 작업 종류, 파일 경로, 시트, 요청 ID(와 질문, 셀 주소, 헤더 행)뿐입니다. 분석 프로필(`generic`, `budget` 등)도 운영 설정의 `analysis_profile`로만 정합니다.
 - **성공을 함부로 성공이라 하지 않게:** 모델 서버가 꺼져 있는데 `success`가 나가던 문제를 고쳤고, 엔진 응답의 타입이 계약과 다르면 실패로 처리합니다. 응답에는 항상 `semantic_correctness_guaranteed: false`가 들어갑니다. "실행이 정상으로 끝났다"와 "답이 맞다"는 다른 이야기라는 뜻입니다.
 
 ## 요청과 응답
@@ -48,10 +48,11 @@ python3 ${HERMES_SKILL_DIR}/connect.py --task summary --file /절대/경로/파�
 
 | 인자 | 필수 | 설명 |
 | --- | --- | --- |
-| `--task` | 예 | `summary`, `schema`, `quality`, `read_range`, `read_table` 중 하나 |
+| `--task` | 예 | `summary`, `schema`, `quality`, `analyze`, `read_range`, `read_table` 중 하나 |
 | `--file` | 예 | 허용 폴더 안의 절대 경로 |
 | `--sheet` | 예 | 숫자면 시트 번호(0부터), 아니면 시트 이름 |
 | `--request-id` | 예 | 호출을 구분하는 ID. 응답에만 남고 폴더 이름으로 쓰지 않음 |
+| `--question` | `analyze`만 | 사용자 질문 원문. 500자 이하, 제어 문자 불가 |
 | `--address` | `read_range`, `read_table`만 | 예: `B2`, `A4:C5` |
 | `--header` | `read_table`만 | 헤더 행 번호. `3`, `3,4`, 또는 `none` |
 
@@ -62,6 +63,7 @@ python3 ${HERMES_SKILL_DIR}/connect.py --task summary --file /절대/경로/파�
 | `summary` | 파일 요약 | 고정 질문 "이 파일의 주요 내용을 요약해줘" |
 | `schema` | 컬럼 목록·타입 | 고정 질문 "컬럼 목록을 보여줘" |
 | `quality` | 결측·중복 등 품질 진단 | 고정 질문 "이 파일의 데이터 품질을 분석해줘" |
+| `analyze` | 자유 질문 분석 (합계, 평균, 비율, 행·열 바꾸기 등) | 사용자 질문 원문 |
 | `read_range` | 셀·범위의 저장된 값과 수식 (최대 2000칸, `.xlsx`만) | `operation: read_range` + 주소 |
 | `read_table` | 범위와 헤더 행을 지정한 표 하나 (최대 2000칸, `.xlsx`만) | `operation: read_table` + 주소 + 헤더 |
 
@@ -78,6 +80,8 @@ python3 ${HERMES_SKILL_DIR}/connect.py --task summary --file /절대/경로/파�
 }
 ```
 
+`profile_name`은 운영 설정의 `analysis_profile`(없으면 `generic`)이고, 래퍼의 `allowed_profiles`에 있어야 합니다. 예산 파일처럼 전용 프로필이 있는 배포는 `budget`으로 정하면 결과가 더 정확합니다. 이 값은 `summary`, `schema`, `quality`, `analyze` 모두에 적용됩니다.
+
 `read_range`, `read_table`은 `user_prompt` 대신 `"operation": "read_range"`와 `"read": {"address": "A4:C5"}`(표는 `"header": {"rows": [3]}` 추가)를 보냅니다.
 
 ### 응답에서 볼 것
@@ -87,8 +91,11 @@ python3 ${HERMES_SKILL_DIR}/connect.py --task summary --file /절대/경로/파�
 | `status`, `wrapper_exit_code` | `success`이고 `0`일 때만 성공 |
 | `text`, `data` | 요약·스키마·품질의 답변 근거 |
 | `cells` / `table` | 셀·표 읽기 결과. 빈 칸과 병합으로 가려진 칸도 그대로 |
-| `safety.validation_status` | (엔진·래퍼 응답) 분석 계획 검증을 통과했으면 `passed`. PandasAI 같은 대체 경로 결과면 `not_run` |
-| `warnings[].code` | (엔진·래퍼 응답) `unverified_fallback`이면 계획 검증 없이 대체 경로로 만든 결과 |
+| `answer` | (`analyze`) 연결 스크립트가 만든 한국어 답변 본문. 에이전트는 이것을 그대로 전함. 성공이면 표, `cannot_plan`이면 분석기의 되묻는 문장, 그 밖의 실패면 `null` |
+| `answer_table` | (`analyze`) 결과를 천 단위 쉼표와 반올림으로 표시한 마크다운 표. `(%)` 값은 소수 둘째 자리 |
+| `question_sent` | (`analyze`) 엔진에 실제로 보낸 질문 |
+| `warnings`, `fallback_unverified` | (`analyze`) `unverified_fallback` 경고가 있으면 `fallback_unverified`가 true. 계획 검증 없이 대체 경로(PandasAI 등)로 만든 결과라는 뜻 |
+| `safety.validation_status` | (엔진·래퍼 응답만) 분석 계획 검증을 통과했으면 `passed`, 대체 경로 결과면 `not_run` |
 | `structural_state` | 결과 구조 검사를 했는지(`passed`/`failed`/`not_run`/`unknown`). `passed`여도 의미가 맞다는 보증은 아님 |
 | `input_integrity` | 실행 전후 입력 파일 해시가 같으면 `unchanged` |
 | `artifacts` | 실제로 만들어진 결과 파일만. `exists`가 true일 때만 파일이 있다고 말함 |
@@ -106,7 +113,7 @@ python3 ${HERMES_SKILL_DIR}/connect.py --task summary --file /절대/경로/파�
 | `cancelled` | 7 |
 | `busy` | 8 |
 
-`safety`와 `warnings`는 엔진·래퍼 응답에만 있고, 지금의 `connect.py`는 에이전트에게 넘기지 않습니다. 고정 질문과 셀·표 읽기에는 대체 경로가 없기 때문입니다. 자유 질문(`analyze`)을 추가할 때 함께 넘겨야 합니다.
+`analyze`의 `answer`는 에이전트가 숫자를 옮겨 적다 틀리거나, 표를 빼고 "결과는 answer_table에 있다"고만 답하던 문제를 막으려고 만들었습니다. 값은 바꾸지 않고 표시만 정하며, 원본 값은 `data`에 그대로 있습니다. `safety`는 에이전트에게 넘기지 않고, 같은 정보를 `warnings`와 `fallback_unverified`로 넘깁니다.
 
 ## 래퍼의 안전장치
 
@@ -129,12 +136,15 @@ Hermes Agent v0.22.0 + 에이전트 모델 `gemma4`(컨텍스트 64000) + 엔진
 | 없는 파일 | 1회 | 기대한 대로 `missing_file`, 종료 2 |
 | `read_range` | 단일 셀, 병합 범위, 수식, 역순 범위 | 지침 보완(1.1.0 → 1.1.2) 후 모두 기대대로 답변 |
 | `read_table` | 실행 안 함 | 연결과 모델 없는 테스트만 완료 |
+| `analyze` | PPT 예제 7개 + 집행률 질문 2개, 여러 차례 (2026-11-13, 에이전트 모델 `gemma4-excel-hermes`, `budget` 프로필) | 엔진 결과 7/7 맞음. 마지막 실행에서 9개 중 8개가 표를 포함한 한국어 답변 |
 
 모델 없이 도는 테스트는 `pytest`에 포함되어 있습니다. 실제 Hermes를 부르는 테스트는 `HERMES_EXCEL_E2E=1`일 때만 실행됩니다.
 
 ## 아직 안 된 것
 
-- **자유 질문(`analyze`)이 skill에 없습니다.** 엔진은 이미 자유 질문을 받지만, skill은 고정 질문 세 개와 셀·표 읽기만 노출합니다. 행·열 바꾸기, 합계, 평균, 집행률 같은 분석을 Hermes에서 쓰려면 이 작업을 추가해야 합니다. **다음 작업입니다.**
+- **`generic` 프로필의 정확도:** 같은 예산 질문을 `generic`으로 보내면 평균 대신 목록을 내거나, 엉뚱한 열을 고르거나, 비율을 계산하지 못하는 경우가 있습니다. 전용 프로필이 없는 파일에서는 결과를 원본과 대조해야 합니다.
+- **"대비" 없는 비율 질문:** "비목분류별 집행률"처럼 기준 열을 말하지 않으면 엔진이 기준 열을 스스로 고릅니다. "A 대비 B 집행률"로 물으면 정확합니다.
+- **에이전트 답변 형식:** `answer`를 그대로 전하라고 지침에 적었지만, 에이전트 모델이 지침을 어기는 경우를 완전히 막지는 못합니다.
 - **자동 발견:** 지금은 프로필 설정(`skills.auto_load`)으로 skill을 항상 불러옵니다. 에이전트가 스스로 skill을 찾아 쓰는지는 확인하지 않았습니다.
 - **반복 안정성:** 각 사례를 1회씩 실행했습니다. 같은 질문을 여러 번 했을 때 답이 일정한지는 확인하지 않았습니다.
 - **답변 자동 검증:** 에이전트의 최종 답변이 래퍼 결과와 맞는지는 일부만 자동으로 검사했고, 나머지는 사람이 대조했습니다.
