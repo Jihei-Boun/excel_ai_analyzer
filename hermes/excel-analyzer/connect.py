@@ -98,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
             "request_id": request_id,
             "user_prompt": question if task == ANALYZE_TASK else TASKS[task],
             "inputs": inputs,
-            "profile_name": "generic",
+            "profile_name": operator["analysis_profile"],
             "analysis_mode": "single",
         }
     print(f"wrapper_request_id={request_id} task={task}", file=sys.stderr)
@@ -211,10 +211,16 @@ def _operator_launch() -> tuple[Path, dict[str, str]]:
     if not isinstance(python_path, str) or not python_path or not isinstance(repo_cwd, str) or not repo_cwd:
         raise _BridgeError("invalid_operator_config", "python_path와 repo_cwd가 필요하다.")
     workspace_root = payload.get("workspace_root")
+    # 분석 프로필은 운영자가 배포마다 정한다. 에이전트 인자로는 바꿀 수 없다.
+    # 래퍼가 allowed_profiles에 없는 프로필을 거절한다.
+    profile = payload.get("analysis_profile", "generic")
+    if not isinstance(profile, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", profile):
+        raise _BridgeError("invalid_operator_config", "analysis_profile은 영문·숫자·_·- 64자 이하여야 한다.")
     return path, {
         "python_path": python_path,
         "repo_cwd": repo_cwd,
         "workspace_root": workspace_root if isinstance(workspace_root, str) else "",
+        "analysis_profile": profile,
     }
 
 

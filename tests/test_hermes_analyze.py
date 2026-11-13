@@ -176,3 +176,37 @@ def test_answer_table_formats_without_changing_values(monkeypatch, tmp_path) -> 
     ]
     # 원본 값은 data에 그대로 남는다.
     assert body["data"]["preview_records"][0]["예산"] == 1234500.0
+
+
+def _with_profile(config, value) -> None:
+    body = json.loads(config.read_text(encoding="utf-8"))
+    body["analysis_profile"] = value
+    config.write_text(json.dumps(body), encoding="utf-8")
+
+
+@pytest.mark.parametrize("task", ["analyze", "summary"])
+def test_operator_config_sets_analysis_profile(tmp_path, task: str) -> None:
+    config, records = _fake_wrapper(tmp_path)
+    _with_profile(config, "budget")
+    args = ["--task", task, "--file", str(FIXTURES / "budget.xlsx"), "--sheet", "0", "--request-id", f"p-{task}"]
+    if task == "analyze":
+        args += ["--question", QUESTION]
+    completed = _run_connect(args, tmp_path, config, records)
+    assert completed.returncode == 0, completed.stderr
+    seen = json.loads((records / f"p-{task}.json").read_text(encoding="utf-8"))
+    assert seen["payload"]["profile_name"] == "budget"
+
+
+@pytest.mark.parametrize("value", ["", "../budget", "budget profile", 3])
+def test_invalid_analysis_profile_does_not_spawn(tmp_path, value) -> None:
+    config, records = _fake_wrapper(tmp_path)
+    _with_profile(config, value)
+    completed = _run_connect(
+        ["--task", "analyze", "--file", str(FIXTURES / "budget.xlsx"), "--sheet", "0",
+         "--question", QUESTION, "--request-id", "bad-profile"],
+        tmp_path, config, records,
+    )
+    body = _single_json(completed.stdout)
+    assert completed.returncode == 2
+    assert body["error"]["code"] == "invalid_operator_config"
+    assert list(records.iterdir()) == []
