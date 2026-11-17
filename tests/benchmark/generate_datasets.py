@@ -254,6 +254,11 @@ from tests.benchmark.structural import WRITERS as _STRUCTURAL_WRITERS  # noqa: E
 
 DATASETS.update(_STRUCTURAL_WRITERS)
 
+# Held-out layouts, run only at the end (see heldout.py).
+from tests.benchmark.heldout import WRITERS as _HELDOUT_WRITERS  # noqa: E402
+
+DATASETS.update(_HELDOUT_WRITERS)
+
 
 def ensure_datasets(datasets_dir: Path | None = None, *, force: bool = False) -> dict[str, Path]:
     root = datasets_dir or DATASETS_DIR
