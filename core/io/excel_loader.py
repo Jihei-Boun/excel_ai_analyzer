@@ -25,8 +25,33 @@ _DATE_VALUE_RE = re.compile(
 
 
 def load_excel(path: str | Path, *, sheet_name: str | int = 0) -> pd.DataFrame:
-    """엑셀 파일을 읽고 기본 전처리를 적용한다."""
+    """엑셀 파일을 읽고 기본 전처리를 적용한다.
+
+    xlsx/xlsm은 먼저 LLM이 표 구조(머리글 행, 데이터 범위, 소계·총계 행)를 판단하고
+    코드가 그 판단을 검증한다. 검증을 통과하지 못하면 아래 기존 방식으로 읽고,
+    결과의 attrs["table_structure"]에 구조를 확신하지 못했다고 남긴다.
+    """
+    from core.io import table_structure
+
     excel_path = Path(path)
+    fallback_reason = "disabled"
+    if excel_path.suffix.lower() in {".xlsx", ".xlsm"} and table_structure.enabled():
+        try:
+            raw, info = table_structure.read_with_llm(excel_path, sheet_name)
+            df = sanitize_dataframe(raw)
+            df.attrs[table_structure.ATTRS_KEY] = info
+            return df
+        except table_structure.StructureError as exc:
+            fallback_reason = str(exc)
+        except Exception as exc:  # 읽기 자체 오류는 기존 방식이 다시 판단한다
+            fallback_reason = f"structure_read_failed: {type(exc).__name__}"
+
+    df = _load_excel_heuristic(excel_path, sheet_name)
+    df.attrs[table_structure.ATTRS_KEY] = {"source": "fallback", "reason": fallback_reason}
+    return df
+
+
+def _load_excel_heuristic(excel_path: Path, sheet_name: str | int) -> pd.DataFrame:
     header_depth = _detect_header_depth(excel_path, sheet_name)
 
     if header_depth >= 2:
