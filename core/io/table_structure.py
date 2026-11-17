@@ -394,6 +394,15 @@ def verify(s: Structure, grid: Grid) -> None:
     records = _record_rows(s)
     if not records:
         raise StructureError("no_records")
+    # Group labels name the group of the records below them, so every record needs one above it.
+    labels = [r for r, role in s.roles.items() if role == "group_label"]
+    if labels:
+        orphans = [r for r in records if r < min(labels)]
+        if orphans:
+            raise StructureError(
+                f"records_without_group: R{orphans[0]}-R{orphans[-1]} are above the first "
+                f"group_label row R{min(labels)}, so they belong to no group"
+            )
     for row, role in s.roles.items():
         if role in _SUMMARY_ROLES:
             covered = _covered_rows(s, row, records)
