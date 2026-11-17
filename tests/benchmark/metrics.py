@@ -56,10 +56,48 @@ class CaseResult:
     semantic_warning: bool = False
     details: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
+    # correct | honest_failure | flagged_wrong | silent_wrong | crash (see classify_outcome)
+    outcome: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         return d
+
+
+OUTCOMES = ("correct", "honest_failure", "flagged_wrong", "silent_wrong", "crash")
+
+# 계획 검증을 거치지 않는 경로. headless 응답에서 unverified_fallback 경고가 붙는다.
+_UNVERIFIED_ROUTES = frozenset({"legacy_fallback", "pandasai", "retrieval", "unknown"})
+
+
+def classify_outcome(
+    *,
+    crashed: bool,
+    expect_safe_failure: bool,
+    ok: bool,
+    exec_ok: bool | None,
+    has_result: bool,
+    route_observed: str | None,
+) -> str:
+    """사용자 입장에서 본 결과 분류.
+
+    - correct: 숫자가 맞다 (정답이 없는 사례는 전체 ok로 판단).
+    - honest_failure: 틀렸지만 결과 표 없이 끝났다 (되묻기·안전 실패).
+    - flagged_wrong: 틀렸고 검증 없는 대체 경로 결과라 경고가 붙는다.
+    - silent_wrong: 틀렸는데 검증된 분석 계획 결과로 나간다. 가장 위험하다.
+    """
+    if crashed:
+        return "crash"
+    if expect_safe_failure:
+        return "correct" if ok else "silent_wrong"
+    correct = exec_ok if exec_ok is not None else ok
+    if correct:
+        return "correct"
+    if not has_result:
+        return "honest_failure"
+    if route_observed in _UNVERIFIED_ROUTES:
+        return "flagged_wrong"
+    return "silent_wrong"
 
 
 def _rate(num: int, den: int) -> float:
@@ -73,6 +111,7 @@ def summarize_results(
     *,
     model: str | None = None,
     mode: str = "deterministic",
+    profile_override: str | None = None,
 ) -> dict[str, Any]:
     total = len(results)
     by_domain: dict[str, list[CaseResult]] = defaultdict(list)
@@ -87,6 +126,7 @@ def summarize_results(
         interp_checked = [i for i in items if i.levels.interpretation is not None]
         return {
             "total_cases": n,
+            "outcomes": {name: sum(1 for i in items if i.outcome == name) for name in OUTCOMES},
             "overall_ok_rate": _rate(sum(1 for i in items if i.ok), n),
             "routing_success_rate": _rate(
                 sum(1 for i in routing_checked if i.levels.routing), len(routing_checked)
@@ -176,6 +216,7 @@ def summarize_results(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "mode": mode,
         "model": model,
+        "profile_override": profile_override,
         "total_cases": total,
         "overall": _block(results),
         "by_domain": {dom: _block(items) for dom, items in sorted(by_domain.items())},

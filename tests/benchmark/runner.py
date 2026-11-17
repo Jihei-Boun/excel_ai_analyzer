@@ -10,6 +10,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import traceback
 from pathlib import Path
@@ -27,17 +28,67 @@ from tests.benchmark.evaluate import (
     observe_route,
 )
 from tests.benchmark.generate_datasets import ensure_datasets
-from tests.benchmark.metrics import CaseResult, LevelScores, compare_summaries, save_summary, summarize_results
+from tests.benchmark.metrics import (
+    CaseResult,
+    LevelScores,
+    classify_outcome,
+    compare_summaries,
+    save_summary,
+    summarize_results,
+)
 from tests.benchmark.schema import BenchmarkCase, load_all_cases
 
 
-def _load_dataset(name: str, datasets_dir: Path) -> pd.DataFrame:
+def _load_dataset(name: str, datasets_dir: Path, *, app_loader: bool = False) -> pd.DataFrame:
     path = datasets_dir / name
     if not path.is_file():
         ensure_datasets(datasets_dir, force=False)
     if not path.is_file():
         raise FileNotFoundError(path)
+    if app_loader:
+        # 실제 앱·headless와 같은 로더 (2단 헤더, 병합 셀, 숫자 문자열 정리)
+        from core.io.excel_loader import load_tabular
+
+        return load_tabular(path)
     return pd.read_excel(path)
+
+
+def _route_like_app(
+    df: pd.DataFrame, question: str, *, base_url: str, model: str, profile_name: str
+) -> tuple[Any, str, dict]:
+    """웹 앱·headless와 같은 route_single_prompt로 실행하고, 분석 메타는 따로 잡아 둔다.
+
+    route_single_prompt는 사용자 응답용 메타만 남기므로 경로 관측용 analysis_meta를
+    run_analysis 호출에서 가로챈다. 결과 표와 답변은 앱과 같다.
+    """
+    import core.routing.route_single as route_single
+
+    captured: dict[str, Any] = {}
+    original = route_single.run_analysis
+
+    def _capture(*args: Any, **kwargs: Any):
+        result = original(*args, **kwargs)
+        captured.clear()
+        captured.update(result[2] or {})
+        return result
+
+    route_single.run_analysis = _capture
+    try:
+        outcome = route_single.route_single_prompt(
+            question,
+            full_df=df,
+            source_df=df,
+            context_label=None,
+            base_url=base_url,
+            model=model,
+            profile_name=profile_name,
+        )
+    finally:
+        route_single.run_analysis = original
+    meta = dict(captured)
+    for key, value in (outcome.meta or {}).items():
+        meta.setdefault(key, value)
+    return outcome.dataframe, outcome.reply or "", meta
 
 
 def _is_system_question(question: str) -> bool:
@@ -228,7 +279,16 @@ def run_case_deterministic(
         failure_category = "safe_failure_ok"
         ok = True
 
+    outcome = classify_outcome(
+        crashed=crashed,
+        expect_safe_failure=case.expected.expect_safe_failure,
+        ok=ok,
+        exec_ok=exec_ok,
+        has_result=isinstance(result_df, pd.DataFrame) and not result_df.empty,
+        route_observed=route_observed,
+    )
     return CaseResult(
+        outcome=outcome,
         case_id=case.id,
         domain=case.domain,
         profile=case.profile,
@@ -259,7 +319,7 @@ def run_case_live(
     base_url: str,
     model: str,
 ) -> CaseResult:
-    df = _load_dataset(case.dataset, datasets_dir)
+    df = _load_dataset(case.dataset, datasets_dir, app_loader=True)
     levels = LevelScores()
     details: dict[str, Any] = {}
     crashed = False
@@ -286,17 +346,12 @@ def run_case_live(
             result_df, reply, meta = _run_system(case, df)
             route_observed = "system"
         else:
-            from core.analysis.analyzer import run_analysis
-
-            # Monkeypatch chat to mark pandasai without requiring live PandasAI server
-            # when pipeline succeeds; if pipeline fails, allow real/fallback path.
-            result_df, reply, meta = run_analysis(
+            result_df, reply, meta = _route_like_app(
                 df,
                 case.question,
                 base_url=base_url,
                 model=model,
                 profile_name=case.profile,
-                skip_aggregate_shortcuts=False,
             )
             meta = dict(meta or {})
             route_observed = observe_route(meta)
@@ -385,7 +440,16 @@ def run_case_live(
     if (legacy_fallback or pandasai_fallback) and case.expected.route == "analysis_plan" and not ok:
         failure_category = "fallback"
 
+    outcome = classify_outcome(
+        crashed=crashed,
+        expect_safe_failure=case.expected.expect_safe_failure,
+        ok=ok,
+        exec_ok=exec_ok,
+        has_result=isinstance(result_df, pd.DataFrame) and not result_df.empty,
+        route_observed=route_observed,
+    )
     return CaseResult(
+        outcome=outcome,
         case_id=case.id,
         domain=case.domain,
         profile=case.profile,
@@ -417,10 +481,14 @@ def run_suite(
     model: str = "qwen2.5:14b",
     datasets_dir: Path | None = None,
     save: bool = True,
+    profile_override: str | None = None,
 ) -> dict[str, Any]:
     datasets_dir = datasets_dir or DATASETS_DIR
     ensure_datasets(datasets_dir, force=False)
     cases = load_all_cases(domains=domains)
+    if profile_override:
+        # 손으로 쓴 도메인 프로필 없이 얼마나 되는지 재려고 모든 사례의 프로필을 바꾼다.
+        cases = [dataclasses.replace(case, profile=profile_override) for case in cases]
     results: list[CaseResult] = []
     for case in cases:
         if live:
@@ -443,6 +511,7 @@ def run_suite(
         results,
         model=model if live else "fixed_plan",
         mode="live" if live else "deterministic",
+        profile_override=profile_override,
     )
     if save:
         path = save_summary(summary, RESULTS_DIR)
@@ -459,6 +528,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default="qwen2.5:7b")
     parser.add_argument("--compare", default=None, help="Compare against a previous summary JSON")
     parser.add_argument("--no-save", action="store_true")
+    parser.add_argument("--profile", default=None, help="Run every case with this profile (e.g. generic)")
     args = parser.parse_args(argv)
 
     if args.compare and not (args.deterministic or args.live):
@@ -481,6 +551,7 @@ def main(argv: list[str] | None = None) -> int:
         base_url=args.base_url,
         model=args.model,
         save=not args.no_save,
+        profile_override=args.profile,
     )
     overall = summary.get("overall") or {}
     print(
@@ -488,7 +559,9 @@ def main(argv: list[str] | None = None) -> int:
             {
                 "mode": summary.get("mode"),
                 "saved_to": summary.get("saved_to"),
+                "profile_override": summary.get("profile_override"),
                 "total_cases": summary.get("total_cases"),
+                "outcomes": overall.get("outcomes"),
                 "overall_ok_rate": overall.get("overall_ok_rate"),
                 "analysis_plan_direct_rate": overall.get("analysis_plan_direct_rate"),
                 "fallback_rate": overall.get("fallback_rate"),

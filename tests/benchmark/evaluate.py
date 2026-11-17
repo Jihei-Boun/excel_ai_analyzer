@@ -178,6 +178,9 @@ def eval_execution(
     tol = float(expected.result_tolerance)
     exp = expected.expected_result
 
+    if any(k in exp for k in _CELL_KEYS):
+        return _eval_cells(exp, result_df)
+
     # Pattern A: {label: value} mapped via first non-numeric col + first numeric col
     if all(not str(k).startswith("_") for k in exp.keys()) and not any(
         k in exp for k in ("row_count", "min_rows", "max_rows", "contains", "metric_values")
@@ -208,7 +211,8 @@ def eval_execution(
                 got = mapping.get(str(key))
                 if got is None:
                     # try partial match
-                    hits = [v for k, v in mapping.items() if str(key) in k or k in str(key)]
+                    # 빈 라벨은 모든 문자열에 부분 일치하므로 제외한다.
+                    hits = [v for k, v in mapping.items() if k and (str(key) in k or k in str(key))]
                     got = hits[0] if hits else None
                 if got is None:
                     return False, f"missing label {key} in {mapping}", "wrong_result"
@@ -238,6 +242,96 @@ def eval_execution(
                     return False, f"{col} missing value {want}", "wrong_result"
 
     return True, "result checks passed", "none"
+
+
+_CELL_KEYS = ("cells", "ratio_cells", "pairs", "ratio_pairs", "labels", "absent_labels", "absent_cells")
+
+
+def _numbers_in(result_df: pd.DataFrame) -> list[float]:
+    values: list[float] = []
+    for col in result_df.columns:
+        for v in pd.to_numeric(result_df[col], errors="coerce").dropna().tolist():
+            values.append(float(v))
+    return values
+
+
+def _texts_in(result_df: pd.DataFrame) -> set[str]:
+    texts = {str(c).strip() for c in result_df.columns}
+    for col in result_df.columns:
+        for v in result_df[col].tolist():
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                continue
+            texts.add(str(v).strip())
+    return texts
+
+
+def _close(got: float, want: float, abs_tol: float = 0.01) -> bool:
+    return abs(got - want) <= max(abs_tol, abs(want) * 1e-9)
+
+
+def _value_matches(values: list[float], want: float, *, ratio: bool) -> bool:
+    if ratio:
+        return any(_close(v, want, 0.006) or _close(v, 100 * want, 0.06) for v in values)
+    return any(_close(v, want) for v in values)
+
+
+def _pair_present(result_df: pd.DataFrame, label: str, want: float, *, ratio: bool) -> bool:
+    """라벨과 값이 같은 행에 있거나, 라벨 이름의 열에 값이 있으면 True (행·열 바꾼 표 포함)."""
+    for _, row in result_df.iterrows():
+        cells = [str(v).strip() for v in row.tolist()]
+        if label in cells:
+            numbers = pd.to_numeric(pd.Series(row.tolist()), errors="coerce").dropna().tolist()
+            if _value_matches([float(v) for v in numbers], want, ratio=ratio):
+                return True
+    for col in result_df.columns:
+        if str(col).strip() == label:
+            numbers = pd.to_numeric(result_df[col], errors="coerce").dropna().tolist()
+            if _value_matches([float(v) for v in numbers], want, ratio=ratio):
+                return True
+    return False
+
+
+def _eval_cells(exp: dict[str, Any], result_df: pd.DataFrame) -> tuple[bool, str, str]:
+    """표 모양과 열 이름에 기대지 않는 검사. 행·열을 바꾼 표도 같은 기준으로 본다.
+
+    - cells: 결과 표 어딘가에 이 숫자가 모두 있어야 한다 (소수 둘째 자리 반올림 허용).
+    - ratio_cells: 비율 v가 v 또는 100·v(백분율)로 있어야 한다.
+    - pairs / ratio_pairs: {라벨: 값}. 그 라벨이 있는 행(또는 그 이름의 열)에 그 값이 있어야 한다.
+    - labels: 셀 값이나 열 이름에 이 글자가 정확히 있어야 한다.
+    - absent_labels: 셀 값이나 열 이름에 이 글자가 들어가면 안 된다 (소계·총계 행 등).
+    - absent_cells: 이 숫자가 있으면 안 된다 (잘못 고른 열이나 소계를 더한 값).
+    - row_count / max_rows / min_rows: 행 수.
+    """
+    numbers = _numbers_in(result_df)
+    texts = _texts_in(result_df)
+    for want in exp.get("cells") or []:
+        if not any(_close(v, float(want)) for v in numbers):
+            return False, f"missing value {want}", "wrong_result"
+    for want in exp.get("ratio_cells") or []:
+        w = float(want)
+        if not any(_close(v, w, 0.006) or _close(v, 100 * w, 0.06) for v in numbers):
+            return False, f"missing ratio {want} (or {100 * w:.2f}%)", "wrong_result"
+    for key, ratio in (("pairs", False), ("ratio_pairs", True)):
+        for label, want in (exp.get(key) or {}).items():
+            if not _pair_present(result_df, str(label), float(want), ratio=ratio):
+                return False, f"{label}: value {want} not on its row/column", "wrong_result"
+    for label in exp.get("labels") or []:
+        if str(label) not in texts:
+            return False, f"missing label {label}", "wrong_result"
+    for label in exp.get("absent_labels") or []:
+        hit = next((t for t in texts if str(label) in t), None)
+        if hit is not None:
+            return False, f"unexpected label {hit}", "wrong_result"
+    for bad in exp.get("absent_cells") or []:
+        if any(_close(v, float(bad)) for v in numbers):
+            return False, f"unexpected value {bad}", "wrong_result"
+    if "row_count" in exp and len(result_df) != int(exp["row_count"]):
+        return False, f"row_count {len(result_df)} != {exp['row_count']}", "wrong_result"
+    if "min_rows" in exp and len(result_df) < int(exp["min_rows"]):
+        return False, f"min_rows fail {len(result_df)}", "wrong_result"
+    if "max_rows" in exp and len(result_df) > int(exp["max_rows"]):
+        return False, f"max_rows fail {len(result_df)}", "wrong_result"
+    return True, "cell checks passed", "none"
 
 
 _NUM_RE = re.compile(
