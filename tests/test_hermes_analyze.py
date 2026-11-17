@@ -271,3 +271,18 @@ def test_invalid_analysis_profile_does_not_spawn(tmp_path, value) -> None:
     assert completed.returncode == 2
     assert body["error"]["code"] == "invalid_operator_config"
     assert list(records.iterdir()) == []
+
+
+def test_answer_carries_table_reading_notices(monkeypatch, tmp_path) -> None:
+    response = _success([{"합계": 4321.0}], ["합계"])
+    response["warnings"] = [
+        {"code": "table_structure_unverified", "message": "표 구조를 확인하지 못했습니다.", "stage": "file_loading"},
+        {"code": "table_rows_excluded", "message": "총계 1행(원본 9행)은 계산에서 제외했습니다.", "stage": "file_loading"},
+    ]
+    _mock(monkeypatch, response, 0)
+    _, body = _invoke(monkeypatch, tmp_path, _args("p"))
+    assert body["answer"] == (
+        "표 구조를 확인하지 못했습니다.\n\n분석 결과입니다.\n\n| 합계 |\n| --- |\n| 4,321 |"
+        "\n\n참고: 총계 1행(원본 9행)은 계산에서 제외했습니다."
+    )
+    assert body["fallback_unverified"] is False

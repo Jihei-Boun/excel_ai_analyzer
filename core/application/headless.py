@@ -62,6 +62,7 @@ from core.io.excel_loader import (
 from core.profile_loader import list_profile_names, load_profile, use_profile
 from core.routing.route_multi import route_multi_prompt
 from core.routing.route_single import route_single_prompt
+from core.io import table_structure
 from core.routing.route_types import SingleRouteOutcome
 from core.summary.file_summary import build_file_summary, is_summary_request
 
@@ -301,6 +302,7 @@ def _execute(request: AnalyzeRequest, *, started: float) -> AnalyzeResponse:
             route=route,
             dest_dir=dest_dir,
             elapsed_ms=_elapsed_ms(started),
+            table_warnings=_table_structure_warnings(loaded),
         )
     finally:
         _assert_inputs_unchanged(loaded)
@@ -485,6 +487,7 @@ def _normalize_outcome(
     route: str,
     dest_dir: Path,
     elapsed_ms: int,
+    table_warnings: list[WarningItem] | None = None,
 ) -> AnalyzeResponse:
     meta = outcome.meta if isinstance(outcome.meta, dict) else {}
     fallback_reason = str(meta.get("fallback_reason") or "")
@@ -516,7 +519,7 @@ def _normalize_outcome(
         structural_state = "failed"
     validation_failed = structural_state == "failed"
     unsafe_blocked = _looks_like_unsafe_block(outcome.reply)
-    warnings = _warnings_from_outcome(outcome)
+    warnings = list(table_warnings or []) + _warnings_from_outcome(outcome)
     if unverified:
         warnings.append(
             WarningItem(
@@ -667,6 +670,20 @@ def _allowlisted_meta(meta: dict | None) -> dict[str, Any]:
         else:
             out[key] = json_safe(value)
     return out
+
+
+def _table_structure_warnings(loaded: list[_LoadedInput]) -> list[WarningItem]:
+    """How each sheet was read (header row, summary rows left out, unverified layout)."""
+    warnings: list[WarningItem] = []
+    for item in loaded:
+        found = table_structure.notice(item.frame.attrs.get(table_structure.ATTRS_KEY))
+        if not found:
+            continue
+        code, message = found
+        if len(loaded) > 1:
+            message = f"[{item.label}] {message}"
+        warnings.append(WarningItem(code=code, message=message, stage="file_loading"))
+    return warnings
 
 
 def _warnings_from_outcome(outcome: SingleRouteOutcome) -> list[WarningItem]:

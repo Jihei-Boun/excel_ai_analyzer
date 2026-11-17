@@ -174,6 +174,54 @@ def _ollama_ask(model: str) -> AskFn:
     return ask
 
 
+NOTICE_EXCLUDED = "table_rows_excluded"
+NOTICE_UNVERIFIED = "table_structure_unverified"
+_ROLE_LABELS = {"subtotal": "소계", "total": "총계", "blank": "빈 줄"}
+
+
+def notice(info: Any) -> tuple[str, str] | None:
+    """A Korean sentence telling the user how the sheet was read, or None if there is nothing to say.
+
+    Returns (code, message). Only facts that change what is counted are reported:
+    a header below row 1, summary rows left out of the calculation, group labels
+    moved into a column, or a layout that could not be verified.
+    """
+    if not isinstance(info, dict):
+        return None
+    if info.get("source") == "fallback":
+        if info.get("reason") in (None, "disabled"):
+            return None
+        return (
+            NOTICE_UNVERIFIED,
+            "표 구조(머리글 위치, 합계 행)를 확인하지 못해 기본 방식으로 읽었습니다. "
+            "머리글이나 합계 행이 잘못 읽혔을 수 있으니 원본과 대조해 주세요.",
+        )
+    if info.get("source") != "llm":
+        return None
+    parts: list[str] = []
+    header = info.get("header_rows") or []
+    if header and header[0] > 1:
+        parts.append(f"원본 {_rows_text(header)}을 머리글로 읽고 그 위 줄은 제외했습니다.")
+    excluded = info.get("excluded_rows") or {}
+    counted = [(role, rows) for role, rows in excluded.items() if role in ("subtotal", "total") and rows]
+    if counted:
+        what = ", ".join(f"{_ROLE_LABELS[role]} {len(rows)}행" for role, rows in counted)
+        rows = sorted(r for _, rs in counted for r in rs)
+        parts.append(f"{what}(원본 {_rows_text(rows)})은 계산에서 제외했습니다.")
+    if info.get("group_column"):
+        parts.append(f"그룹 제목 줄은 '{info['group_column']}' 열로 옮겼습니다.")
+    if not parts:
+        return None
+    return NOTICE_EXCLUDED, " ".join(parts)
+
+
+def _rows_text(rows: list[int]) -> str:
+    rows = sorted(rows)
+    if len(rows) > 1 and rows == list(range(rows[0], rows[-1] + 1)):
+        return f"{rows[0]}~{rows[-1]}행"
+    return ", ".join(str(r) for r in rows) + "행"
+
+
 # ---------------------------------------------------------------------------
 # Reading the sheet and showing it to the LLM
 # ---------------------------------------------------------------------------

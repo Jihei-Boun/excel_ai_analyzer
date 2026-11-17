@@ -157,7 +157,11 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
     from core.io.normalize import normalize_dataframe
 
-    return normalize_dataframe(_preprocess(df))
+    out = normalize_dataframe(_preprocess(df))
+    # 표 구조 정보(attrs)는 다시 정리해도 남긴다.
+    for key, value in df.attrs.items():
+        out.attrs.setdefault(key, value)
+    return out
 
 
 def _preprocess(df: pd.DataFrame) -> pd.DataFrame:

@@ -253,3 +253,52 @@ def test_numbers_stored_as_text_count_as_numbers(tmp_path) -> None:
         ts.read_with_llm(path, 0, ask=_ask(_answer([1], "A", "B", (2, 3))))
     raw, info = ts.read_with_llm(path, 0, ask=_ask(_answer([1], "A", "B", (2, 4), special=[(4, "total")])))
     assert raw["항목"].tolist() == ["가", "나"] and info["excluded_rows"] == {"total": [4]}
+
+
+def test_notice_reports_header_and_excluded_rows() -> None:
+    info = {"source": "llm", "header_rows": [3, 4], "excluded_rows": {"subtotal": [8, 12], "total": [13], "blank": [9]},
+            "group_column": "권역"}
+    code, message = ts.notice(info)
+    assert code == ts.NOTICE_EXCLUDED
+    assert message == (
+        "원본 3~4행을 머리글로 읽고 그 위 줄은 제외했습니다. "
+        "소계 2행, 총계 1행(원본 8, 12, 13행)은 계산에서 제외했습니다. "
+        "그룹 제목 줄은 '권역' 열로 옮겼습니다."
+    )
+
+
+@pytest.mark.parametrize(
+    "info",
+    [None, {"source": "fallback", "reason": "disabled"}, {"source": "llm", "header_rows": [1], "excluded_rows": {"blank": [5]}}],
+)
+def test_notice_is_quiet_when_nothing_changes_the_count(info) -> None:
+    assert ts.notice(info) is None
+
+
+def test_notice_warns_when_layout_is_unverified() -> None:
+    code, message = ts.notice({"source": "fallback", "reason": "subtotal_does_not_add_up: R4"})
+    assert code == ts.NOTICE_UNVERIFIED and "원본과 대조" in message
+
+
+def test_sanitize_keeps_table_structure_info(tmp_path) -> None:
+    from core.io.excel_loader import sanitize_dataframe
+
+    df = load_excel(_form(tmp_path))
+    assert sanitize_dataframe(df).attrs[ts.ATTRS_KEY] == df.attrs[ts.ATTRS_KEY]
+
+
+def test_headless_turns_the_notice_into_a_warning() -> None:
+    import pandas as pd
+    from types import SimpleNamespace
+
+    from core.application.headless import _table_structure_warnings
+
+    frame = pd.DataFrame({"a": [1]})
+    frame.attrs[ts.ATTRS_KEY] = {"source": "llm", "header_rows": [1], "excluded_rows": {"total": [5]}}
+    quiet = pd.DataFrame({"a": [1]})
+    one = _table_structure_warnings([SimpleNamespace(frame=frame, label="a.xlsx")])
+    assert [w.to_dict() for w in one] == [
+        {"code": "table_rows_excluded", "message": "총계 1행(원본 5행)은 계산에서 제외했습니다.", "stage": "file_loading"}
+    ]
+    two = _table_structure_warnings([SimpleNamespace(frame=frame, label="a.xlsx"), SimpleNamespace(frame=quiet, label="b.xlsx")])
+    assert [w.message for w in two] == ["[a.xlsx] 총계 1행(원본 5행)은 계산에서 제외했습니다."]

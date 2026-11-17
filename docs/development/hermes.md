@@ -95,6 +95,7 @@ python3 ${HERMES_SKILL_DIR}/connect.py --task summary --file /절대/경로/파�
 | `answer_table` | (`analyze`) 결과를 천 단위 쉼표와 반올림으로 표시한 마크다운 표. `(%)` 값은 소수 둘째 자리 |
 | `question_sent` | (`analyze`) 엔진에 실제로 보낸 질문 |
 | `warnings`, `fallback_unverified` | (`analyze`) `unverified_fallback` 경고가 있으면 `fallback_unverified`가 true. 계획 검증 없이 대체 경로(PandasAI 등)로 만든 결과라는 뜻 |
+| `warnings` (표 읽기) | (`analyze`) `table_rows_excluded`: 머리글을 1행이 아닌 곳에서 읽었거나 소계·총계 행을 계산에서 뺐음. `answer` 표 아래 "참고:"로 붙음. `table_structure_unverified`: 표 구조를 확인하지 못해 기존 방식으로 읽음. `answer` 맨 앞에 붙음 |
 | `safety.validation_status` | (엔진·래퍼 응답만) 분석 계획 검증을 통과했으면 `passed`, 대체 경로 결과면 `not_run` |
 | `structural_state` | 결과 구조 검사를 했는지(`passed`/`failed`/`not_run`/`unknown`). `passed`여도 의미가 맞다는 보증은 아님 |
 | `input_integrity` | 실행 전후 입력 파일 해시가 같으면 `unchanged` |

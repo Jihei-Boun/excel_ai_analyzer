@@ -5,6 +5,7 @@ from __future__ import annotations
 import streamlit as st
 
 from core.io.excel_loader import load_tabular, sanitize_dataframe
+from core.io import table_structure
 from core.schema.quality import diagnose_dataframe, format_quality_summary, friendly_load_error
 from ui.display import for_preview_display, preview_column_labels, render_dataframe
 from ui.file_state import (
@@ -68,6 +69,7 @@ def render_preview_section() -> None:
             return
 
     st.subheader("데이터 미리보기")
+    _render_table_structure_notice(df)
     height = min(900, max(280, 38 * (min(len(df), 100) + 1)))
     display_df = for_preview_display(df.head(100) if len(df) > 100 else df)
     column_labels = preview_column_labels(list(display_df.columns))
@@ -158,6 +160,18 @@ def _switch_preview_sheet(file_id: str, meta: dict, sheet_name: str) -> None:
         }
 
     st.rerun()
+
+
+def _render_table_structure_notice(df) -> None:
+    """How the sheet was read: header row, summary rows left out, or an unverified layout."""
+    found = table_structure.notice(df.attrs.get(table_structure.ATTRS_KEY))
+    if not found:
+        return
+    code, message = found
+    if code == table_structure.NOTICE_UNVERIFIED:
+        st.warning(message)
+    else:
+        st.info(message)
 
 
 def _render_summary_cards(df) -> None:
