@@ -250,3 +250,107 @@ def test_percent_columns_are_shown_with_percent_sign() -> None:
     assert result is not None
     assert list(result.dataframe.columns) == ["비용명_2", "당해", "이월", "집행률(%)"]
     assert list(result.dataframe["집행률(%)"]) == [300.0, 250.0]
+
+
+# --- Operand question: the planner may confirm columns the request did not name ---
+
+def _months_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {"지점": ["가", "나"], "1월": [10, 20], "2월": [1, 2], "3월": [3, 4], "4월": [100, 200]}
+    )
+
+
+_RANGE_PLAN = {
+    "steps": [
+        {"op": "derive_column", "name": "합", "expr": {"sum": ["1월", "2월", "3월", "4월"]}},
+        {"op": "select_columns", "columns": ["지점", "합"]},
+    ],
+    "interpret": False,
+}
+
+
+def _run_planner(plans: list[dict], prompt: str):
+    from core.analysis.analysis_pipeline import try_analysis_pipeline
+
+    calls = {"n": 0, "feedback": []}
+
+    def fake_chat_json(*_a, **kwargs):
+        calls["feedback"].append(str(_a) + str(kwargs))
+        plan = plans[min(calls["n"], len(plans) - 1)]
+        calls["n"] += 1
+        return plan
+
+    result = try_analysis_pipeline(
+        prompt,
+        _months_df(),
+        base_url="http://localhost",
+        model="dummy",
+        profile_name="generic",
+        max_retries=2,
+        chat_json_fn=fake_chat_json,
+        chat_text_fn=lambda *_a, **_k: "",
+    )
+    return result, calls
+
+
+def test_operand_issue_asks_rather_than_orders() -> None:
+    report = _derive_report({"mean": ["추가", "이월", "당해"]}, "이월과 당해 평균을 항목별로 구해줘")
+    issue = next(i for i in report.errors if i.code == "derive_operand_not_requested")
+    assert "submit the same plan again" in issue.message
+
+
+def test_resubmitted_plan_is_accepted_with_a_visible_warning() -> None:
+    result, calls = _run_planner([_RANGE_PLAN, _RANGE_PLAN], "지점별 1월부터 4월까지 합계를 구해줘")
+    assert result is not None
+    assert calls["n"] == 2
+    assert list(result.dataframe["합"]) == [114, 226]
+    confirmed = [w for w in result.meta["validation_warnings"] if w.startswith("derive_operand_confirmed")]
+    assert len(confirmed) == 1 and "2월" in confirmed[0] and "3월" in confirmed[0]
+    assert "1월" not in confirmed[0].split("(", 1)[1]
+    assert "참고:" in result.reply
+    # The second request must not tell the planner to change a plan it was asked to confirm.
+    assert "Do not repeat the previous invalid plan unchanged" not in calls["feedback"][1]
+
+
+def test_planner_that_drops_the_extra_columns_gets_no_warning() -> None:
+    narrowed = {
+        "steps": [
+            {"op": "derive_column", "name": "합", "expr": {"sum": ["1월", "4월"]}},
+            {"op": "select_columns", "columns": ["지점", "합"]},
+        ],
+        "interpret": False,
+    }
+    result, _ = _run_planner([_RANGE_PLAN, narrowed], "지점별 1월과 4월 합계를 구해줘")
+    assert result is not None
+    assert list(result.dataframe["합"]) == [110, 220]
+    assert not [w for w in result.meta["validation_warnings"] if w.startswith("derive_operand_confirmed")]
+
+
+def test_confirmation_does_not_override_other_errors() -> None:
+    from core.analysis.analysis_plan_validate import confirm_derive_operands
+    from core.integrate.plan_types import ValidationIssue, ValidationReport
+
+    report = ValidationReport(
+        ok=False,
+        issues=[
+            ValidationIssue("error", "derive_operand_not_requested", "q"),
+            ValidationIssue("error", "missing_select_column", "x"),
+        ],
+    )
+    plan = analysis_plan_from_dict(_RANGE_PLAN, available_columns=list(_months_df().columns), profile_name="generic")
+    assert confirm_derive_operands(report, plan, user_prompt="1월부터 4월까지") is report
+
+
+def test_headless_lists_confirmed_operands_as_a_warning() -> None:
+    from core.application.headless import _warnings_from_outcome
+    from core.routing.route_types import SingleRouteOutcome
+
+    outcome = SingleRouteOutcome(
+        reply="",
+        dataframe=None,
+        meta={"validation_warnings": ["derive_operand_confirmed: 열도 함께 계산했습니다 (2월).", "other: x"]},
+    )
+    warnings = _warnings_from_outcome(outcome)
+    assert [(w.code, w.message) for w in warnings] == [
+        ("derive_operand_confirmed", "열도 함께 계산했습니다 (2월).")
+    ]

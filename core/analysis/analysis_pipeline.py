@@ -22,6 +22,9 @@ from core.analysis.ops_reshape import transpose_table
 from core.analysis.analysis_plan_builder import build_analysis_plan
 from core.analysis.analysis_plan_types import AnalysisPlan
 from core.analysis.analysis_plan_validate import (
+    DERIVE_OPERAND_CONFIRMED,
+    DERIVE_OPERAND_QUESTION,
+    confirm_derive_operands,
     format_plan_validation_feedback,
     validate_analysis_plan,
 )
@@ -128,6 +131,9 @@ def try_analysis_pipeline(
     regenerate_retry_success = 0
     last_retry_mode: str | None = None
     semantic_ambiguity = False
+    # 피연산자 질문(derive_operand_not_requested)만으로 돌려보낸 계획 서명.
+    # Planner가 같은 계획을 다시 내면 반복이 아니라 확인된 판단으로 받는다.
+    questioned_signatures: set[str] = set()
 
     def _attempt(
         attempt_index: int,
@@ -138,7 +144,8 @@ def try_analysis_pipeline(
         nonlocal semantic_ambiguity, same_operation_family_repeat, last_rejected_family
         # 동일 plan / family 반복 방지 힌트 (정답 op 강제 금지)
         errors_for_planner = list(previous_errors or [])
-        if attempt_index > 0 and seen_signatures:
+        last_was_question = bool(seen_signatures) and seen_signatures[-1] in questioned_signatures
+        if attempt_index > 0 and seen_signatures and not last_was_question:
             errors_for_planner = [
                 *errors_for_planner,
                 "Do not repeat the previous invalid plan unchanged. "
@@ -169,6 +176,7 @@ def try_analysis_pipeline(
                 classified_df=classified,
                 profile_name=profile_name,
                 previous_errors=errors_for_planner or None,
+                allow_resubmit=last_was_question,
                 chat_json_fn=json_fn,
             )
         except Exception as exc:  # noqa: BLE001 — LLM/sanitize 실패 시 폴백
@@ -192,7 +200,8 @@ def try_analysis_pipeline(
         comp_cat = plan_composition_category(plan_dict)
         family_repeated = bool(family and family in rejected_operation_families)
 
-        if signature and signature in seen_signatures:
+        confirming = bool(signature) and signature in questioned_signatures
+        if signature and signature in seen_signatures and not confirming:
             duplicate_plan_count += 1
             same_operation_family_repeat += 1
             if family:
@@ -236,7 +245,7 @@ def try_analysis_pipeline(
         if family_repeated:
             same_operation_family_repeat += 1
 
-        if signature:
+        if signature and not confirming:
             seen_signatures.append(signature)
 
         # --- Plan-time validation (실행 전) ---
@@ -246,6 +255,8 @@ def try_analysis_pipeline(
             profile_name=profile_name,
             user_prompt=prompt,
         )
+        if confirming:
+            plan_report = confirm_derive_operands(plan_report, plan, user_prompt=prompt)
         # 비율 계산만 빠졌으면 질문의 ‘A 대비 B’로 채워 다시 검사한다.
         # 다른 오류가 함께 있으면 고치지 않는다. 그 피드백으로 Planner가 더 나은 계획을 낸다.
         if not plan_report.ok and {i.code for i in plan_report.errors} == {
@@ -265,6 +276,8 @@ def try_analysis_pipeline(
                 plan_dict = plan.to_dict()
         if not plan_report.ok:
             codes = [i.code for i in plan_report.errors]
+            if signature and set(codes) == {DERIVE_OPERAND_QUESTION}:
+                questioned_signatures.add(signature)
             fail_cat = composition_category_from_issues(codes) or comp_cat
             mode = choose_retry_mode(codes)
             last_retry_mode = mode
@@ -405,7 +418,15 @@ def try_analysis_pipeline(
         else:
             report_warnings_extra = []
 
-        warn_msgs = validation_warning_messages(report) + report_warnings_extra
+        warn_msgs = (
+            [
+                f"{i.code}: {i.message}"
+                for i in plan_report.warnings
+                if i.code == DERIVE_OPERAND_CONFIRMED
+            ]
+            + validation_warning_messages(report)
+            + report_warnings_extra
+        )
         info_msgs = validation_info_messages(report)
         # 결과 검증이 끝난 뒤 보여 줄 이름만 바꾼다: 백분율 열은 이름에 (%)를 붙인다.
         percent_labels = {
@@ -426,6 +447,9 @@ def try_analysis_pipeline(
                 PRE_TRANSPOSE_META_KEY: pre_transpose_df,
             }
         reply = _build_reply(result_df, plan, exec_meta)
+        for issue in plan_report.warnings:
+            if issue.code == DERIVE_OPERAND_CONFIRMED:
+                reply = f"{reply}\n\n참고: {issue.message}"
         if plan.interpret and not interpretation_disabled():
             try:
                 interpretation = interpret_analysis_result(

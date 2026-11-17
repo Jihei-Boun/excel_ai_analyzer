@@ -299,6 +299,8 @@ _UNVERIFIED_NOTICE = "이 결과는 검증 단계를 거치지 않았으니 원�
 # 분석기가 시트를 어떻게 읽었는지 알리는 경고 (머리글 위치, 계산에서 뺀 소계·총계 행)
 _TABLE_UNVERIFIED = "table_structure_unverified"
 _TABLE_EXCLUDED = "table_rows_excluded"
+_OPERAND_CONFIRMED = "derive_operand_confirmed"
+_NOTES = (_TABLE_EXCLUDED, _OPERAND_CONFIRMED)
 
 
 def _answer(status: str, body: dict[str, Any]) -> str | None:
@@ -323,7 +325,7 @@ def _answer(status: str, body: dict[str, Any]) -> str | None:
     parts.append(table)
     if _PERCENT_MARK in table:
         parts.append("`(%)`가 붙은 값은 백분율입니다.")
-    parts.extend(f"참고: {w['message']}" for w in warnings if w["code"] == _TABLE_EXCLUDED)
+    parts.extend(f"참고: {w['message']}" for w in warnings if w["code"] in _NOTES)
     return "\n\n".join(parts)
 
 
