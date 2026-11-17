@@ -39,13 +39,56 @@ from tests.benchmark.metrics import (
 from tests.benchmark.schema import BenchmarkCase, load_all_cases
 
 
-def _load_dataset(name: str, datasets_dir: Path) -> pd.DataFrame:
+def _load_dataset(name: str, datasets_dir: Path, *, app_loader: bool = False) -> pd.DataFrame:
     path = datasets_dir / name
     if not path.is_file():
         ensure_datasets(datasets_dir, force=False)
     if not path.is_file():
         raise FileNotFoundError(path)
+    if app_loader:
+        # 실제 앱·headless와 같은 로더 (2단 헤더, 병합 셀, 숫자 문자열 정리)
+        from core.io.excel_loader import load_tabular
+
+        return load_tabular(path)
     return pd.read_excel(path)
+
+
+def _route_like_app(
+    df: pd.DataFrame, question: str, *, base_url: str, model: str, profile_name: str
+) -> tuple[Any, str, dict]:
+    """웹 앱·headless와 같은 route_single_prompt로 실행하고, 분석 메타는 따로 잡아 둔다.
+
+    route_single_prompt는 사용자 응답용 메타만 남기므로 경로 관측용 analysis_meta를
+    run_analysis 호출에서 가로챈다. 결과 표와 답변은 앱과 같다.
+    """
+    import core.routing.route_single as route_single
+
+    captured: dict[str, Any] = {}
+    original = route_single.run_analysis
+
+    def _capture(*args: Any, **kwargs: Any):
+        result = original(*args, **kwargs)
+        captured.clear()
+        captured.update(result[2] or {})
+        return result
+
+    route_single.run_analysis = _capture
+    try:
+        outcome = route_single.route_single_prompt(
+            question,
+            full_df=df,
+            source_df=df,
+            context_label=None,
+            base_url=base_url,
+            model=model,
+            profile_name=profile_name,
+        )
+    finally:
+        route_single.run_analysis = original
+    meta = dict(captured)
+    for key, value in (outcome.meta or {}).items():
+        meta.setdefault(key, value)
+    return outcome.dataframe, outcome.reply or "", meta
 
 
 def _is_system_question(question: str) -> bool:
@@ -276,7 +319,7 @@ def run_case_live(
     base_url: str,
     model: str,
 ) -> CaseResult:
-    df = _load_dataset(case.dataset, datasets_dir)
+    df = _load_dataset(case.dataset, datasets_dir, app_loader=True)
     levels = LevelScores()
     details: dict[str, Any] = {}
     crashed = False
@@ -303,17 +346,12 @@ def run_case_live(
             result_df, reply, meta = _run_system(case, df)
             route_observed = "system"
         else:
-            from core.analysis.analyzer import run_analysis
-
-            # Monkeypatch chat to mark pandasai without requiring live PandasAI server
-            # when pipeline succeeds; if pipeline fails, allow real/fallback path.
-            result_df, reply, meta = run_analysis(
+            result_df, reply, meta = _route_like_app(
                 df,
                 case.question,
                 base_url=base_url,
                 model=model,
                 profile_name=case.profile,
-                skip_aggregate_shortcuts=False,
             )
             meta = dict(meta or {})
             route_observed = observe_route(meta)

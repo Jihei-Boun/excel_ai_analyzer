@@ -49,3 +49,47 @@ def test_wrong_from_validated_plan_is_silent() -> None:
 def test_expected_safe_failure() -> None:
     assert _outcome(expect_safe_failure=True, ok=True) == "correct"
     assert _outcome(expect_safe_failure=True, ok=False) == "silent_wrong"
+
+
+def test_structural_cases_file_matches_generator() -> None:
+    from tests.benchmark.structural import CASES_FILE, render_cases_yaml
+
+    assert CASES_FILE.read_text(encoding="utf-8") == render_cases_yaml(), (
+        "cases/structural.yaml이 생성기와 다르다. python -m tests.benchmark.structural 로 다시 만든다."
+    )
+
+
+def test_cell_checks_ignore_table_shape() -> None:
+    import pandas as pd
+
+    from tests.benchmark.evaluate import _eval_cells
+
+    wide = pd.DataFrame({"항목": ["매출"], "A": [1500.0], "B": [0.25]})
+    assert _eval_cells({"cells": [1500], "labels": ["A", "매출"], "ratio_cells": [0.25]}, wide)[0]
+    assert _eval_cells({"ratio_cells": [0.0025]}, wide)[0]  # 0.25%로 표시된 비율
+    assert not _eval_cells({"absent_labels": ["매"]}, wide)[0]
+    assert not _eval_cells({"absent_cells": [1500]}, wide)[0]
+    assert not _eval_cells({"cells": [1501]}, wide)[0]
+
+
+def test_empty_label_does_not_match_everything() -> None:
+    import pandas as pd
+
+    from tests.benchmark.evaluate import eval_execution
+    from tests.benchmark.schema import ExpectedSpec
+
+    garbage = pd.DataFrame({"11": ["", "내부흡수액"], "v": [1.0, 9.0]})
+    ok, _, _ = eval_execution(ExpectedSpec(expected_result={"연구수당": 9.0}), garbage)
+    assert ok is False
+
+
+def test_pairs_require_label_and_value_together() -> None:
+    import pandas as pd
+
+    from tests.benchmark.evaluate import _eval_cells
+
+    counts = pd.DataFrame({"부서": ["A팀", "B팀"], "수": [1.0, 2.0]})
+    assert _eval_cells({"pairs": {"A팀": 1, "B팀": 2}}, counts)[0]
+    assert not _eval_cells({"pairs": {"A팀": 2}}, counts)[0]  # 2는 다른 행에 있다
+    wide = pd.DataFrame({"항목": ["비율"], "A팀": [25.0]})
+    assert _eval_cells({"ratio_pairs": {"A팀": 0.25}}, wide)[0]  # 행·열 바꾼 표의 열

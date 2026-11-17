@@ -1,0 +1,467 @@
+# 생성 파일: python -m tests.benchmark.structural 로 다시 만든다. 손으로 고치지 않는다.
+cases:
+- id: structural_s1_region_sales_sum
+  domain: structural
+  profile: generic
+  dataset: branch_sales_2h.xlsx
+  question: 지역별 매출 합계를 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs: &id001
+        수도권: 21700000
+        영남: 14900000
+        호남: 6700000
+- id: structural_s1_region_transpose
+  domain: structural
+  profile: generic
+  dataset: branch_sales_2h.xlsx
+  question: 지역별 매출 합계와 비용 합계를 표로 만들고 행과 열을 바꿔줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs: *id001
+      cells:
+      - 13300000
+      - 9700000
+      - 4600000
+      labels:
+      - 수도권
+      - 영남
+      - 호남
+- id: structural_s1_three_branch_total
+  domain: structural
+  profile: generic
+  dataset: branch_sales_2h.xlsx
+  question: 서울점, 부산점, 대구점 세 지점의 매출을 모두 더한 값을 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 20100000
+- id: structural_s1_second_half_mean
+  domain: structural
+  profile: generic
+  dataset: branch_sales_2h.xlsx
+  question: 전체 지점의 하반기 매출 평균을 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 2825000.0
+- id: structural_s1_branch_halves_add
+  domain: structural
+  profile: generic
+  dataset: branch_sales_2h.xlsx
+  question: 지점별로 상반기 매출과 하반기 매출을 더해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        서울점: 9000000
+        강남점: 8000000
+        인천점: 4700000
+        부산점: 6400000
+        대구점: 4700000
+        울산점: 3800000
+        광주점: 4000000
+        전주점: 2700000
+- id: structural_s1_region_cost_ratio
+  domain: structural
+  profile: generic
+  dataset: branch_sales_2h.xlsx
+  question: 지역별 매출 합계 대비 비용 합계 비율을 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      ratio_pairs:
+        수도권: 0.612903
+        영남: 0.651007
+        호남: 0.686567
+- id: structural_s1_sales_grand_total
+  domain: structural
+  profile: generic
+  dataset: branch_sales_2h.xlsx
+  question: 매출 전체 합계를 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 43300000
+- id: structural_s2_base_total
+  domain: structural
+  profile: generic
+  dataset: dept_payroll_subtotal.xlsx
+  question: 기본급 전체 합계를 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 29100000
+      absent_cells:
+      - 58200000
+      - 87300000
+- id: structural_s2_dept_base_sum
+  domain: structural
+  profile: generic
+  dataset: dept_payroll_subtotal.xlsx
+  question: 부서별 기본급 합계를 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs: &id002
+        개발팀: 10800000
+        영업팀: 8600000
+        인사팀: 9700000
+      absent_labels:
+      - 총계
+      absent_cells:
+      - 21600000
+      - 17200000
+      - 19400000
+- id: structural_s2_allowance_mean
+  domain: structural
+  profile: generic
+  dataset: dept_payroll_subtotal.xlsx
+  question: 직원 1인당 평균 수당을 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 268750.0
+- id: structural_s2_top_base_person
+  domain: structural
+  profile: generic
+  dataset: dept_payroll_subtotal.xlsx
+  question: 기본급이 가장 높은 직원을 알려줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - 최지은
+      absent_labels:
+      - 소계
+      - 총계
+- id: structural_s2_dept_headcount
+  domain: structural
+  profile: generic
+  dataset: dept_payroll_subtotal.xlsx
+  question: 부서별 인원 수를 알려줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        개발팀: 3
+        영업팀: 2
+        인사팀: 3
+      absent_labels:
+      - 총계
+- id: structural_s2_dept_transpose
+  domain: structural
+  profile: generic
+  dataset: dept_payroll_subtotal.xlsx
+  question: 부서별 기본급과 수당 합계를 표로 보여주고 행과 열을 바꿔줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs: *id002
+      cells:
+      - 750000
+      - 730000
+      - 670000
+      labels:
+      - 개발팀
+      - 영업팀
+      - 인사팀
+      absent_labels:
+      - 총계
+- id: structural_s3_category_value_sum
+  domain: structural
+  profile: generic
+  dataset: inventory_report_form.xlsx
+  question: 분류별 재고금액 합계를 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        문구: 991500
+        소모품: 1410000
+        전산: 1854000
+- id: structural_s3_top_value_item
+  domain: structural
+  profile: generic
+  dataset: inventory_report_form.xlsx
+  question: 재고금액이 가장 큰 품목을 알려줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - 키보드
+      max_rows: 1
+- id: structural_s3_qty_total
+  domain: structural
+  profile: generic
+  dataset: inventory_report_form.xlsx
+  question: 수량 합계를 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 1203
+- id: structural_s3_category_price_mean
+  domain: structural
+  profile: generic
+  dataset: inventory_report_form.xlsx
+  question: 분류별 평균 단가를 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        문구: 1200.0
+        소모품: 34750.0
+        전산: 15000.0
+- id: structural_s3_low_qty_items
+  domain: structural
+  profile: generic
+  dataset: inventory_report_form.xlsx
+  question: 수량이 100개 미만인 품목을 보여줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - 형광펜
+      - 토너
+      - USB메모리
+      - 마우스
+      - 키보드
+      row_count: 5
+- id: structural_s4_dept_spend_ratio
+  domain: structural
+  profile: generic
+  dataset: project_code_name.xlsx
+  question: 담당부서별 예산 합계 대비 집행액 합계 비율을 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      ratio_pairs:
+        정보화팀: 0.5125
+        인사팀: 0.64
+        기획팀: 0.426829
+- id: structural_s4_rate_over_half
+  domain: structural
+  profile: generic
+  dataset: project_code_name.xlsx
+  question: 집행률이 50% 이상인 과제를 보여줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - 데이터플랫폼 고도화
+      - 신입 교육과정
+      - 고객만족도 조사
+      - 홍보영상 제작
+      row_count: 4
+- id: structural_s4_unspent_by_project
+  domain: structural
+  profile: generic
+  dataset: project_code_name.xlsx
+  question: 과제별 미집행액(예산 - 집행액)을 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        데이터플랫폼 고도화: 18000000
+        보안관제 개선: 21000000
+        신입 교육과정: 1200000
+        조직문화 진단: 6000000
+        고객만족도 조사: 7500000
+        중장기 전략 수립: 16000000
+        홍보영상 제작: 0
+- id: structural_s4_top3_budget
+  domain: structural
+  profile: generic
+  dataset: project_code_name.xlsx
+  question: 예산이 가장 큰 과제 3개를 보여줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - 데이터플랫폼 고도화
+      - 보안관제 개선
+      - 중장기 전략 수립
+      row_count: 3
+- id: structural_s4_dept_project_count
+  domain: structural
+  profile: generic
+  dataset: project_code_name.xlsx
+  question: 담당부서별 과제 수를 알려줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        정보화팀: 2
+        인사팀: 2
+        기획팀: 3
+- id: structural_s5_region_revenue
+  domain: structural
+  profile: generic
+  dataset: english_kpi.xlsx
+  question: Region별 Revenue 합계를 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        North: 3660000
+        South: 1990000
+        West: 1770000
+- id: structural_s5_below_target
+  domain: structural
+  profile: generic
+  dataset: english_kpi.xlsx
+  question: Revenue가 Target보다 낮은 Store를 보여줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - N2
+      - S1
+      - W1
+      row_count: 3
+- id: structural_s5_region_achievement
+  domain: structural
+  profile: generic
+  dataset: english_kpi.xlsx
+  question: Region별 Target 합계 대비 Revenue 합계 달성률을 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      ratio_pairs:
+        North: 1.016667
+        South: 1.047368
+        West: 1.011429
+- id: structural_s5_revenue_per_visitor
+  domain: structural
+  profile: generic
+  dataset: english_kpi.xlsx
+  question: Store별 방문객 1인당 매출(Revenue ÷ Visitors)을 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        N1: 2500.0
+        N2: 2390.243902
+        N3: 2750.0
+        S1: 2900.0
+        S2: 2500.0
+        W1: 2000.0
+        W2: 2000.0
+- id: structural_s5_visitors_mean
+  domain: structural
+  profile: generic
+  dataset: english_kpi.xlsx
+  question: Visitors 평균을 구해줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 437.571429
+- id: structural_s5_top3_revenue
+  domain: structural
+  profile: generic
+  dataset: english_kpi.xlsx
+  question: Revenue 상위 3개 Store를 알려줘
+  tags:
+  - structural
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - N3
+      - N1
+      - S2
+      row_count: 3

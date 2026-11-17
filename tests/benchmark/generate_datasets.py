@@ -249,6 +249,11 @@ DATASETS = {
     "ambiguous_sales.xlsx": generate_ambiguous_sales,
 }
 
+# 2단계 구조 데이터 (2단 머리글, 소계 행, 제목 줄 등). 정답은 structural.py에서 계산한다.
+from tests.benchmark.structural import WRITERS as _STRUCTURAL_WRITERS  # noqa: E402
+
+DATASETS.update(_STRUCTURAL_WRITERS)
+
 
 def ensure_datasets(datasets_dir: Path | None = None, *, force: bool = False) -> dict[str, Path]:
     root = datasets_dir or DATASETS_DIR
