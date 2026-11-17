@@ -99,6 +99,9 @@ def load_cases_from_file(path: Path) -> list[BenchmarkCase]:
     return [load_case_dict(item) for item in items]
 
 
+HELD_OUT_DOMAINS = frozenset({"heldout"})
+
+
 def iter_case_files(cases_dir: Path | None = None) -> list[Path]:
     root = cases_dir or CASES_DIR
     return sorted(root.glob("*.yaml")) + sorted(root.glob("*.yml"))
@@ -116,6 +119,9 @@ def load_all_cases(
     if domains:
         allow = {d.lower() for d in domains}
         cases = [c for c in cases if c.domain.lower() in allow]
+    else:
+        # The held-out set runs only when named, so its results stay unseen during development.
+        cases = [c for c in cases if c.domain.lower() not in HELD_OUT_DOMAINS]
     if tags:
         allow_tags = {t.lower() for t in tags}
         cases = [

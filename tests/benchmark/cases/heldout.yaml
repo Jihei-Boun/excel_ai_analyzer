@@ -1,0 +1,242 @@
+# Generated file: rebuild with python -m tests.benchmark.heldout. Do not edit by hand.
+cases:
+- id: heldout_h1_center_yearly_actual
+  domain: heldout
+  profile: generic
+  dataset: quarter_plan_3row.xlsx
+  question: 센터별 1~4분기 실적을 모두 더한 연간 실적을 구해줘
+  tags:
+  - heldout
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        북부센터: 527
+        남부센터: 426
+        동부센터: 385
+        서부센터: 347
+        중앙센터: 640
+        해안센터: 275
+- id: heldout_h1_q3_actual_total
+  domain: heldout
+  profile: generic
+  dataset: quarter_plan_3row.xlsx
+  question: 3분기 실적 합계를 구해줘
+  tags:
+  - heldout
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 663
+- id: heldout_h1_q2_achievement
+  domain: heldout
+  profile: generic
+  dataset: quarter_plan_3row.xlsx
+  question: 센터별 2분기 계획 대비 실적 비율을 구해줘
+  tags:
+  - heldout
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      ratio_pairs:
+        북부센터: 1.092308
+        남부센터: 0.945455
+        동부센터: 0.926316
+        서부센터: 1.058824
+        중앙센터: 0.96129
+        해안센터: 1.076923
+- id: heldout_h1_q4_top_center
+  domain: heldout
+  profile: generic
+  dataset: quarter_plan_3row.xlsx
+  question: 4분기 실적이 가장 높은 센터를 알려줘
+  tags:
+  - heldout
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - 중앙센터
+      max_rows: 1
+- id: heldout_h2_amount_total
+  domain: heldout
+  profile: generic
+  dataset: grouped_contracts.xlsx
+  question: 월 금액 전체 합계를 구해줘
+  tags:
+  - heldout
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 8580000
+- id: heldout_h2_region_amount
+  domain: heldout
+  profile: generic
+  dataset: grouped_contracts.xlsx
+  question: 지역별 월 금액 합계를 구해줘
+  tags:
+  - heldout
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        서울: 2010000
+        부산: 3100000
+        대전: 3470000
+- id: heldout_h2_count_total
+  domain: heldout
+  profile: generic
+  dataset: grouped_contracts.xlsx
+  question: 계약 건수를 모두 더해줘
+  tags:
+  - heldout
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 22
+- id: heldout_h2_top_amount_item
+  domain: heldout
+  profile: generic
+  dataset: grouped_contracts.xlsx
+  question: 월 금액이 가장 큰 계약 항목을 알려줘
+  tags:
+  - heldout
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - 경비 용역
+      max_rows: 1
+- id: heldout_h3_week2_total
+  domain: heldout
+  profile: generic
+  dataset: weekly_offset_total.xlsx
+  question: 2주차 처리 건수 합계를 구해줘
+  tags:
+  - heldout
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 167
+      absent_cells:
+      - 334
+- id: heldout_h3_week3_mean
+  domain: heldout
+  profile: generic
+  dataset: weekly_offset_total.xlsx
+  question: 담당자 1명당 3주차 평균 처리 건수를 구해줘
+  tags:
+  - heldout
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 34.0
+- id: heldout_h3_worker_weekly_mean
+  domain: heldout
+  profile: generic
+  dataset: weekly_offset_total.xlsx
+  question: 담당자별 주 평균 처리 건수를 구해줘
+  tags:
+  - heldout
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        강하늘: 39.5
+        문채원: 31.0
+        배수지: 40.75
+        송민호: 25.25
+        임윤아: 32.25
+      absent_labels:
+      - 합 계
+- id: heldout_h3_lowest_worker
+  domain: heldout
+  profile: generic
+  dataset: weekly_offset_total.xlsx
+  question: 4주 동안 처리 건수가 가장 적은 담당자를 알려줘
+  tags:
+  - heldout
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - 송민호
+      max_rows: 1
+- id: heldout_h4_march_total
+  domain: heldout
+  profile: generic
+  dataset: monthly_power_wide.xlsx
+  question: 3월 전력 사용량 합계를 구해줘
+  tags:
+  - heldout
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 54400
+- id: heldout_h4_building_half_total
+  domain: heldout
+  profile: generic
+  dataset: monthly_power_wide.xlsx
+  question: 건물별 1월부터 6월까지 사용량 합계를 구해줘
+  tags:
+  - heldout
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        본관: 98200
+        별관: 51700
+        연구동: 143300
+        기숙사: 33600
+        체육관: 18800
+- id: heldout_h4_building_monthly_mean
+  domain: heldout
+  profile: generic
+  dataset: monthly_power_wide.xlsx
+  question: 건물별 월평균 사용량을 구해줘
+  tags:
+  - heldout
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        본관: 16366.666667
+        별관: 8616.666667
+        연구동: 23883.333333
+        기숙사: 5600.0
+        체육관: 3133.333333
+- id: heldout_h4_june_top
+  domain: heldout
+  profile: generic
+  dataset: monthly_power_wide.xlsx
+  question: 6월 사용량이 가장 많은 건물을 알려줘
+  tags:
+  - heldout
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - 연구동
+      max_rows: 1
