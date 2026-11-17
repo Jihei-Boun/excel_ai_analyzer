@@ -320,6 +320,11 @@ def run_case_live(
     model: str,
 ) -> CaseResult:
     df = _load_dataset(case.dataset, datasets_dir, app_loader=True)
+    # 앱이 사용자에게 보여 주는 "표 구조를 확인하지 못했다" 경고와 같은 판단
+    from core.io import table_structure
+
+    loading_notice = table_structure.notice(df.attrs.get(table_structure.ATTRS_KEY))
+    loading_unverified = bool(loading_notice and loading_notice[0] == table_structure.NOTICE_UNVERIFIED)
     levels = LevelScores()
     details: dict[str, Any] = {}
     crashed = False
@@ -447,7 +452,9 @@ def run_case_live(
         exec_ok=exec_ok,
         has_result=isinstance(result_df, pd.DataFrame) and not result_df.empty,
         route_observed=route_observed,
+        loading_unverified=loading_unverified,
     )
+    details["loading_unverified"] = loading_unverified
     return CaseResult(
         outcome=outcome,
         case_id=case.id,

@@ -24,6 +24,11 @@ def test_crash_wins() -> None:
     assert _outcome(crashed=True, exec_ok=True) == "crash"
 
 
+def test_wrong_answer_with_unverified_table_notice_is_flagged() -> None:
+    assert _outcome(loading_unverified=True) == "flagged_wrong"
+    assert _outcome(loading_unverified=True, exec_ok=True) == "correct"
+
+
 def test_right_numbers_are_correct_even_if_plan_check_fails() -> None:
     assert _outcome(ok=False, exec_ok=True) == "correct"
 
