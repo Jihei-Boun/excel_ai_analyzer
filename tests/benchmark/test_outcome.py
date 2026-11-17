@@ -67,12 +67,21 @@ def test_heldout_cases_file_matches_generator() -> None:
     )
 
 
+def test_heldout2_cases_file_matches_generator() -> None:
+    from tests.benchmark.heldout2 import CASES_FILE, render_cases_yaml
+
+    assert CASES_FILE.read_text(encoding="utf-8") == render_cases_yaml(), (
+        "cases/heldout2.yaml is stale. Rebuild it with python -m tests.benchmark.heldout2."
+    )
+
+
 def test_heldout_runs_only_when_named() -> None:
     from tests.benchmark.schema import load_all_cases
 
-    assert not [c for c in load_all_cases() if c.domain == "heldout"]
-    named = load_all_cases(domains=["heldout"])
-    assert named and all(c.domain == "heldout" for c in named)
+    for domain in ("heldout", "heldout2"):
+        assert not [c for c in load_all_cases() if c.domain == domain]
+        named = load_all_cases(domains=[domain])
+        assert named and all(c.domain == domain for c in named)
 
 
 def test_cell_checks_ignore_table_shape() -> None:

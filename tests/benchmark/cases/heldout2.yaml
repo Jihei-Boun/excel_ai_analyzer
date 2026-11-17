@@ -1,0 +1,238 @@
+# Generated file: rebuild with python -m tests.benchmark.heldout2. Do not edit by hand.
+cases:
+- id: heldout2_g1_category_qty
+  domain: heldout2
+  profile: generic
+  dataset: merged_category_sales.xlsx
+  question: 분류별 판매수량 합계를 구해줘
+  tags:
+  - heldout2
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        음료: 990
+        과자: 670
+        간편식: 1200
+- id: heldout2_g1_category_revenue
+  domain: heldout2
+  profile: generic
+  dataset: merged_category_sales.xlsx
+  question: 분류별 매출액(판매수량×단가) 합계를 구해줘
+  tags:
+  - heldout2
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        음료: 1437000
+        과자: 1313000
+        간편식: 2061000
+- id: heldout2_g1_qty_total
+  domain: heldout2
+  profile: generic
+  dataset: merged_category_sales.xlsx
+  question: 전체 판매수량을 구해줘
+  tags:
+  - heldout2
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 2860
+- id: heldout2_g1_top_item
+  domain: heldout2
+  profile: generic
+  dataset: merged_category_sales.xlsx
+  question: 판매수량이 가장 많은 상품을 알려줘
+  tags:
+  - heldout2
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - 삼각김밥
+      max_rows: 1
+- id: heldout2_g2_total
+  domain: heldout2
+  profile: generic
+  dataset: team_subtotals.xlsx
+  question: 계약금액 전체 합계를 구해줘
+  tags:
+  - heldout2
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 34300
+      absent_cells:
+      - 68600
+      - 102900
+- id: heldout2_g2_team_mean
+  domain: heldout2
+  profile: generic
+  dataset: team_subtotals.xlsx
+  question: 팀별 1인당 평균 계약금액을 구해줘
+  tags:
+  - heldout2
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        '[영업1팀]': 4366.666667
+        '[영업2팀]': 3100.0
+        '[영업3팀]': 3750.0
+- id: heldout2_g2_member_count
+  domain: heldout2
+  profile: generic
+  dataset: team_subtotals.xlsx
+  question: 팀별 인원 수를 구해줘
+  tags:
+  - heldout2
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        '[영업1팀]': 3
+        '[영업2팀]': 2
+        '[영업3팀]': 4
+- id: heldout2_g2_top_member
+  domain: heldout2
+  profile: generic
+  dataset: team_subtotals.xlsx
+  question: 계약금액이 가장 큰 사람을 알려줘
+  tags:
+  - heldout2
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - 박지후
+      max_rows: 1
+- id: heldout2_g3_tue_to_thu
+  domain: heldout2
+  profile: generic
+  dataset: daily_visitors.xlsx
+  question: 매장별 화요일부터 목요일까지 방문객 합계를 구해줘
+  tags:
+  - heldout2
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        광화문점: 585
+        강남점: 933
+        판교점: 491
+        송도점: 300
+- id: heldout2_g3_friday_total
+  domain: heldout2
+  profile: generic
+  dataset: daily_visitors.xlsx
+  question: 금요일 전체 방문객 수를 구해줘
+  tags:
+  - heldout2
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 942
+- id: heldout2_g3_store_daily_mean
+  domain: heldout2
+  profile: generic
+  dataset: daily_visitors.xlsx
+  question: 매장별 하루 평균 방문객을 구해줘
+  tags:
+  - heldout2
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        광화문점: 211.0
+        강남점: 335.0
+        판교점: 158.0
+        송도점: 105.2
+      absent_labels:
+      - 평균
+- id: heldout2_g3_wed_lowest
+  domain: heldout2
+  profile: generic
+  dataset: daily_visitors.xlsx
+  question: 수요일 방문객이 가장 적은 매장을 알려줘
+  tags:
+  - heldout2
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - 송도점
+      max_rows: 1
+- id: heldout2_g4_sep_to_nov
+  domain: heldout2
+  profile: generic
+  dataset: cost_text_2row.xlsx
+  question: 항목별 9월부터 11월까지 비용 합계를 구해줘
+  tags:
+  - heldout2
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        임차료: 16600
+        전기료: 4440
+        통신비: 1337
+        소모품비: 2110
+- id: heldout2_g4_q4_total
+  domain: heldout2
+  profile: generic
+  dataset: cost_text_2row.xlsx
+  question: 4분기 운영비 전체 합계를 구해줘
+  tags:
+  - heldout2
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 25299
+- id: heldout2_g4_item_monthly_mean
+  domain: heldout2
+  profile: generic
+  dataset: cost_text_2row.xlsx
+  question: 항목별 월평균 비용을 구해줘
+  tags:
+  - heldout2
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        임차료: 5500.0
+        전기료: 1720.0
+        통신비: 445.333333
+        소모품비: 740.0
+- id: heldout2_g4_august_power
+  domain: heldout2
+  profile: generic
+  dataset: cost_text_2row.xlsx
+  question: 8월 전기료를 알려줘
+  tags:
+  - heldout2
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 2120

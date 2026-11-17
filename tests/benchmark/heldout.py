@@ -6,9 +6,9 @@ These workbooks use layouts that do not appear in structural.py:
 - a table that starts away from A1, with total rows and a total column
 - a wide month-by-column table under a title row
 
-Do not look at these results while developing a fix. Run them only at the end,
-to check that a fix generalises beyond the cases it was developed on. Nothing
-in the app may be tuned to these files or questions.
+These results were looked at when the LLM table-layout step was judged (PR #6),
+so the set is no longer unseen. It stays out of default runs and now serves as a
+development check; heldout2.py is the unseen set.
 
 The runner leaves this domain out unless asked for it explicitly:
 
