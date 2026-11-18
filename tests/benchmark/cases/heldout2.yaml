@@ -162,8 +162,7 @@ cases:
         강남점: 335.0
         판교점: 158.0
         송도점: 105.2
-      absent_labels:
-      - 평균
+      max_rows: 4
 - id: heldout2_g3_wed_lowest
   domain: heldout2
   profile: generic

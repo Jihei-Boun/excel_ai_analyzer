@@ -169,7 +169,7 @@ def daily_cases() -> list[dict[str, Any]]:
         _case("g3_friday_total", "daily_visitors.xlsx", "금요일 전체 방문객 수를 구해줘",
               cells=[fri_total]),
         _case("g3_store_daily_mean", "daily_visitors.xlsx", "매장별 하루 평균 방문객을 구해줘",
-              pairs=store_mean, absent_labels=["평균"]),
+              pairs=store_mean, max_rows=len(STORES)),
         _case("g3_wed_lowest", "daily_visitors.xlsx", "수요일 방문객이 가장 적은 매장을 알려줘",
               labels=[lowest_wed], max_rows=1),
     ]
