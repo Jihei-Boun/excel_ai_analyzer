@@ -302,3 +302,40 @@ def test_headless_turns_the_notice_into_a_warning() -> None:
     ]
     two = _table_structure_warnings([SimpleNamespace(frame=frame, label="a.xlsx"), SimpleNamespace(frame=quiet, label="b.xlsx")])
     assert [w.message for w in two] == ["[a.xlsx] 총계 1행(원본 5행)은 계산에서 제외했습니다."]
+
+
+def _grouped(tmp_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["항목", "금액"])
+    ws.append(["북쪽"])
+    ws.append(["가", 1])
+    ws.append(["나", 2])
+    ws.append(["남쪽"])
+    ws.append(["다", 3])
+    path = tmp_path / "grouped.xlsx"
+    wb.save(path)
+    return path
+
+
+def test_records_above_the_first_group_label_are_rejected(tmp_path) -> None:
+    # The first label (R2) was missed, so R2-R4 would have no group.
+    answer = _answer([1], "A", "B", (2, 6), special=[(5, "group_label")], group="권역")
+    with pytest.raises(ts.StructureError, match="records_without_group: R2-R4"):
+        ts.read_with_llm(_grouped(tmp_path), 0, ask=_ask(answer))
+
+
+def test_missed_group_label_is_corrected_on_retry(tmp_path) -> None:
+    wrong = _answer([1], "A", "B", (2, 6), special=[(5, "group_label")], group="권역")
+    right = _answer([1], "A", "B", (2, 6), special=[(2, "group_label"), (5, "group_label")], group="권역")
+    answers = iter([wrong, right])
+    prompts = []
+
+    def ask(system, prompt):
+        prompts.append(prompt)
+        return next(answers)
+
+    raw, info = ts.read_with_llm(_grouped(tmp_path), 0, ask=ask)
+    assert "records_without_group" in prompts[1]
+    assert raw["권역"].tolist() == ["북쪽", "북쪽", "남쪽"]
+    assert info["attempts"] == 2
