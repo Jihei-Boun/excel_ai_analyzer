@@ -9,8 +9,9 @@ appear neither in structural.py nor in heldout.py:
 - a day-by-column table under a title, with an average row and a total column
 - a two-row header over month columns, with amounts stored as text and notes below
 
-Do not look at these results while developing a fix. Run them only at the end.
-Nothing in the app may be tuned to these files or questions.
+These results were looked at when PR #7 was judged, so the set is no longer
+unseen. It stays out of default runs and now serves as a development check;
+heldout3.py is the unseen set.
 
   python -m tests.benchmark.heldout2                          # rewrite xlsx + cases/heldout2.yaml
   python -m tests.benchmark.runner --live --domain heldout2   # run only at the end
