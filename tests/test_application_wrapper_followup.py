@@ -71,9 +71,12 @@ def _assert_dead(pid: int) -> None:
 def _grandchild_sleeper(pidfile: Path) -> str:
     return (
         "import os,signal,time\n"
+        # Ignore SIGTERM before forking so the grandchild never has a window without it.
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
         "pid=os.fork()\n"
+        "if pid!=0:\n"
+        "    signal.signal(signal.SIGTERM, signal.SIG_DFL)\n"
         "if pid==0:\n"
-        "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
         "    fd=os.open('/dev/null', os.O_RDWR)\n"
         "    os.dup2(fd, 0); os.dup2(fd, 1); os.dup2(fd, 2); os.close(fd)\n"
         f"    open({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
@@ -83,18 +86,33 @@ def _grandchild_sleeper(pidfile: Path) -> str:
     )
 
 
-def _wait_cancel(config: object) -> None:
+def _wait_cancel(config: object, ready: Path | None = None) -> None:
+    """Cancel the next job once its folder exists (and, if given, once `ready` has been written).
+
+    `ready` lets a test wait until the child has finished its setup, for example until a
+    grandchild has started ignoring SIGTERM. Without it, a slow machine can deliver the
+    cancel first and the test would see a different (still correct) cleanup path.
+    """
     import threading
 
     existing = {child.name for child in config.workspace_root.iterdir() if child.is_dir()}
 
+    def _ready() -> bool:
+        if ready is None:
+            return True
+        try:
+            return bool(ready.read_text().strip())
+        except FileNotFoundError:
+            return False
+
     def _watch() -> None:
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            for child in config.workspace_root.iterdir():
-                if child.is_dir() and len(child.name) == 32 and child.name not in existing:
-                    request_cancel(config, child.name)
-                    return
+            if _ready():
+                for child in config.workspace_root.iterdir():
+                    if child.is_dir() and len(child.name) == 32 and child.name not in existing:
+                        request_cancel(config, child.name)
+                        return
             time.sleep(0.05)
 
     threading.Thread(target=_watch, daemon=True).start()
@@ -107,7 +125,8 @@ def test_timeout_and_cancel_remove_sigterm_ignoring_grandchild(tmp_path: Path) -
     with _Alarm(8):
         timed, timed_code = run_job(
             config,
-            _request(sales, request_id="grand-timeout", timeout_seconds=0.4),
+            # Long enough for a slow machine to start Python and fork before the timeout.
+            _request(sales, request_id="grand-timeout", timeout_seconds=2),
             launch=wrapper_run.ProcessLaunch(argv=(sys.executable, "-c", _grandchild_sleeper(timeout_pid))),
         )
     assert timed["status"] == "timeout"
@@ -124,7 +143,8 @@ def test_timeout_and_cancel_remove_sigterm_ignoring_grandchild(tmp_path: Path) -
     _assert_dead(int(timed["cleanup"]["pid"]))
 
     cancel_pid = tmp_path / "cancel-grand.pid"
-    _wait_cancel(config)
+    # The grandchild writes its pid only after it starts ignoring SIGTERM.
+    _wait_cancel(config, ready=cancel_pid)
     with _Alarm(8):
         cancelled, cancelled_code = run_job(
             config,
