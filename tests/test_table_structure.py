@@ -339,3 +339,46 @@ def test_missed_group_label_is_corrected_on_retry(tmp_path) -> None:
     assert "records_without_group" in prompts[1]
     assert raw["권역"].tolist() == ["북쪽", "북쪽", "남쪽"]
     assert info["attempts"] == 2
+
+
+def test_vertically_merged_cells_fill_every_row(tmp_path) -> None:
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["분류", "상품", "수량"])
+    ws.append(["음료", "탄산수", 4])
+    ws.append([None, "녹차", 3])
+    ws.append(["과자", "쿠키", 2])
+    ws.merge_cells("A2:A3")
+    path = tmp_path / "merged.xlsx"
+    wb.save(path)
+    grid = ts.read_grid(path, 0)
+    assert "A3=음료" in ts.render_snapshot(grid)
+    raw, _ = ts.read_with_llm(path, 0, ask=_ask(_answer([1], "A", "C", (2, 4))))
+    assert raw["분류"].tolist() == ["음료", "음료", "과자"]
+
+
+def test_merges_within_one_row_keep_a_single_cell(tmp_path) -> None:
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["항목", "금액"])
+    ws.append(["북쪽"])
+    ws.merge_cells("A2:B2")
+    ws.append(["가", 1])
+    path = tmp_path / "label_merge.xlsx"
+    wb.save(path)
+    answer = _answer([1], "A", "B", (2, 3), special=[(2, "group_label")], group="권역")
+    raw, _ = ts.read_with_llm(path, 0, ask=_ask(answer))
+    assert raw.to_dict("records") == [{"권역": "북쪽", "항목": "가", "금액": 1}]
+
+
+def test_special_row_outside_the_range_is_named_in_the_error(tmp_path) -> None:
+    answer = _answer([1], "A", "B", (3, 6), special=[(2, "group_label"), (5, "group_label")], group="권역")
+    with pytest.raises(ts.StructureError, match="R2 is listed as group_label but the data rows are R3-R6"):
+        ts.read_with_llm(_grouped(tmp_path), 0, ask=_ask(answer))
+
+
+def test_row_between_header_and_data_cannot_be_dropped(tmp_path) -> None:
+    # Starting the data at R3 would silently lose the group label in R2.
+    answer = _answer([1], "A", "B", (3, 6), special=[(5, "group_label")], group="권역")
+    with pytest.raises(ts.StructureError, match="row_dropped: R2"):
+        ts.read_with_llm(_grouped(tmp_path), 0, ask=_ask(answer))
