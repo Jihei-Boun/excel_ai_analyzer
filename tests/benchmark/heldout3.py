@@ -9,8 +9,9 @@ structural.py, heldout.py or heldout2.py:
 - category and subcategory columns, subcategory subtotal rows, a spacer column
 - a transposed table: one row per measure, one column per year, unit note at the top right
 
-Do not look at these results while developing a fix. Run them only at the end.
-Nothing in the app may be tuned to these files or questions.
+These results were looked at when PR #9 was judged, so the set is no longer
+unseen. It stays out of default runs and now serves as a development check;
+heldout4.py is the unseen set.
 
   python -m tests.benchmark.heldout3                          # rewrite xlsx + cases/heldout3.yaml
   python -m tests.benchmark.runner --live --domain heldout3   # run only at the end
