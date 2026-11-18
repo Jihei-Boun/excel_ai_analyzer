@@ -334,12 +334,10 @@ def _validate_derive_operands_requested(
     *,
     user_prompt: str | None,
 ) -> list[ValidationIssue]:
-    """행마다 더하기/평균에 요청에 없는 열이 섞였는지 Planner에게 되묻는다.
+    """행마다 더하기/평균에 요청에 없는 열이 섞이는 것을 막는다.
 
-    요청이 피연산자 일부를 이름으로 집었는데 나머지는 요청에 없으면 오류로 돌려보낸다.
-    이것은 금지가 아니라 질문이다: 요청이 그 열을 뜻하는지(범위, '모두' 등)는 LLM이
-    판단한다. 같은 계획을 다시 내면 파이프라인이 확인된 판단으로 받고 경고를 남긴다
-    (``confirm_derive_operands``). 요청이 열 이름을 하나도 쓰지 않았으면 판단하지 않는다.
+    요청이 피연산자 일부를 이름으로 집었는데 나머지는 요청에 없으면 오류.
+    요청이 열 이름을 하나도 쓰지 않았으면(동의어 등) 판단하지 않는다.
     """
     if not user_prompt:
         return []
@@ -360,50 +358,12 @@ def _validate_derive_operands_requested(
                 ValidationIssue(
                     "error",
                     "derive_operand_not_requested",
-                    f"derive `{kind}` also uses {json_list(extra)}, which the request does not "
-                    f"name (it names {json_list(mentioned)}). If the request means these columns "
-                    "too (for example a range of columns, or all of them), submit the same plan "
-                    "again and say why in criteria_note. Otherwise use only the named columns "
+                    f"derive `{kind}` uses {json_list(extra)} which the request did not ask for. "
+                    f"Use only the requested columns: {json_list(mentioned)} "
                     f'(expr={{"{kind}":{json_list(mentioned)}}}).',
                 )
             )
     return issues
-
-
-DERIVE_OPERAND_QUESTION = "derive_operand_not_requested"
-DERIVE_OPERAND_CONFIRMED = "derive_operand_confirmed"
-
-
-def confirm_derive_operands(
-    report: ValidationReport, plan: AnalysisPlan, *, user_prompt: str
-) -> ValidationReport:
-    """Planner가 같은 계획을 다시 내 피연산자를 확인했으면, 질문을 경고로 바꾼다.
-
-    오류가 이 질문뿐일 때만 바꾼다. 경고는 사용자에게 보이고, 요청에 이름이 없는 열을
-    계산에 넣었다고 알린다.
-    """
-    if {i.code for i in report.errors} != {DERIVE_OPERAND_QUESTION}:
-        return report
-    prompt_compact = str(user_prompt).replace(" ", "").lower()
-    extras: list[str] = []
-    for step in plan.steps:
-        expr = (step.payload or {}).get("expr")
-        if step.op == "derive_column" and isinstance(expr, dict):
-            kind = next(iter(expr), "")
-            if kind in {"sum", "mean"}:
-                extras.extend(
-                    str(c) for c in expr.get(kind) or [] if not _column_mentioned(str(c), prompt_compact)
-                )
-    issues = [i for i in report.issues if i.code != DERIVE_OPERAND_QUESTION]
-    issues.append(
-        ValidationIssue(
-            "warning",
-            DERIVE_OPERAND_CONFIRMED,
-            f"요청에 이름이 나오지 않은 열도 함께 계산했습니다 ({', '.join(dict.fromkeys(extras))}). "
-            "의도와 다르면 계산할 열 이름을 질문에 직접 적어 주세요.",
-        )
-    )
-    return ValidationReport(ok=True, issues=issues)
 
 
 def _per_row_skeleton(previous_plan: dict[str, Any] | None) -> str:
@@ -1136,20 +1096,6 @@ def _looks_like_extremum_request(blob: str) -> bool:
     )
 
 
-def _operand_question_feedback(
-    report: ValidationReport, previous_plan: dict[str, Any] | None
-) -> list[str]:
-    """피연산자 질문만 남았을 때: 실패가 아니라 확인 요청으로 전한다."""
-    import json
-
-    lines = ["Check before running: the plan may use columns the user did not ask for."]
-    if previous_plan:
-        compact = json.dumps(previous_plan, ensure_ascii=False, default=str)
-        lines.append(f"Previous plan: {compact[:1200]}")
-    lines.extend(f"Question: {issue.message}" for issue in report.errors)
-    return lines
-
-
 def format_plan_validation_feedback(
     report: ValidationReport,
     *,
@@ -1177,9 +1123,6 @@ def format_plan_validation_feedback(
     fail_cat = failure_category or composition_category_from_issues(codes) or "unsupported_composition"
     mode = retry_mode or choose_retry_mode(codes)
     family = operation_family or operation_family_signature(previous_plan)
-
-    if set(codes) == {DERIVE_OPERAND_QUESTION}:
-        return _operand_question_feedback(report, previous_plan)
 
     lines: list[str] = []
     if attempt is not None:

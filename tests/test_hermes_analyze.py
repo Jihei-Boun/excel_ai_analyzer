@@ -286,13 +286,3 @@ def test_answer_carries_table_reading_notices(monkeypatch, tmp_path) -> None:
         "\n\n참고: 총계 1행(원본 9행)은 계산에서 제외했습니다."
     )
     assert body["fallback_unverified"] is False
-
-
-def test_answer_notes_columns_the_request_did_not_name(monkeypatch, tmp_path) -> None:
-    response = _success([{"합": 10.0}], ["합"])
-    response["warnings"] = [
-        {"code": "derive_operand_confirmed", "message": "요청에 이름이 나오지 않은 열도 함께 계산했습니다 (2월).", "stage": "analysis"},
-    ]
-    _mock(monkeypatch, response, 0)
-    _, body = _invoke(monkeypatch, tmp_path, _args("p"))
-    assert body["answer"].endswith("참고: 요청에 이름이 나오지 않은 열도 함께 계산했습니다 (2월).")

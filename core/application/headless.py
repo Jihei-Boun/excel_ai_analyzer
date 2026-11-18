@@ -62,7 +62,6 @@ from core.io.excel_loader import (
 from core.profile_loader import list_profile_names, load_profile, use_profile
 from core.routing.route_multi import route_multi_prompt
 from core.routing.route_single import route_single_prompt
-from core.analysis.analysis_plan_validate import DERIVE_OPERAND_CONFIRMED
 from core.io import table_structure
 from core.routing.route_types import SingleRouteOutcome
 from core.summary.file_summary import build_file_summary, is_summary_request
@@ -695,10 +694,6 @@ def _warnings_from_outcome(outcome: SingleRouteOutcome) -> list[WarningItem]:
         warnings.append(
             WarningItem(code="filter_note", message=str(note), stage="routing")
         )
-    for item in meta.get("validation_warnings") or []:
-        code, _, message = str(item).partition(": ")
-        if code == DERIVE_OPERAND_CONFIRMED and message:
-            warnings.append(WarningItem(code=code, message=message, stage="analysis"))
     summary = meta.get("integrate_validation")
     if summary and outcome.operation_name == "structured_integrate_failed":
         warnings.append(

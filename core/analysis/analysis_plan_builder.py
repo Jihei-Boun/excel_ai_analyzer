@@ -148,13 +148,11 @@ def build_analysis_plan(
     classified_df: pd.DataFrame | None = None,
     profile_name: str | None = None,
     previous_errors: list[str] | None = None,
-    allow_resubmit: bool = False,
     chat_json_fn: Callable[..., dict[str, Any]] = chat_json,
 ) -> AnalysisPlan:
     """사용자 요청 + 스키마 inventory → 원자 step 분석 계획.
 
     Phase 5: safety 컬럼명 정규화만 적용. 의미 rewrite 없음.
-    allow_resubmit: 이전 계획이 실패가 아니라 확인 질문으로 돌아왔다. 같은 계획을 다시 내도 된다.
     """
     column_inventory = build_planner_column_inventory(df, profile_name=profile_name)
     row_context = build_planner_row_context(classified_df, df)
@@ -193,14 +191,7 @@ def build_analysis_plan(
     role_hint_text = _role_semantic_hint_text(df, profile_name=profile_name)
     if role_hint_text:
         user_parts.append(role_hint_text)
-    if previous_errors and allow_resubmit:
-        user_parts.append(
-            "The previous plan needs a check before it runs. Read the question below. "
-            "If the plan already does what the user asked, submit the same plan again; "
-            "otherwise correct it. Do NOT invent columns:\n"
-            + "\n".join(f"- {err}" for err in previous_errors)
-        )
-    elif previous_errors:
+    if previous_errors:
         user_parts.append(
             "Previous plan failed validation. Fix these issues and regenerate "
             "a corrected AnalysisPlan. Do NOT invent columns. "
