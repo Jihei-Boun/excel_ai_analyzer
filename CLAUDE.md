@@ -21,6 +21,19 @@ make it more general by adding rules for the cases you happened to see.
   LLM judgment plus an invariant check?" If a rule really seems unavoidable, call
   it a rule and ask first.
 
+### Adding a verification check
+
+A check is code too. It can block correct LLM answers, and checks added one per
+observed failure turn into patches. Add one only if all three hold:
+
+1. **It is a fact.** Every correct answer satisfies it, whatever the table looks
+   like. If it holds only for some layouts, it is a rule.
+2. **It only rejects.** It never picks the answer itself. Its message states what
+   is inconsistent (rows, range, values) and does not hand the LLM a ready-made
+   alternative.
+3. **It generalises.** Even when a failure prompted it, its effect is judged on a
+   held-out set nobody has looked at.
+
 ## Measure, don't guess
 
 Judge changes with the benchmark in `tests/benchmark` (`runner.py --live`).
