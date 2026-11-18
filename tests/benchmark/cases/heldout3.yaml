@@ -1,0 +1,234 @@
+# Generated file: rebuild with python -m tests.benchmark.heldout3. Do not edit by hand.
+cases:
+- id: heldout3_k1_passenger_total
+  domain: heldout3
+  profile: generic
+  dataset: total_on_top.xlsx
+  question: 전체 승객수를 구해줘
+  tags:
+  - heldout3
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 31960
+      absent_cells:
+      - 63920
+- id: heldout3_k1_region_passengers
+  domain: heldout3
+  profile: generic
+  dataset: total_on_top.xlsx
+  question: 구역별 승객수 합계를 구해줘
+  tags:
+  - heldout3
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        북구: 10730
+        남구: 15080
+        서구: 6150
+- id: heldout3_k1_per_trip
+  domain: heldout3
+  profile: generic
+  dataset: total_on_top.xlsx
+  question: 노선별 운행 1회당 승객수를 구해줘
+  tags:
+  - heldout3
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      ratio_pairs:
+        101번: 90.9375
+        102번: 84.655172
+        205번: 101.944444
+        206번: 66.530612
+        207번: 81.454545
+        310번: 100.819672
+      max_rows: 6
+- id: heldout3_k1_top_route
+  domain: heldout3
+  profile: generic
+  dataset: total_on_top.xlsx
+  question: 승객수가 가장 많은 노선을 알려줘
+  tags:
+  - heldout3
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - 205번
+      max_rows: 1
+- id: heldout3_k2_cost_total
+  domain: heldout3
+  profile: generic
+  dataset: repair_log.xlsx
+  question: 3월 수리비 총액을 구해줘
+  tags:
+  - heldout3
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 3045000
+- id: heldout3_k2_equipment_cost
+  domain: heldout3
+  profile: generic
+  dataset: repair_log.xlsx
+  question: 설비별 수리비 합계를 구해줘
+  tags:
+  - heldout3
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        냉각기: 590000
+        컨베이어: 1720000
+        포장기: 735000
+- id: heldout3_k2_equipment_count
+  domain: heldout3
+  profile: generic
+  dataset: repair_log.xlsx
+  question: 설비별 수리 건수를 구해줘
+  tags:
+  - heldout3
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        냉각기: 2
+        컨베이어: 2
+        포장기: 2
+- id: heldout3_k2_mean_cost
+  domain: heldout3
+  profile: generic
+  dataset: repair_log.xlsx
+  question: 수리 1건당 평균 수리비를 구해줘
+  tags:
+  - heldout3
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 507500.0
+- id: heldout3_k3_total
+  domain: heldout3
+  profile: generic
+  dataset: stock_subtotals.xlsx
+  question: 전체 재고 수량을 구해줘
+  tags:
+  - heldout3
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 1435
+      absent_cells:
+      - 2870
+- id: heldout3_k3_category
+  domain: heldout3
+  profile: generic
+  dataset: stock_subtotals.xlsx
+  question: 대분류별 재고 수량 합계를 구해줘
+  tags:
+  - heldout3
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        식품: 855
+        생활: 580
+- id: heldout3_k3_subcategory
+  domain: heldout3
+  profile: generic
+  dataset: stock_subtotals.xlsx
+  question: 중분류별 재고 수량을 구해줘
+  tags:
+  - heldout3
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        냉장: 205
+        상온: 650
+        세제: 150
+        위생: 430
+- id: heldout3_k3_lowest_item
+  domain: heldout3
+  profile: generic
+  dataset: stock_subtotals.xlsx
+  question: 재고가 가장 적은 품목을 알려줘
+  tags:
+  - heldout3
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - 세탁세제
+      max_rows: 1
+- id: heldout3_k4_sales_total
+  domain: heldout3
+  profile: generic
+  dataset: transposed_years.xlsx
+  question: 4년 동안 매출 합계를 구해줘
+  tags:
+  - heldout3
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 3769
+- id: heldout3_k4_cost_2023
+  domain: heldout3
+  profile: generic
+  dataset: transposed_years.xlsx
+  question: 2023년 원가를 알려줘
+  tags:
+  - heldout3
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 615
+- id: heldout3_k4_measure_mean
+  domain: heldout3
+  profile: generic
+  dataset: transposed_years.xlsx
+  question: 구분별 연평균 금액을 구해줘
+  tags:
+  - heldout3
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        매출: 942.25
+        원가: 583.75
+        판관비: 216.0
+- id: heldout3_k4_profit_2024
+  domain: heldout3
+  profile: generic
+  dataset: transposed_years.xlsx
+  question: 2024년 영업이익(매출-원가-판관비)을 구해줘
+  tags:
+  - heldout3
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 173

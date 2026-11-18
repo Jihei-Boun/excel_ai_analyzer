@@ -241,6 +241,16 @@ def read_grid(path: Path, sheet_name: str | int) -> Grid:
                     continue
                 values[(cell.row, cell.column)] = value.strip() if isinstance(value, str) else value
         merges = [(m.min_row, m.min_col, m.max_row, m.max_col) for m in sheet.merged_cells.ranges]
+        # A cell merged down several rows shows its value on each of those rows, so each row
+        # gets it (a vertically merged category column names every record it spans).
+        # Merges within one row (titles, group labels) keep their value in the first cell only.
+        for r1, c1, r2, c2 in merges:
+            value = values.get((r1, c1))
+            if value is None or r2 == r1:
+                continue
+            for r in range(r1, r2 + 1):
+                for c in range(c1, c2 + 1):
+                    values.setdefault((r, c), value)
         max_row = max((r for r, _ in values), default=0)
         max_col = max((c for _, c in values), default=0)
         return Grid(values=values, max_row=max_row, max_col=max_col, merges=merges)
@@ -364,8 +374,13 @@ def verify(s: Structure, grid: Grid) -> None:
         raise StructureError("header_not_above_data")
     if not (1 <= s.first_col <= s.last_col) or not (s.first_row <= s.last_row <= max(grid.max_row, 1)):
         raise StructureError("bad_bounds")
-    if any(r < s.first_row or r > s.last_row for r in s.roles):
-        raise StructureError("special_row_outside_table")
+    for row, role in sorted(s.roles.items()):
+        if row < s.first_row or row > s.last_row:
+            raise StructureError(
+                f"special_row_outside_table: R{row} is listed as {role} but the data rows are "
+                f"R{s.first_row}-R{s.last_row}. first_data_row is the first row after the header, "
+                "and every special row must lie between first_data_row and last_data_row"
+            )
 
     # No data left out: numbers outside the table's rows or columns mean the bounds are wrong.
     header_set = set(s.header_rows)
@@ -379,8 +394,14 @@ def verify(s: Structure, grid: Grid) -> None:
         if not (inside_rows and inside_cols):
             raise StructureError(f"number_outside_table: {get_column_letter(col)}{row}")
 
-    # Rows above the first header row must not be part of a multi-row header the LLM skipped:
-    # nothing to check here beyond the numbers rule above.
+    # Nothing between the header and the first data row may be dropped: such a row is part of
+    # neither and would vanish without a trace.
+    for row in range(s.header_rows[-1] + 1, s.first_row):
+        if grid.row_cells(row, s.first_col, s.last_col):
+            raise StructureError(
+                f"row_dropped: R{row} has content but lies between the header (last header row "
+                f"R{s.header_rows[-1]}) and first_data_row R{s.first_row}, so it would be lost"
+            )
 
     for row, role in s.roles.items():
         cells = grid.row_cells(row, s.first_col, s.last_col)
