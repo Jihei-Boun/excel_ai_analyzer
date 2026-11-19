@@ -416,10 +416,14 @@ def _check_operation_contracts(
                         f"aggregate 결과에 group column `{g}`이 없습니다.",
                     )
                 )
-        # metric presence: at least one numeric or planned metric
+        # A later select_columns decides what the result keeps, so an aggregate
+        # metric it leaves out on purpose is not missing.
+        last_select = max(
+            (i for i, s in enumerate(plan.steps) if s.op == "select_columns"), default=-1
+        )
         metric_names: list[str] = []
-        for step in plan.steps:
-            if step.op != "aggregate":
+        for index, step in enumerate(plan.steps):
+            if step.op != "aggregate" or index < last_select:
                 continue
             for m in step.payload.get("metrics") or []:
                 if isinstance(m, str):
