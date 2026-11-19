@@ -1,0 +1,272 @@
+# Generated file: rebuild with python -m tests.benchmark.heldout4. Do not edit by hand.
+cases:
+- id: heldout4_l1_fee_per_student
+  domain: heldout4
+  profile: generic
+  dataset: class_fees.xlsx
+  question: 과목별 수강생 1인당 수강료를 구해줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        수학: 175846.153846
+        영어: 171666.666667
+        과학: 190000.0
+      max_rows: 3
+- id: heldout4_l1_math_english_fees
+  domain: heldout4
+  profile: generic
+  dataset: class_fees.xlsx
+  question: 수학과 영어 수강료를 합치면 얼마야?
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 19670000
+      absent_cells:
+      - 23470000
+- id: heldout4_l1_science_students
+  domain: heldout4
+  profile: generic
+  dataset: class_fees.xlsx
+  question: 과학 수강생 수 합계를 구해줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 20
+      max_rows: 1
+- id: heldout4_l1_month_fees
+  domain: heldout4
+  profile: generic
+  dataset: class_fees.xlsx
+  question: 월별 수강료 합계를 구해줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        3월: 10900000
+        4월: 12570000
+- id: heldout4_l1_total_students
+  domain: heldout4
+  profile: generic
+  dataset: class_fees.xlsx
+  question: 전체 수강생 수를 구해줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 133
+- id: heldout4_l2_q2_to_q4
+  domain: heldout4
+  profile: generic
+  dataset: branch_quarters.xlsx
+  question: 지점별 2분기부터 4분기까지 매출 합계를 구해줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        수원지점: 4585
+        천안지점: 3215
+        청주지점: 2445
+        원주지점: 1835
+- id: heldout4_l2_first_half
+  domain: heldout4
+  profile: generic
+  dataset: branch_quarters.xlsx
+  question: 지점별 상반기 매출을 구해줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        수원지점: 2935
+        천안지점: 2020
+        청주지점: 1465
+        원주지점: 1150
+- id: heldout4_l2_target_rate
+  domain: heldout4
+  profile: generic
+  dataset: branch_quarters.xlsx
+  question: 지점별 연간목표 대비 연간 매출 달성률을 구해줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      ratio_pairs:
+        수원지점: 0.968548
+        천안지점: 1.04875
+        청주지점: 0.942647
+        원주지점: 0.95
+      max_rows: 4
+- id: heldout4_l2_q3_total
+  domain: heldout4
+  profile: generic
+  dataset: branch_quarters.xlsx
+  question: 3분기 전체 매출을 구해줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 3910
+- id: heldout4_l2_top_q4
+  domain: heldout4
+  profile: generic
+  dataset: branch_quarters.xlsx
+  question: 4분기 매출이 가장 높은 지점을 알려줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - 수원지점
+      max_rows: 1
+- id: heldout4_l3_total_cost
+  domain: heldout4
+  profile: generic
+  dataset: product_costs.xlsx
+  question: 제품별 총원가(생산량×단위원가)를 구해줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        텀블러: 5160000
+        머그컵: 5250000
+        보온병: 6240000
+        물병: 4340000
+        도시락통: 4940000
+- id: heldout4_l3_unit_margin
+  domain: heldout4
+  profile: generic
+  dataset: product_costs.xlsx
+  question: 제품별 개당 이익(판매가-단위원가)을 구해줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        텀블러: 5600
+        머그컵: 3400
+        보온병: 8100
+        물병: 2500
+        도시락통: 6300
+- id: heldout4_l3_all_cost
+  domain: heldout4
+  profile: generic
+  dataset: product_costs.xlsx
+  question: 전 제품의 총원가 합계를 구해줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 25930000
+- id: heldout4_l3_priciest
+  domain: heldout4
+  profile: generic
+  dataset: product_costs.xlsx
+  question: 판매가가 가장 높은 제품을 알려줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      labels:
+      - 보온병
+      max_rows: 1
+- id: heldout4_l4_spent_by_dept
+  domain: heldout4
+  profile: generic
+  dataset: dept_kinds.xlsx
+  question: 부서별 집행 금액을 구해줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        기획부: 41300
+        영업부: 87650
+        생산부: 128900
+        총무부: 30150
+      max_rows: 4
+- id: heldout4_l4_sales_rate
+  domain: heldout4
+  profile: generic
+  dataset: dept_kinds.xlsx
+  question: 영업부의 계획 대비 집행률을 구해줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      ratio_cells:
+      - 0.952717
+- id: heldout4_l4_planned_total
+  domain: heldout4
+  profile: generic
+  dataset: dept_kinds.xlsx
+  question: 전체 계획 금액 합계를 구해줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      cells:
+      - 312000
+      absent_cells:
+      - 600000
+- id: heldout4_l4_remaining
+  domain: heldout4
+  profile: generic
+  dataset: dept_kinds.xlsx
+  question: 부서별로 계획에서 집행을 뺀 잔액을 구해줘
+  tags:
+  - heldout4
+  live_only: true
+  expected:
+    route: analysis_plan
+    expected_result:
+      pairs:
+        기획부: 6700
+        영업부: 4350
+        생산부: 6100
+        총무부: 6850

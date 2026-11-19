@@ -216,36 +216,17 @@ def validate_analysis_plan(
             user_prompt=user_prompt,
         )
     )
-    issues.extend(_validate_overall_aggregate(plan, df, available, user_prompt=user_prompt))
+    issues.extend(_validate_overall_aggregate(plan, available))
     issues.extend(_validate_grouped_selection(plan, df, user_prompt=user_prompt))
     issues.extend(_validate_per_row_combination(plan, user_prompt=user_prompt))
-    issues.extend(_validate_derive_operands_requested(plan, user_prompt=user_prompt))
 
     errors = [i for i in issues if i.level == "error"]
     return ValidationReport(ok=not errors, issues=issues)
 
 
-def _validate_overall_aggregate(
-    plan: AnalysisPlan,
-    df: pd.DataFrame,
-    available: set[str],
-    *,
-    user_prompt: str | None,
-) -> list[ValidationIssue]:
-    """group_by=[] 집계는 한 숫자로 끝나므로, 조용히 틀리는 두 경우를 막는다.
-
-    1) LLM이 쓴 지표 열 이름이 실제 열로 풀리지 않으면 버리지 않고 오류로 돌려준다.
-    2) 요청에 라벨 열의 실제 값이 있는데 행 필터가 없으면 오류로 돌려준다.
-    """
-    overall_index = next(
-        (
-            i
-            for i, s in enumerate(plan.steps)
-            if s.op == "aggregate" and not (s.payload or {}).get("group_by")
-        ),
-        None,
-    )
-    if overall_index is None:
+def _validate_overall_aggregate(plan: AnalysisPlan, available: set[str]) -> list[ValidationIssue]:
+    """group_by=[] 집계에서 LLM이 쓴 지표 열 이름이 실제 열로 풀리지 않으면 오류로 돌려준다."""
+    if not any(s.op == "aggregate" and not (s.payload or {}).get("group_by") for s in plan.steps):
         return []
     from core.analysis.analysis_plan_compile import _resolve_metric_column
 
@@ -265,26 +246,6 @@ def _validate_overall_aggregate(
                 "filter those rows with filter_rows column_filters, then aggregate group_by=[].",
             )
         )
-
-    selected = any(
-        s.op == "filter_rows"
-        and ((s.payload or {}).get("column_filters") or (s.payload or {}).get("numeric_filters"))
-        for s in plan.steps[:overall_index]
-    )
-    if not selected and user_prompt:
-        mentioned = _prompt_mentioned_values(df, str(user_prompt))
-        if mentioned:
-            col, values = mentioned
-            issues.append(
-                ValidationIssue(
-                    "error",
-                    "overall_aggregate_missing_selection",
-                    f"The request names values of column `{col}` ({', '.join(values)}) "
-                    "but the plan aggregates ALL rows. Add filter_rows with "
-                    f'column_filters=[{{"column":"{col}","values":{json_list(values)}}}] '
-                    "before aggregate group_by=[].",
-                )
-            )
     return issues
 
 
@@ -313,57 +274,6 @@ def _raw_aggregate_metric_names(raw: dict[str, Any]) -> list[str]:
                 if name:
                     names.append(name)
     return names
-
-
-_GENERIC_NAME_PARTS = frozenset({"합계", "평균", "총계", "소계", "합", "total", "sum", "mean", "avg"})
-
-
-def _column_mentioned(column: str, prompt_compact: str) -> bool:
-    """열 이름 전체나 ``_``로 나눈 의미 있는 조각이 요청에 그대로 나오면 언급된 것으로 본다."""
-    name = column.replace(" ", "")
-    if name and name.lower() in prompt_compact:
-        return True
-    for part in name.split("_"):
-        if len(part) >= 2 and part.lower() not in _GENERIC_NAME_PARTS and part.lower() in prompt_compact:
-            return True
-    return False
-
-
-def _validate_derive_operands_requested(
-    plan: AnalysisPlan,
-    *,
-    user_prompt: str | None,
-) -> list[ValidationIssue]:
-    """행마다 더하기/평균에 요청에 없는 열이 섞이는 것을 막는다.
-
-    요청이 피연산자 일부를 이름으로 집었는데 나머지는 요청에 없으면 오류.
-    요청이 열 이름을 하나도 쓰지 않았으면(동의어 등) 판단하지 않는다.
-    """
-    if not user_prompt:
-        return []
-    prompt_compact = str(user_prompt).replace(" ", "").lower()
-    issues: list[ValidationIssue] = []
-    for step in plan.steps:
-        expr = (step.payload or {}).get("expr")
-        if step.op != "derive_column" or not isinstance(expr, dict):
-            continue
-        kind = next(iter(expr), "")
-        if kind not in {"sum", "mean"}:
-            continue
-        operands = [str(c) for c in expr.get(kind) or []]
-        mentioned = [c for c in operands if _column_mentioned(c, prompt_compact)]
-        extra = [c for c in operands if c not in mentioned]
-        if mentioned and extra:
-            issues.append(
-                ValidationIssue(
-                    "error",
-                    "derive_operand_not_requested",
-                    f"derive `{kind}` uses {json_list(extra)} which the request did not ask for. "
-                    f"Use only the requested columns: {json_list(mentioned)} "
-                    f'(expr={{"{kind}":{json_list(mentioned)}}}).',
-                )
-            )
-    return issues
 
 
 def _per_row_skeleton(previous_plan: dict[str, Any] | None) -> str:

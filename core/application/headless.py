@@ -694,6 +694,10 @@ def _warnings_from_outcome(outcome: SingleRouteOutcome) -> list[WarningItem]:
         warnings.append(
             WarningItem(code="filter_note", message=str(note), stage="routing")
         )
+    for notice in meta.get("plan_notices") or []:
+        warnings.append(
+            WarningItem(code="plan_notice", message=str(notice), stage="analysis")
+        )
     summary = meta.get("integrate_validation")
     if summary and outcome.operation_name == "structured_integrate_failed":
         warnings.append(

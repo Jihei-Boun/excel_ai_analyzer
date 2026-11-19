@@ -99,7 +99,7 @@ def load_cases_from_file(path: Path) -> list[BenchmarkCase]:
     return [load_case_dict(item) for item in items]
 
 
-HELD_OUT_DOMAINS = frozenset({"heldout", "heldout2", "heldout3"})
+HELD_OUT_DOMAINS = frozenset({"heldout", "heldout2", "heldout3", "heldout4"})
 
 
 def iter_case_files(cases_dir: Path | None = None) -> list[Path]:

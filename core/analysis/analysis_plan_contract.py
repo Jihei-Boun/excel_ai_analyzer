@@ -336,7 +336,6 @@ COMPOSITION_CATEGORIES = (
 # Field-level fixes: keep composition, fix names/fields
 _REPAIR_ISSUE_CODES = frozenset(
     {
-        "derive_operand_not_requested",
         "code_column_metric",
         "missing_sort_column",
         "missing_select_column",

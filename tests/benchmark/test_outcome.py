@@ -29,6 +29,11 @@ def test_wrong_answer_with_unverified_table_notice_is_flagged() -> None:
     assert _outcome(loading_unverified=True, exec_ok=True) == "correct"
 
 
+def test_wrong_answer_with_plan_notice_is_flagged() -> None:
+    assert _outcome(plan_notice=True) == "flagged_wrong"
+    assert _outcome(plan_notice=True, exec_ok=True) == "correct"
+
+
 def test_right_numbers_are_correct_even_if_plan_check_fails() -> None:
     assert _outcome(ok=False, exec_ok=True) == "correct"
 
@@ -88,10 +93,18 @@ def test_heldout3_cases_file_matches_generator() -> None:
     )
 
 
+def test_heldout4_cases_file_matches_generator() -> None:
+    from tests.benchmark.heldout4 import CASES_FILE, render_cases_yaml
+
+    assert CASES_FILE.read_text(encoding="utf-8") == render_cases_yaml(), (
+        "cases/heldout4.yaml is stale. Rebuild it with python -m tests.benchmark.heldout4."
+    )
+
+
 def test_heldout_runs_only_when_named() -> None:
     from tests.benchmark.schema import load_all_cases
 
-    for domain in ("heldout", "heldout2", "heldout3"):
+    for domain in ("heldout", "heldout2", "heldout3", "heldout4"):
         assert not [c for c in load_all_cases() if c.domain == domain]
         named = load_all_cases(domains=[domain])
         assert named and all(c.domain == domain for c in named)
