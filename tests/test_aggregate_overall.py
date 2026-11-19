@@ -195,14 +195,19 @@ def test_overall_aggregate_rejects_invented_metric_column() -> None:
     assert "unknown_metric_column" in [i.code for i in report.errors]
 
 
-def test_overall_aggregate_requires_filter_when_prompt_names_items() -> None:
+def test_overall_aggregate_without_filter_warns_when_prompt_names_items() -> None:
+    """A warning for the user, not a rejection: a question may name items to compute with them."""
+    from core.analysis.analysis_plan_validate import user_notices
+
     report = _report(
         {"operation": "aggregate", "group_by": [], "metrics": [{"column": "계획", "fn": "sum"}]},
         "여비, 회의비의 계획 합계를 구해줘",
     )
-    assert not report.ok
-    issue = next(i for i in report.errors if i.code == "overall_aggregate_missing_selection")
+    assert report.ok
+    issue = next(i for i in report.warnings if i.code == "overall_aggregate_missing_selection")
     assert "항목명" in issue.message and "여비" in issue.message and "회의비" in issue.message
+    assert "column_filters" not in issue.message
+    assert user_notices(report) == [issue.message]
 
 
 def test_overall_aggregate_with_filter_passes_selection_check() -> None:
@@ -226,21 +231,17 @@ def test_overall_aggregate_without_item_names_passes() -> None:
     assert report.ok, [i.message for i in report.issues]
 
 
-def test_pipeline_retries_until_selection_filter_is_added() -> None:
-    plans = [
-        {"operation": "aggregate", "group_by": [], "metrics": [{"column": "계획", "fn": "sum"}]},
-        {
-            "operation": "aggregate",
-            "group_by": [],
-            "column_filters": [{"column": "항목명", "values": ["여비", "회의비"]}],
-            "metrics": [{"column": "계획", "fn": "sum"}],
-            "interpret": False,
-        },
-    ]
+def test_pipeline_keeps_unfiltered_plan_and_shows_a_notice() -> None:
+    """The plan is not rejected; the result carries a notice the user sees."""
+    plan = {
+        "operation": "aggregate",
+        "group_by": [],
+        "metrics": [{"column": "계획", "fn": "sum"}],
+        "interpret": False,
+    }
     calls = {"n": 0}
 
     def fake_chat_json(*_a, **_k):
-        plan = plans[min(calls["n"], len(plans) - 1)]
         calls["n"] += 1
         return plan
 
@@ -255,8 +256,9 @@ def test_pipeline_retries_until_selection_filter_is_added() -> None:
         chat_text_fn=lambda *_a, **_k: "",
     )
     assert result is not None
-    assert calls["n"] >= 2
-    assert result.dataframe.iloc[0]["계획"] == 50
+    assert calls["n"] == 1
+    notices = result.meta.get("plan_notices") or []
+    assert len(notices) == 1 and "여비" in notices[0] and "회의비" in notices[0]
 
 
 def test_grouped_aggregate_requires_named_group_selection() -> None:

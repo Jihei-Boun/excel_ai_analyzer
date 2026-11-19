@@ -29,6 +29,11 @@ def test_wrong_answer_with_unverified_table_notice_is_flagged() -> None:
     assert _outcome(loading_unverified=True, exec_ok=True) == "correct"
 
 
+def test_wrong_answer_with_plan_notice_is_flagged() -> None:
+    assert _outcome(plan_notice=True) == "flagged_wrong"
+    assert _outcome(plan_notice=True, exec_ok=True) == "correct"
+
+
 def test_right_numbers_are_correct_even_if_plan_check_fails() -> None:
     assert _outcome(ok=False, exec_ok=True) == "correct"
 

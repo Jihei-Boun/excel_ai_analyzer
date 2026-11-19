@@ -150,10 +150,13 @@ def _derive_report(expr: dict, prompt: str):
     return validate_analysis_plan(plan, df, profile_name="generic", user_prompt=prompt)
 
 
-def test_derive_operand_not_in_request_is_rejected() -> None:
+def test_derive_operand_not_in_request_is_a_user_warning() -> None:
+    """Not a rejection: "A부터 C까지" names only the ends of a range it means in full."""
     report = _derive_report({"mean": ["추가", "이월", "당해"]}, "이월과 당해 평균을 항목별로 구해줘")
-    issue = next(i for i in report.errors if i.code == "derive_operand_not_requested")
+    assert "derive_operand_not_requested" not in [i.code for i in report.errors]
+    issue = next(i for i in report.warnings if i.code == "derive_operand_not_requested")
     assert "추가" in issue.message
+    assert "expr" not in issue.message
 
 
 def test_derive_operands_matching_request_pass() -> None:

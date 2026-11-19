@@ -232,10 +232,11 @@ def _validate_overall_aggregate(
     *,
     user_prompt: str | None,
 ) -> list[ValidationIssue]:
-    """group_by=[] 집계는 한 숫자로 끝나므로, 조용히 틀리는 두 경우를 막는다.
+    """group_by=[] 집계는 한 숫자로 끝나므로, 조용히 틀리는 두 경우를 살핀다.
 
     1) LLM이 쓴 지표 열 이름이 실제 열로 풀리지 않으면 버리지 않고 오류로 돌려준다.
-    2) 요청에 라벨 열의 실제 값이 있는데 행 필터가 없으면 오류로 돌려준다.
+    2) 요청에 라벨 열의 실제 값이 있는데 행 필터가 없으면 사용자에게 보이는 경고를 남긴다.
+       계산에 쓰려고 값을 부른 질문(예: A-B-C)도 있어서 사실이 아니므로 계획을 막지 않는다.
     """
     overall_index = next(
         (
@@ -277,15 +278,23 @@ def _validate_overall_aggregate(
             col, values = mentioned
             issues.append(
                 ValidationIssue(
-                    "error",
+                    "warning",
                     "overall_aggregate_missing_selection",
-                    f"The request names values of column `{col}` ({', '.join(values)}) "
-                    "but the plan aggregates ALL rows. Add filter_rows with "
-                    f'column_filters=[{{"column":"{col}","values":{json_list(values)}}}] '
-                    "before aggregate group_by=[].",
+                    f"질문에 나온 `{col}` 값({', '.join(values)})만 고르지 않고 "
+                    "모든 행을 하나로 합쳤습니다. 질문의 뜻과 맞는지 확인해 주세요.",
                 )
             )
     return issues
+
+
+# Plan warnings that are shown to the user with the result. They flag a likely
+# mismatch between the request and the plan without blocking the plan, because
+# a correct answer can trigger them too.
+USER_NOTICE_CODES = frozenset({"overall_aggregate_missing_selection", "derive_operand_not_requested"})
+
+
+def user_notices(report: ValidationReport) -> list[str]:
+    return [i.message for i in report.warnings if i.code in USER_NOTICE_CODES]
 
 
 def json_list(values: list[str]) -> str:
@@ -334,9 +343,9 @@ def _validate_derive_operands_requested(
     *,
     user_prompt: str | None,
 ) -> list[ValidationIssue]:
-    """행마다 더하기/평균에 요청에 없는 열이 섞이는 것을 막는다.
+    """행마다 더하기/평균에 요청에 이름이 없는 열이 섞이면 사용자에게 보이는 경고를 남긴다.
 
-    요청이 피연산자 일부를 이름으로 집었는데 나머지는 요청에 없으면 오류.
+    "A부터 C까지"처럼 양 끝만 부르는 질문도 있어서 사실이 아니므로 계획을 막지 않는다.
     요청이 열 이름을 하나도 쓰지 않았으면(동의어 등) 판단하지 않는다.
     """
     if not user_prompt:
@@ -356,11 +365,10 @@ def _validate_derive_operands_requested(
         if mentioned and extra:
             issues.append(
                 ValidationIssue(
-                    "error",
+                    "warning",
                     "derive_operand_not_requested",
-                    f"derive `{kind}` uses {json_list(extra)} which the request did not ask for. "
-                    f"Use only the requested columns: {json_list(mentioned)} "
-                    f'(expr={{"{kind}":{json_list(mentioned)}}}).',
+                    f"질문에 이름이 나오지 않은 열 {', '.join(extra)}도 행마다 "
+                    f"{'더하기' if kind == 'sum' else '평균'}에 넣었습니다. 질문의 뜻과 맞는지 확인해 주세요.",
                 )
             )
     return issues
