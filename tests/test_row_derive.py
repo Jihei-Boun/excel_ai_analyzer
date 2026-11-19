@@ -150,32 +150,11 @@ def _derive_report(expr: dict, prompt: str):
     return validate_analysis_plan(plan, df, profile_name="generic", user_prompt=prompt)
 
 
-def test_derive_operand_not_in_request_is_a_user_warning() -> None:
-    """Not a rejection: "A부터 C까지" names only the ends of a range it means in full."""
-    report = _derive_report({"mean": ["추가", "이월", "당해"]}, "이월과 당해 평균을 항목별로 구해줘")
-    assert "derive_operand_not_requested" not in [i.code for i in report.errors]
-    issue = next(i for i in report.warnings if i.code == "derive_operand_not_requested")
-    assert "추가" in issue.message
-    assert "expr" not in issue.message
-
-
-def test_derive_operands_matching_request_pass() -> None:
-    report = _derive_report({"mean": ["이월", "당해"]}, "이월과 당해 평균을 항목별로 구해줘")
-    assert "derive_operand_not_requested" not in [i.code for i in report.issues]
-
-
-def test_derive_operands_with_synonyms_only_are_not_judged() -> None:
-    report = _derive_report({"sum": ["이월", "당해"]}, "두 예산을 더해줘")
-    assert "derive_operand_not_requested" not in [i.code for i in report.issues]
-
-
-def test_prefixed_column_counts_as_mentioned_by_its_part() -> None:
-    from core.analysis.analysis_plan_validate import _column_mentioned
-
-    prompt = "국내여비의이월예산과당해예산평균"
-    assert _column_mentioned("실행예산_이월예산", prompt)
-    assert not _column_mentioned("계획예산", prompt)
-    assert not _column_mentioned("집행계_합계", "실행예산합계를보여줘")
+def test_derive_operands_outside_the_request_are_left_to_the_planner() -> None:
+    """"A부터 C까지" names only the ends of a range it means in full, so this is not checked."""
+    report = _derive_report({"sum": ["추가", "이월", "당해"]}, "이월부터 당해까지 더해줘")
+    assert report.ok
+    assert not report.warnings
 
 
 def test_per_row_retry_feedback_includes_skeleton_from_previous_plan() -> None:

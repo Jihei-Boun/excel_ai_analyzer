@@ -23,7 +23,6 @@ from core.analysis.analysis_plan_builder import build_analysis_plan
 from core.analysis.analysis_plan_types import AnalysisPlan
 from core.analysis.analysis_plan_validate import (
     format_plan_validation_feedback,
-    user_notices,
     validate_analysis_plan,
 )
 from core.analysis.analysis_result_validate import (
@@ -485,7 +484,6 @@ def try_analysis_pipeline(
                     "analysis_plan": plan.to_dict(),
                     "analysis_validation": report.summary_text(),
                     "plan_validation": plan_report.summary_text(),
-                    "plan_notices": user_notices(plan_report),
                     "aggregation": {"operation": "analysis_plan"},
                     "validation_warnings": warn_msgs,
                     "validation_infos": info_msgs,
