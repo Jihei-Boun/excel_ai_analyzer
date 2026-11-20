@@ -24,6 +24,7 @@ from core.routing.prompt_router import (
 from core.filter.value_filter import infer_context_label, resolve_filter_source
 from core.profile_loader import use_profile
 from ui.file_state import (
+    analysis_source_label,
     find_file,
     frame_label_parts,
     get_active_named_frames,
@@ -44,6 +45,8 @@ def _active_profile_name() -> str:
 
 
 def process_user_prompt(prompt: str, *, user_already_added: bool = False) -> None:
+    # 답 아래에 어느 파일에 대한 답인지 남긴다. 파일을 바꿔도 지난 답이 헷갈리지 않게.
+    source_label = analysis_source_label()
     if is_multi_analysis_mode():
         named_frames = get_active_named_frames()
         if len(named_frames) < 2:
@@ -93,7 +96,7 @@ def process_user_prompt(prompt: str, *, user_already_added: bool = False) -> Non
                 extra_df = None
                 extra_meta = {}
                 st.session_state.operation_result = None
-    message: dict = {"role": "assistant", "content": reply}
+    message: dict = {"role": "assistant", "content": reply, "source_label": source_label}
     message.update(extra_meta)
     if extra_df is not None:
         message["dataframe"] = extra_df

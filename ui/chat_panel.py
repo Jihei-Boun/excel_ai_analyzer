@@ -123,6 +123,8 @@ def _render_chat_history() -> None:
         avatar = "user" if role == "user" else "assistant"
         with st.chat_message(avatar):
             st.markdown(str(message.get("content") or ""))
+            if role == "assistant" and message.get("source_label"):
+                st.caption(f"대상 파일: {message['source_label']}")
 
             if message.get("filter_summary"):
                 st.success(f"✓ {message['filter_summary']}")
