@@ -79,3 +79,23 @@ def test_explanation_passes_routing_and_headless_allowlist() -> None:
     meta = _merge_analysis_meta({}, {"plan_explanation": "지점별 금액 합계", "retry_log": []})
     assert meta == {"plan_explanation": "지점별 금액 합계"}
     assert _allowlisted_meta(meta) == {"plan_explanation": "지점별 금액 합계"}
+
+
+def test_column_pick_and_transpose_are_described() -> None:
+    """A plan that only picks columns and transposes used to get no line at all."""
+    plan = analysis_plan_from_dict(
+        {"steps": [{"op": "select_columns", "columns": ["지점", "1분기", "2분기", "3분기", "4분기"]}],
+         "transpose": True},
+        available_columns=_COLUMNS,
+    )
+    assert plan.transpose
+    assert explain_plan(plan) == "지점·1분기·2분기·3분기 외 1개 열만 → 행과 열 바꾸기"
+
+
+def test_column_pick_is_not_repeated_after_a_calculation() -> None:
+    line = _explain([
+        {"op": "aggregate", "group_by": ["지점"], "metrics": [{"column": "금액", "fn": "sum"}]},
+        {"op": "select_columns", "columns": ["지점", "금액"]},
+        {"op": "drop_columns", "columns": ["단가"]},
+    ])
+    assert line == "지점별 금액 합계 → 단가 열 빼기"

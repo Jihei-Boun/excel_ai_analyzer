@@ -148,6 +148,31 @@ def _context_updates_from_filter(
     return None, None
 
 
+# Answers from these paths were not checked by the plan and result validators.
+UNVERIFIED_FALLBACKS = frozenset(
+    {"pandasai_final_fallback", "simple_groupby_fallback", "retrieval_fallback"}
+)
+_FALLBACK_LABELS = {
+    "retrieval_fallback": "질문에 나온 값으로 행을 찾는 방식",
+    "simple_groupby_fallback": "단순 그룹 합계 방식",
+    "pandasai_final_fallback": "PandasAI 코드 생성",
+}
+
+
+def is_unverified_fallback(fallback_reason: str | None, operation_name: str | None = None) -> bool:
+    """The answer came from a fallback path, not from a validated analysis plan."""
+    return str(fallback_reason or "") in UNVERIFIED_FALLBACKS or operation_name == "PandasAI"
+
+
+def unverified_fallback_notice(fallback_reason: str | None) -> str:
+    """User-facing warning for an answer that skipped plan and result validation."""
+    how = _FALLBACK_LABELS.get(str(fallback_reason or ""), "PandasAI 코드 생성")
+    return (
+        f"검증되지 않은 답입니다. 분석 계획을 세우지 못해 예비 방식({how})으로 만든 결과라, "
+        "질문의 일부가 반영되지 않았을 수 있습니다. 사용하기 전에 확인하세요."
+    )
+
+
 def _merge_analysis_meta(meta: dict, analysis_meta: dict | None) -> dict:
     if not analysis_meta:
         return meta
