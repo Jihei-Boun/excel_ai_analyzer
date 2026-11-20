@@ -1,8 +1,8 @@
 """Fourth held-out benchmark, made before the plan-check audit it will judge.
 
 heldout.py, heldout2.py and heldout3.py have all been looked at and now serve as
-development checks. This set is the unseen check for changes to the plan
-validator. The tables are plain, so the questions carry the difficulty:
+development checks. This set judged the plan-check audit (PR #10) and has been
+looked at too; heldout5.py is now the unseen set. The tables are plain, so the questions carry the difficulty:
 
 - values computed from two aggregates (a per-unit figure, an achievement rate)
 - a range of columns that includes the middle ones
