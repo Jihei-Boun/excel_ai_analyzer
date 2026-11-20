@@ -5,7 +5,7 @@ from __future__ import annotations
 import streamlit as st
 
 from ui.session_store import reset_work_state
-from ui.upload import get_active_named_frames, is_multi_analysis_mode
+from ui.file_state import analysis_source_label
 
 
 def render_header() -> None:
@@ -29,14 +29,7 @@ def render_header() -> None:
 
 
 def _file_status_label() -> str:
-    if is_multi_analysis_mode():
-        names = [name for name, _ in get_active_named_frames()]
-        if not names:
-            return "파일 없음"
-        if len(names) <= 2:
-            return " + ".join(names)
-        return f"{names[0]} 외 {len(names) - 1}개"
-    return st.session_state.get("file_name") or "파일 없음"
+    return analysis_source_label()
 
 
 def _target_row_count() -> int:

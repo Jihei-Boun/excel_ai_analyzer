@@ -464,8 +464,12 @@ def current_analysis_mode() -> str:
     return "multi" if is_multi_file_analysis() else "single"
 
 
-def remove_file(file_id: str) -> None:
-    """업로드 목록에서 파일을 제거하고, 필요하면 다른 파일을 활성화한다."""
+def remove_file(file_id: str, *, from_uploader: bool = False) -> None:
+    """업로드 목록에서 파일을 제거하고, 필요하면 다른 파일을 활성화한다.
+
+    from_uploader=True는 업로더 칩(X)으로 이미 위젯에서 빠진 경우다. 이때는 위젯을
+    초기화하지 않고 칩 숨김 목록에도 넣지 않는다.
+    """
     files = [f for f in st.session_state.uploaded_files if f["id"] != file_id]
     st.session_state.uploaded_files = files
 
@@ -480,10 +484,11 @@ def remove_file(file_id: str) -> None:
     # 일부만 삭제: uploader key(nonce)는 올리지 않는다.
     # 위젯에 남은 칩 중 삭제분은 _uploader_excluded_names로 표시만 숨긴다.
     # (nonce를 올리면 남은 파일 칩까지 모두 사라져 UI/session이 어긋남)
-    excluded = st.session_state.setdefault("_uploader_excluded_names", set())
-    excluded.add(file_id)
+    if not from_uploader:
+        excluded = st.session_state.setdefault("_uploader_excluded_names", set())
+        excluded.add(file_id)
 
-    if not files:
+    if not files and not from_uploader:
         # 마지막 파일까지 삭제한 경우에만 업로더 위젯을 초기화
         st.session_state.uploader_nonce = st.session_state.get("uploader_nonce", 0) + 1
         st.session_state._uploader_excluded_names = set()
@@ -608,3 +613,20 @@ def _format_size(num_bytes: int) -> str:
     if num_bytes < 1024 * 1024:
         return f"{num_bytes / 1024:.1f} KB"
     return f"{num_bytes / (1024 * 1024):.1f} MB"
+
+
+def format_source_label(names: list[str]) -> str:
+    """분석 대상 이름 목록을 한 줄로. 셋 이상이면 첫 이름 외 N개."""
+    names = [n for n in names if n]
+    if not names:
+        return "파일 없음"
+    if len(names) <= 2:
+        return " + ".join(names)
+    return f"{names[0]} 외 {len(names) - 1}개"
+
+
+def analysis_source_label() -> str:
+    """지금 질문이 향하는 파일(또는 시트) 이름. 헤더와 채팅 답에 같은 글을 쓴다."""
+    if is_multi_analysis_mode():
+        return format_source_label([name for name, _ in get_active_named_frames()])
+    return format_source_label([st.session_state.get("file_name") or ""])
