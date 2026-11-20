@@ -37,7 +37,7 @@ def active_charts_dir() -> Path:
 # Ollama / PandasAI 기본값
 # ---------------------------------------------------------------------------
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "qwen2.5:7b"
+DEFAULT_OLLAMA_MODEL = "qwen2.5-coder:32b"
 OLLAMA_TIMEOUT_SEC = 5
 PANDASAI_MAX_RETRIES = 1
 

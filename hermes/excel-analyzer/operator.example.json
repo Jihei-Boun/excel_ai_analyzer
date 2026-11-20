@@ -5,7 +5,7 @@
   "workspace_root": "/절대/경로/hermes-excel-work",
   "publish_root": "/절대/경로/hermes-excel-publish",
   "model_base_url": "http://127.0.0.1:11434",
-  "model_name": "qwen2.5:7b",
+  "model_name": "qwen2.5-coder:32b",
   "allowed_profiles": ["generic"],
   "analysis_profile": "generic",
   "max_input_files": 1,

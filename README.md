@@ -10,7 +10,7 @@ Excel AI Analyzer는 이 작업을 **질문 한 줄**로 대신하는 것을 목
 - **질문은 자연어로:** "연구활동비 항목들의 실행예산 합계 평균을 구해줘"
 - **계산은 정확하게:** LLM은 *무엇을 할지(분석 계획)* 만 정하고, 실제 숫자 계산은 pandas가 합니다. LLM이 숫자를 직접 만들어 내지 않습니다.
 - **결과는 바로 쓸 수 있게:** 결과 표 아래 버튼으로 엑셀(xlsx)을 내려받을 수 있습니다.
-- **데이터는 밖으로 나가지 않게:** 오픈 모델(기본 `qwen2.5:7b`)을 사내 서버에서 [Ollama](https://ollama.com/)로 실행합니다. 외부 API를 쓰지 않습니다.
+- **데이터는 밖으로 나가지 않게:** 오픈 모델(기본 `qwen2.5-coder:32b`)을 사내 서버에서 [Ollama](https://ollama.com/)로 실행합니다. 외부 API를 쓰지 않습니다.
 
 핵심 처리 구조는 특정 업무에 묶여 있지 않습니다. 다만 현재 기본 예시와 일부 규칙(소계·합계 행 구분 등)은 연구과제 **예실대비표**에서 가장 많이 검증되었습니다.
 
@@ -50,7 +50,7 @@ Excel AI Analyzer는 이 작업을 **질문 한 줄**로 대신하는 것을 목
 flowchart TD
     A[엑셀 업로드] --> B[정규화 · 행 종류 구분<br/>상세 / 소계 / 합계 / 하단 메모]
     B --> C[질문]
-    C --> D[LLM: 분석 계획 JSON 작성<br/>qwen2.5:7b · Ollama]
+    C --> D[LLM: 분석 계획 JSON 작성<br/>qwen2.5-coder:32b · Ollama]
     D --> E{계획 검사}
     E -->|문제 있음| F[고쳐서 다시 요청<br/>최대 3회]
     F --> D
@@ -80,7 +80,7 @@ flowchart TD
 
 - **UI:** Streamlit
 - **Backend:** Python 3.12, pandas, openpyxl / xlrd, PyYAML
-- **LLM:** Ollama + 오픈 모델 `qwen2.5:7b` (사내 서버에서 실행)
+- **LLM:** Ollama + 오픈 모델 `qwen2.5-coder:32b` (사내 서버에서 실행)
 - **대체 경로:** PandasAI
 - **시각화:** matplotlib
 - **Test / CI:** pytest, GitHub Actions
@@ -118,8 +118,8 @@ excel_ai_analyzer/
 **요구사항:** Python 3.12, Ollama 실행 중
 
 ```bash
-# 1) 모델 받기 (기본값: qwen2.5:7b)
-ollama pull qwen2.5:7b
+# 1) 모델 받기 (기본값: qwen2.5-coder:32b)
+ollama pull qwen2.5-coder:32b
 
 # 2) 설치
 git clone https://github.com/Jihei-Boun/excel_ai_analyzer.git
@@ -138,11 +138,13 @@ STREAMLIT_PORT=8503 ./run.sh   # 다른 포트로 실행
 
 ### 환경 변수
 
+분석에 쓸 모델(기본 `qwen2.5-coder:32b`)과 Ollama 주소(기본 `http://localhost:11434`)는 환경 변수가 아니라 화면 왼쪽 사이드바에서 고릅니다. 기본값은 `core/constants.py`에 있습니다.
+
 | 변수 | 기본값 | 설명 |
 | --- | --- | --- |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 주소 |
-| `OLLAMA_MODEL` | `qwen2.5:7b` | 분석 계획을 쓸 모델 |
 | `STREAMLIT_PORT` | `8502` | `run.sh` 실행 포트 |
+| `EXCEL_ANALYZER_STRUCTURE_MODEL` | `qwen2.5-coder:32b` | 표 구조를 판단할 모델 |
+| `EXCEL_ANALYZER_OLLAMA_URL` | `http://localhost:11434` | 표 구조 판단에 쓸 Ollama 주소 |
 | `EXCEL_ANALYZER_DISABLE_INTERPRET` | (꺼짐) | `1`이면 결과 해석 문장 생성을 끔 |
 
 ### 화면 없이 호출하기
