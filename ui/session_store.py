@@ -83,7 +83,7 @@ def init_session_state() -> None:
         "preview_file_id": None,
         "analysis_mode": "single",  # "single" | "multi"
         "uploader_nonce": 0,
-        "_uploader_excluded_names": set(),
+        "_uploader_hidden_counts": {},
         "analysis_profile": "generic",
         "budget_table_mode": False,
         "profile_manually_set": False,
