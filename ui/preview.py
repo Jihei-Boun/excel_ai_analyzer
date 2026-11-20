@@ -107,6 +107,11 @@ def _render_preview_file_picker(files: list[dict]) -> None:
         current = options[0]
         set_preview_file(current)
 
+    # A choice queued earlier in this run (e.g. the sidebar switched the analysis file)
+    # is applied before the radio is drawn, so the radio does not put the old value back.
+    pending = st.session_state.pop("_pending_preview_radio", None)
+    if pending in options:
+        st.session_state.preview_file_radio = pending
     if st.session_state.get("preview_file_radio") not in options:
         st.session_state.preview_file_radio = current
 

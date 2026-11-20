@@ -405,6 +405,11 @@ def set_analysis_mode(mode: str, *, sync_mode_radio: bool = True) -> None:
     st.session_state.analysis_mode = "single"
     active_id = st.session_state.get("active_file_id")
     active_ids = list(st.session_state.get("active_file_ids") or [])
+    # 동시 분석에서 단일로 바꿀 때는 지금 미리보기 중인 파일을 분석 대상으로 삼는다.
+    # (미리보기는 B인데 분석 대상은 A로 남으면 헷갈린다.)
+    preview_id = st.session_state.get("preview_file_id")
+    if preview_id and preview_id in active_ids:
+        active_id = preview_id
     if active_id is None and active_ids:
         active_id = active_ids[0]
     if active_id is None:

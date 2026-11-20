@@ -72,10 +72,15 @@ def render_upload_section() -> None:
         type=["xlsx", "xls", "csv"],
         accept_multiple_files=True,
         key=f"excel_uploader_{st.session_state.get('uploader_nonce', 0)}",
+        on_change=_mark_uploader_changed,
     )
     # 업로더 칩(X)으로 뺀 파일은 session_state에서도 뺀다. 마지막 파일을 X로 빼서 목록이
     # 비었을 때도 포함한다. 같은 실행에서 새로 올린 파일은 그대로 처리한다.
-    removed = _prune_files_removed_in_uploader(uploaded_list or [])
+    # 사용자가 업로더를 실제로 바꾼 실행에서만 맞춘다. 다른 위젯이 업로더를 그리기 전에
+    # rerun하면 위젯 값이 잠깐 빈 목록으로 오는데, 그때 파일을 지우면 안 된다.
+    removed = False
+    if st.session_state.pop("_uploader_user_changed", False):
+        removed = _prune_files_removed_in_uploader(uploaded_list or [])
     if uploaded_list:
         _handle_uploads(uploaded_list)  # 새 파일이 있으면 여기서 rerun
     if removed:
@@ -84,30 +89,25 @@ def render_upload_section() -> None:
     _render_file_list()
 
 
-def files_removed_in_uploader(
-    previous_names: set[str], current_names: set[str], session_ids: list[str]
-) -> list[str]:
-    """지난 실행에 위젯에 있었고 이번에 빠진 파일 중 아직 session에 남은 것.
+def _mark_uploader_changed() -> None:
+    """사용자가 업로더에 파일을 올리거나 칩(X)으로 뺐을 때만 Streamlit이 부른다."""
+    st.session_state._uploader_user_changed = True
 
-    지난 실행에 위젯에 없던 파일(새 위젯, 삭제 버튼으로 이미 뺀 파일)은 건드리지 않는다.
-    """
-    gone = previous_names - current_names
-    return [file_id for file_id in session_ids if file_id in gone]
+
+def files_removed_in_uploader(current_names: set[str], session_ids: list[str]) -> list[str]:
+    """사용자가 바꾼 업로더에 더 이상 없는데 session에는 남은 파일."""
+    return [file_id for file_id in session_ids if file_id not in current_names]
 
 
 def _prune_files_removed_in_uploader(uploaded_list) -> bool:
     """업로더 칩(X)으로 빠진 파일을 session_state에서도 제거한다. 변경이 있으면 True."""
-    nonce = st.session_state.get("uploader_nonce", 0)
-    last_nonce, last_names = st.session_state.get("_uploader_last_names") or (nonce, set())
-    previous = set(last_names) if last_nonce == nonce else set()
     current = {uploaded.name for uploaded in uploaded_list}
-    st.session_state._uploader_last_names = (nonce, current)
     # 삭제 버튼으로 숨겨 둔 칩을 사용자가 X로 마저 빼면, 같은 이름을 다시 올릴 수 있게 숨김을 푼다.
     excluded = st.session_state.get("_uploader_excluded_names")
     if isinstance(excluded, set):
-        excluded -= previous - current
+        excluded &= current
     session_ids = [meta["id"] for meta in st.session_state.get("uploaded_files") or []]
-    removed = files_removed_in_uploader(previous, current, session_ids)
+    removed = files_removed_in_uploader(current, session_ids)
     for file_id in removed:
         # 위젯에서 이미 빠졌으므로 위젯을 초기화하거나 칩을 숨길 필요가 없다.
         # (초기화하면 같은 실행에 새로 올린 파일까지 사라진다.)

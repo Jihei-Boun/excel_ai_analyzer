@@ -6,6 +6,7 @@ import requests
 import streamlit as st
 
 from core.constants import DEFAULT_OLLAMA_BASE_URL, OLLAMA_TIMEOUT_SEC
+from ui.session_store import request_rerun
 from core.profile_loader import (
     list_profile_names,
     load_profile,
@@ -75,6 +76,7 @@ def render_sidebar() -> None:
             from ui.file_state import (
                 activate_file,
                 activate_files,
+                set_preview_file,
                 get_active_named_frames,
                 get_analysis_unit_label,
                 is_multi_file_analysis,
@@ -105,10 +107,10 @@ def render_sidebar() -> None:
                 if picked_ids != current_ids:
                     if len(picked_ids) >= 2:
                         activate_files(picked_ids, reset_analysis=True)
-                        st.rerun()
+                        request_rerun()
                     elif len(picked_ids) == 1:
                         activate_file(picked_ids[0], reset_analysis=True)
-                        st.rerun()
+                        request_rerun()
                     elif len(files) >= 2:
                         st.caption("동시 분석에는 파일 2개 이상을 선택하세요.")
 
@@ -135,7 +137,9 @@ def render_sidebar() -> None:
                 )
                 if chosen != active_id:
                     activate_file(chosen, reset_analysis=True, sync_mode_radio=False)
-                    st.rerun()
+                    # 분석 대상을 바꾸면 미리보기도 그 파일로 맞춘다 (따로 고를 수는 있다).
+                    set_preview_file(chosen)
+                    request_rerun()
                 st.caption("이 파일이 AI 분석 대상입니다")
                 _render_sheet_multiselect(chosen)
 
@@ -289,7 +293,7 @@ def _render_sheet_multiselect(
         return
     if list(picked) != list(current):
         set_active_sheets(list(picked), file_id=file_id, reset_analysis=True)
-        st.rerun()
+        request_rerun()
     if len(picked) >= 2:
         st.caption(f"시트 {len(picked)}개 포함")
     else:
