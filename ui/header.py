@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from ui.session_store import reset_work_state
+from ui.session_store import request_rerun, reset_work_state
 from ui.file_state import analysis_source_label
 
 
@@ -23,7 +23,7 @@ def render_header() -> None:
         st.write("")
         if st.button("초기화", use_container_width=True):
             reset_work_state(clear_chat=True)
-            st.rerun()
+            request_rerun()
 
     st.divider()
 

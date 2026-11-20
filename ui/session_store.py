@@ -123,3 +123,20 @@ def reset_work_state(*, clear_chat: bool = True) -> None:
         st.session_state.chat_input_nonce = (
             st.session_state.get("chat_input_nonce", 0) + 1
         )
+
+
+def request_rerun() -> None:
+    """Ask for a rerun at the end of this run instead of stopping the script now.
+
+    st.rerun() stops the script where it is. Widgets that have not been drawn yet in that
+    run lose their state; for the file uploader that means its files. Controls drawn
+    before the uploader (sidebar, header) call this, and app.py reruns once at the end.
+    """
+    st.session_state._rerun_requested = True
+
+
+def flush_requested_rerun() -> None:
+    """Rerun if anything in this run asked for it. Call at the very end of app.py."""
+    if st.session_state.pop("_rerun_requested", False):
+        st.rerun()
+
