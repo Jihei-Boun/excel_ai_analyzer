@@ -15,6 +15,7 @@ from core.routing.prompt_intent import (
     detect_aggregate_op,
     wants_full_dataset,
 )
+from core.routing.route_helpers import is_unverified_fallback, unverified_fallback_notice
 from core.routing.prompt_router import (
     SingleRouteOutcome,
     needs_chart_context,
@@ -131,6 +132,8 @@ def _apply_route_outcome(outcome: SingleRouteOutcome) -> tuple[str, pd.DataFrame
         )
 
     meta = dict(outcome.meta)
+    if is_unverified_fallback(meta.get("fallback_reason"), outcome.operation_name):
+        meta["unverified_notice"] = unverified_fallback_notice(meta.get("fallback_reason"))
     if outcome.filter_auto_reset or st.session_state.get("filter_auto_reset"):
         meta = _attach_auto_reset_note(meta)
 

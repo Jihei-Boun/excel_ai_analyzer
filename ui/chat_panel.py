@@ -125,6 +125,8 @@ def _render_chat_history() -> None:
             st.markdown(str(message.get("content") or ""))
             if role == "assistant" and message.get("source_label"):
                 st.caption(f"대상 파일: {message['source_label']}")
+            if message.get("unverified_notice"):
+                st.warning(message["unverified_notice"])
 
             if message.get("filter_summary"):
                 st.success(f"✓ {message['filter_summary']}")

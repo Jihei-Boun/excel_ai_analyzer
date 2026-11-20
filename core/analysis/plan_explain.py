@@ -47,6 +47,13 @@ def explain_plan(plan: AnalysisPlan, source: pd.DataFrame | None = None) -> str:
         parts.extend(p for p in _explain_step(step, counts) if p)
         if step.op == "filter_rows":
             counts = {}  # later filters see rows the first one already dropped
+    if not parts:
+        # Only picking columns: say which, since nothing else describes the result.
+        picked = [s for s in plan.steps if s.op == "select_columns" and (s.payload or {}).get("columns")]
+        if picked:
+            parts.append(f"{_names(picked[-1].payload['columns'], 4)} 열만")
+    if getattr(plan, "transpose", False):
+        parts.append("행과 열 바꾸기")
     return " → ".join(parts)
 
 
@@ -82,6 +89,9 @@ def _explain_step(step: AnalysisStep, counts: dict[str, int]) -> list[str]:
         asc = p.get("ascending", False)
         first = asc[0] if isinstance(asc, list) and asc else asc
         return [f"{_names(by)} {'작은' if first else '큰'} 순 정렬"] if by else []
+    if op == "drop_columns":
+        cols = p.get("columns") or []
+        return [f"{_names(cols, 4)} 열 빼기"] if cols else []
     if op == "limit":
         return [f"위에서 {p.get('n') or 5}개"]
     if op == "compare_groups":

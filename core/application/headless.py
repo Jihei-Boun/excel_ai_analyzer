@@ -60,6 +60,7 @@ from core.io.excel_loader import (
     load_tabular,
 )
 from core.profile_loader import list_profile_names, load_profile, use_profile
+from core.routing.route_helpers import is_unverified_fallback
 from core.routing.route_multi import route_multi_prompt
 from core.routing.route_single import route_single_prompt
 from core.io import table_structure
@@ -475,9 +476,6 @@ def _unique_frame_labels(loaded: list[_LoadedInput]) -> list[str]:
 # 분석 계획이 실패해 답을 만들지 않은 경우. 성공이 아니라 cannot_plan으로 돌려준다.
 _CANNOT_PLAN_FALLBACKS = frozenset({"safe_plan_failure", "rate_needs_operands"})
 # 분석 계획 검증을 거치지 않은 결과. 성공이지만 검증 상태를 passed로 쓰지 않는다.
-_UNVERIFIED_FALLBACKS = frozenset(
-    {"pandasai_final_fallback", "simple_groupby_fallback", "retrieval_fallback"}
-)
 
 
 def _normalize_outcome(
@@ -507,9 +505,7 @@ def _normalize_outcome(
                 validation=structural_validation_info("not_run"),
             ),
         )
-    unverified = fallback_reason in _UNVERIFIED_FALLBACKS or (
-        outcome.operation_name == "PandasAI"
-    )
+    unverified = is_unverified_fallback(fallback_reason, outcome.operation_name)
     structural_state = (
         outcome.structural_validation
         if outcome.structural_validation in {"passed", "failed"}
