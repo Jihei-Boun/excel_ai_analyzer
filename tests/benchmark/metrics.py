@@ -79,15 +79,13 @@ def classify_outcome(
     has_result: bool,
     route_observed: str | None,
     loading_unverified: bool = False,
-    plan_notice: bool = False,
 ) -> str:
     """사용자 입장에서 본 결과 분류.
 
     - correct: 숫자가 맞다 (정답이 없는 사례는 전체 ok로 판단).
     - honest_failure: 틀렸지만 결과 표 없이 끝났다 (되묻기·안전 실패).
     - flagged_wrong: 틀렸지만 사용자에게 경고가 붙는다. 검증 없는 대체 경로 결과이거나,
-      표 구조를 확인하지 못해 기본 방식으로 읽었다는 경고(loading_unverified)가 있거나,
-      계획이 질문과 어긋나 보인다는 경고(plan_notice)가 결과와 함께 화면에 나간다.
+      표 구조를 확인하지 못해 기본 방식으로 읽었다는 경고(loading_unverified)가 있다.
     - silent_wrong: 틀렸는데 경고 없이 검증된 분석 계획 결과로 나간다. 가장 위험하다.
     """
     if crashed:
@@ -99,7 +97,7 @@ def classify_outcome(
         return "correct"
     if not has_result:
         return "honest_failure"
-    if route_observed in _UNVERIFIED_ROUTES or loading_unverified or plan_notice:
+    if route_observed in _UNVERIFIED_ROUTES or loading_unverified:
         return "flagged_wrong"
     return "silent_wrong"
 

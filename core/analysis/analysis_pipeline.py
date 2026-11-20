@@ -21,6 +21,7 @@ from core.analysis.analysis_plan_sanitize import (
 from core.analysis.ops_reshape import transpose_table
 from core.analysis.analysis_plan_builder import build_analysis_plan
 from core.analysis.analysis_plan_types import AnalysisPlan
+from core.analysis.plan_explain import explain_plan
 from core.analysis.analysis_plan_validate import (
     format_plan_validation_feedback,
     validate_analysis_plan,
@@ -484,6 +485,7 @@ def try_analysis_pipeline(
                     "analysis_plan": plan.to_dict(),
                     "analysis_validation": report.summary_text(),
                     "plan_validation": plan_report.summary_text(),
+                    "plan_explanation": explain_plan(plan, classified),
                     "aggregation": {"operation": "analysis_plan"},
                     "validation_warnings": warn_msgs,
                     "validation_infos": info_msgs,
