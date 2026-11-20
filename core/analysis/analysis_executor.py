@@ -380,7 +380,7 @@ def _derive_column(df: pd.DataFrame, payload: dict[str, Any]) -> pd.DataFrame:
             work[name] = left / denom
         return work
 
-    if kind in {"sum", "mean"}:
+    if kind in {"sum", "mean", "product"}:
         if len(operands) < 2:
             raise ValueError(f"{kind}는 피연산자 2개 이상이 필요합니다.")
         missing = [c for c in operands if c not in work.columns]
@@ -390,6 +390,9 @@ def _derive_column(df: pd.DataFrame, payload: dict[str, Any]) -> pd.DataFrame:
         if kind == "sum":
             # 모든 값이 비면 0이 아니라 빈 값으로 둔다.
             work[name] = values.sum(axis=1, min_count=1)
+        elif kind == "product":
+            # 값 하나라도 비면 곱도 빈 값이다 (빈 칸을 1로 보지 않는다).
+            work[name] = values.prod(axis=1, min_count=len(operands))
         else:
             work[name] = values.mean(axis=1)
         return work

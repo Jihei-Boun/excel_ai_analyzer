@@ -191,7 +191,7 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
         if not isinstance(expr, dict) or not expr:
             return None
         kind = str(next(iter(expr.keys())))
-        if not name and kind not in {"sum", "mean"}:
+        if not name and kind not in {"sum", "mean", "product"}:
             return None
         if kind not in SUPPORTED_DERIVE_EXPRS:
             return None
@@ -205,11 +205,14 @@ def _sanitize_step(item: dict[str, Any], columns: set[str]) -> AnalysisStep | No
             return None
         if kind in {"diff", "abs_diff", "ratio", "percent_ratio"} and len(operands) != 2:
             return None
-        if kind in {"sum", "mean"}:
+        if kind in {"sum", "mean", "product"}:
             if len(operands) < 2:
                 return None
             if not name:
-                name = ("+".join(operands) if kind == "sum" else f"평균({','.join(operands)})")
+                name = {
+                    "sum": "+".join(operands),
+                    "product": "×".join(operands),
+                }.get(kind, f"평균({','.join(operands)})")
         # sign_label 1피연산자는 직전 파생열(차이)일 수 있어 columns 소속을 강제하지 않는다.
         if kind == "sign_label" and len(operands) == 1:
             return AnalysisStep(op, {"name": name, "expr": {kind: operands}})
@@ -648,11 +651,12 @@ def _parse_embedded_numeric_compare(
 _ROW_AGG_ALIASES = {
     "sum": "sum", "add": "sum", "plus": "sum", "row_sum": "sum", "total": "sum",
     "mean": "mean", "avg": "mean", "average": "mean", "row_mean": "mean",
+    "product": "product", "multiply": "product", "mul": "product", "times": "product",
 }
 
 
 def _normalize_row_aggregate_expr(expr: Any) -> Any:
-    """행마다 여러 열을 더하거나 평균 내는 식의 여러 표기를 ``{sum|mean: [cols]}``로 맞춘다.
+    """행마다 여러 열을 더하거나 평균 내거나 곱하는 식의 여러 표기를 ``{sum|mean|product: [cols]}``로 맞춘다.
 
     예: ``{"type":"sum","columns":[A,B]}``, ``{"add":[A,B]}``, ``{"avg":[A,B,C]}``.
     """

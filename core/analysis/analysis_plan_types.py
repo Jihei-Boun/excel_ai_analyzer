@@ -25,7 +25,7 @@ SUPPORTED_ANALYSIS_OPS = frozenset(
 )
 
 SUPPORTED_DERIVE_EXPRS = frozenset(
-    {"diff", "abs", "abs_diff", "ratio", "percent_ratio", "sign_label", "sum", "mean"}
+    {"diff", "abs", "abs_diff", "ratio", "percent_ratio", "sign_label", "sum", "mean", "product"}
 )
 
 ROW_TYPES = frozenset({"detail", "subtotal", "total", "footer", "blank"})
