@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import re
 from typing import Any
 
@@ -244,7 +245,10 @@ def eval_execution(
     return True, "result checks passed", "none"
 
 
-_CELL_KEYS = ("cells", "ratio_cells", "pairs", "ratio_pairs", "labels", "absent_labels", "absent_cells")
+_CELL_KEYS = (
+    "cells", "ratio_cells", "pairs", "ratio_pairs", "labels", "absent_labels", "absent_cells",
+    "rows", "row_order",
+)
 
 
 def _numbers_in(result_df: pd.DataFrame) -> list[float]:
@@ -291,6 +295,116 @@ def _pair_present(result_df: pd.DataFrame, label: str, want: float, *, ratio: bo
     return False
 
 
+def _cell_label(value: Any) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    return str(value).strip()
+
+
+def _label_alternatives(label: str) -> list[str]:
+    return [part.strip() for part in label.split("|") if part.strip()]
+
+
+def _vectors_for(result_df: pd.DataFrame, label: str) -> list[list[Any]]:
+    """Rows that hold the label in a cell, and columns that hold it in the header or a cell."""
+    names = set(_label_alternatives(label))
+    vectors: list[list[Any]] = []
+    for _, row in result_df.iterrows():
+        cells = row.tolist()
+        if names & {_cell_label(v) for v in cells}:
+            vectors.append(cells)
+    for col in result_df.columns:
+        cells = result_df[col].tolist()
+        if _cell_label(col) in names or names & {_cell_label(v) for v in cells}:
+            vectors.append(cells)
+    return vectors
+
+
+def _atoms(value: Any) -> list[tuple[str, Any]]:
+    """A cell split into the pieces a value can match: its text, each number in it, its date.
+
+    A cell such as "한여울 · 56개월" gives the name and the number 56 separately, so a
+    table that writes both in one cell is read the same as one that uses two cells.
+    """
+    if value is None or isinstance(value, bool) or (isinstance(value, float) and pd.isna(value)):
+        return []
+    if isinstance(value, (_dt.datetime, pd.Timestamp)):
+        return [("date", value.date())]
+    if isinstance(value, _dt.date):
+        return [("date", value)]
+    if isinstance(value, (int, float)):
+        return [("num", float(value))]
+    text = str(value).strip()
+    atoms: list[tuple[str, Any]] = [("text", text)]
+    atoms += [("num", float(m.replace(",", "").rstrip("%"))) for m in _NUM_RE.findall(text)]
+    return atoms
+
+
+def _date_in_text(want: _dt.date, text: str) -> bool:
+    forms = (want.isoformat(), f"{want.month}/{want.day}", f"{want.month:02d}/{want.day:02d}",
+             f"{want.month}월 {want.day}일", f"{want.month:02d}-{want.day:02d}")
+    return any(form in text for form in forms)
+
+
+def _spec_matches(spec: Any, atom: tuple[str, Any]) -> bool:
+    kind, got = atom
+    if isinstance(spec, dict) and "date" in spec:
+        want = _dt.date.fromisoformat(str(spec["date"]))
+        return (kind == "date" and got == want) or (kind == "text" and _date_in_text(want, got))
+    if isinstance(spec, str):
+        return kind == "text" and bool(spec) and spec in got
+    if kind != "num":
+        return False
+    if isinstance(spec, dict) and "ratio" in spec:
+        r, tol = float(spec["ratio"]), float(spec.get("tol", 0.00006))
+        return abs(got - r) <= tol or abs(got - 100 * r) <= 100 * tol
+    if isinstance(spec, dict) and "value" in spec:
+        return abs(got - float(spec["value"])) <= float(spec.get("tol", 0.01))
+    return _close(got, float(spec))
+
+
+def _all_specs_fit(specs: list[Any], cells: list[Any]) -> bool:
+    """Each expected value takes its own piece of a cell (bipartite matching, small tables only)."""
+    atoms = [atom for cell in cells for atom in _atoms(cell)]
+    owner: dict[int, int] = {}
+
+    def assign(i: int, seen: set[int]) -> bool:
+        for j, atom in enumerate(atoms):
+            if j in seen or not _spec_matches(specs[i], atom):
+                continue
+            seen.add(j)
+            if j not in owner or assign(owner[j], seen):
+                owner[j] = i
+                return True
+        return False
+
+    return all(assign(i, set()) for i in range(len(specs)))
+
+
+def _row_present(result_df: pd.DataFrame, label: str, specs: list[Any]) -> bool:
+    return any(_all_specs_fit(specs, cells) for cells in _vectors_for(result_df, label))
+
+
+def _in_order(result_df: pd.DataFrame, labels: list[str]) -> bool:
+    def first_positions(lines: list[list[Any]]) -> list[int] | None:
+        found = []
+        for label in labels:
+            names = set(_label_alternatives(label))
+            hit = next((i for i, cells in enumerate(lines) if names & {_cell_label(v) for v in cells}), None)
+            if hit is None:
+                return None
+            found.append(hit)
+        return found
+
+    rows = [row.tolist() for _, row in result_df.iterrows()]
+    cols = [[col, *result_df[col].tolist()] for col in result_df.columns]
+    for lines in (rows, cols):
+        pos = first_positions(lines)
+        if pos is not None and len(set(pos)) == len(pos):
+            return pos == sorted(pos)
+    return False
+
+
 def _eval_cells(exp: dict[str, Any], result_df: pd.DataFrame) -> tuple[bool, str, str]:
     """표 모양과 열 이름에 기대지 않는 검사. 행·열을 바꾼 표도 같은 기준으로 본다.
 
@@ -300,8 +414,18 @@ def _eval_cells(exp: dict[str, Any], result_df: pd.DataFrame) -> tuple[bool, str
     - labels: 셀 값이나 열 이름에 이 글자가 정확히 있어야 한다.
     - absent_labels: 셀 값이나 열 이름에 이 글자가 들어가면 안 된다 (소계·총계 행 등).
     - absent_cells: 이 숫자가 있으면 안 된다 (잘못 고른 열이나 소계를 더한 값).
+    - rows: {라벨: [값, ...]}. 그 라벨이 있는 한 행(또는 열)에 값이 모두, 서로 다른 칸에
+      있어야 한다. 라벨은 "전체|합계"처럼 대안을 둘 수 있다. 값은 숫자, 글자(칸에 포함),
+      {"ratio": r}, {"date": "YYYY-MM-DD"}, {"value": v, "tol": t}. 행·열 순서와 열 이름은 보지 않는다.
+    - row_order: 이 라벨들이 이 순서로 나와야 한다 (행 방향이면 위에서 아래, 열 방향이면 왼쪽에서 오른쪽).
     - row_count / max_rows / min_rows: 행 수.
     """
+    for label, wants in (exp.get("rows") or {}).items():
+        if not _row_present(result_df, str(label), list(wants)):
+            return False, f"{label}: values {wants} not together on one row/column", "wrong_result"
+    order = [str(x) for x in exp.get("row_order") or []]
+    if order and not _in_order(result_df, order):
+        return False, f"order {order} not kept", "wrong_result"
     numbers = _numbers_in(result_df)
     texts = _texts_in(result_df)
     for want in exp.get("cells") or []:
