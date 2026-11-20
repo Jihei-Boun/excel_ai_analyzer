@@ -51,3 +51,18 @@ def test_controls_drawn_before_the_uploader_defer_their_rerun() -> None:
         assert "st.rerun()" not in (root / name).read_text(encoding="utf-8"), name
     app = (root / "app.py").read_text(encoding="utf-8").rstrip().splitlines()
     assert app[-1] == "flush_requested_rerun()"
+
+
+class _Up:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+def test_a_file_deleted_with_the_button_can_be_uploaded_again() -> None:
+    """The delete button hides the chips it saw; a later copy of the same name is visible."""
+    from ui.upload import visible_uploads
+
+    widget = [_Up("a.xlsx"), _Up("b.xlsx"), _Up("b.xlsx")]
+    assert [u.name for u in visible_uploads(widget, {"b.xlsx": 1})] == ["a.xlsx", "b.xlsx"]
+    assert [u.name for u in visible_uploads(widget, {"b.xlsx": 2})] == ["a.xlsx"]
+    assert [u.name for u in visible_uploads(widget, {})] == ["a.xlsx", "b.xlsx", "b.xlsx"]

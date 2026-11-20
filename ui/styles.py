@@ -57,8 +57,8 @@ def _uploader_chip_sync_script() -> str:
     st.file_uploader는 개별 칩을 Python에서 제거할 수 없어,
     부분 삭제 시 key를 바꾸지 않고 제외 목록에 해당하는 칩만 숨긴다.
     """
-    excluded = sorted(st.session_state.get("_uploader_excluded_names") or [])
-    excluded_json = json.dumps(excluded, ensure_ascii=False)
+    hidden = st.session_state.get("_uploader_hidden_counts")
+    excluded_json = json.dumps(hidden if isinstance(hidden, dict) else {}, ensure_ascii=False)
     return f"""
 <script>
 (() => {{
@@ -70,11 +70,20 @@ def _uploader_chip_sync_script() -> str:
 
   const hideExcludedChips = () => {{
     if (myGen !== root.generation) return;
-    const excluded = root.excluded || [];
+    const excluded = root.excluded || {{}};
+    const seen = {{}};
     document.querySelectorAll('[data-testid="stFileChip"]').forEach((chip) => {{
+      // Long names are shortened on screen ("multi_..._sales.xlsx"); the delete
+      // button's label keeps the full name ("Remove multi_sheet_sales.xlsx").
+      const btn = chip.querySelector('[aria-label^="Remove "]');
+      const label = btn ? (btn.getAttribute("aria-label") || "") : "";
       const nameEl = chip.querySelector('[data-testid="stFileChipName"]');
-      const name = (nameEl && nameEl.textContent) ? nameEl.textContent.trim() : "";
-      const shouldHide = excluded.some((ex) => name === ex || name.startsWith(ex));
+      const name = label.startsWith("Remove ")
+        ? label.slice("Remove ".length).trim()
+        : ((nameEl && nameEl.textContent) ? nameEl.textContent.trim() : "");
+      // Hide only as many chips of a name as were deleted with the button (oldest first).
+      seen[name] = (seen[name] || 0) + 1;
+      const shouldHide = seen[name] <= (excluded[name] || 0);
       if (shouldHide) {{
         chip.style.setProperty("display", "none", "important");
       }} else {{
@@ -97,6 +106,18 @@ def _uploader_chip_sync_script() -> str:
   }});
   hideExcludedChips();
   root.observer.observe(document.documentElement, {{ childList: true, subtree: true }});
+
+  // A file input fires no change when the same file is picked twice in a row, so a file
+  // deleted with the button could not be picked again. Clear the input after each pick.
+  if (!root.inputResetBound) {{
+    root.inputResetBound = true;
+    document.addEventListener("change", (event) => {{
+      const input = event.target;
+      if (input && input.type === "file" && input.closest('[data-testid="stFileUploader"]')) {{
+        setTimeout(() => {{ try {{ input.value = ""; }} catch (_) {{}} }}, 0);
+      }}
+    }}, true);
+  }}
 }})();
 </script>
 """

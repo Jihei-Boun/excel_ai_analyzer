@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import Counter
+
 import pandas as pd
 import streamlit as st
 
@@ -78,6 +80,8 @@ def render_upload_section() -> None:
     # 비었을 때도 포함한다. 같은 실행에서 새로 올린 파일은 그대로 처리한다.
     # 사용자가 업로더를 실제로 바꾼 실행에서만 맞춘다. 다른 위젯이 업로더를 그리기 전에
     # rerun하면 위젯 값이 잠깐 빈 목록으로 오는데, 그때 파일을 지우면 안 된다.
+    # 지금 위젯에 같은 이름이 몇 개 있는지. 삭제 버튼이 숨길 칩 수를 여기서 읽는다.
+    st.session_state._uploader_name_counts = dict(Counter(u.name for u in uploaded_list or []))
     removed = False
     if st.session_state.pop("_uploader_user_changed", False):
         removed = _prune_files_removed_in_uploader(uploaded_list or [])
@@ -99,13 +103,39 @@ def files_removed_in_uploader(current_names: set[str], session_ids: list[str]) -
     return [file_id for file_id in session_ids if file_id not in current_names]
 
 
+def visible_uploads(uploaded_list: list, hidden: dict[str, int]) -> list:
+    """삭제 버튼으로 숨긴 칩(이름마다 앞에서부터 hidden[이름]개)을 뺀 업로드.
+
+    같은 이름을 삭제 버튼으로 지운 뒤 다시 올리면 위젯에는 숨긴 칩과 새 칩이 함께 있다.
+    숨긴 개수만큼만 건너뛰므로 새 칩은 보이고 다시 읽힌다.
+    """
+    seen: Counter = Counter()
+    out = []
+    for uploaded in uploaded_list:
+        seen[uploaded.name] += 1
+        if seen[uploaded.name] > hidden.get(uploaded.name, 0):
+            out.append(uploaded)
+    return out
+
+
+def _hidden_counts() -> dict[str, int]:
+    hidden = st.session_state.get("_uploader_hidden_counts")
+    if not isinstance(hidden, dict):
+        hidden = {}
+        st.session_state._uploader_hidden_counts = hidden
+    return hidden
+
+
 def _prune_files_removed_in_uploader(uploaded_list) -> bool:
     """업로더 칩(X)으로 빠진 파일을 session_state에서도 제거한다. 변경이 있으면 True."""
-    current = {uploaded.name for uploaded in uploaded_list}
-    # 삭제 버튼으로 숨겨 둔 칩을 사용자가 X로 마저 빼면, 같은 이름을 다시 올릴 수 있게 숨김을 푼다.
-    excluded = st.session_state.get("_uploader_excluded_names")
-    if isinstance(excluded, set):
-        excluded &= current
+    hidden = _hidden_counts()
+    counts = Counter(uploaded.name for uploaded in uploaded_list)
+    # 숨긴 칩보다 위젯의 칩이 적어졌으면(사용자가 X로 뺐으면) 숨김 수도 줄인다.
+    for name in list(hidden):
+        hidden[name] = min(hidden[name], counts.get(name, 0))
+        if not hidden[name]:
+            del hidden[name]
+    current = {uploaded.name for uploaded in visible_uploads(uploaded_list, hidden)}
     session_ids = [meta["id"] for meta in st.session_state.get("uploaded_files") or []]
     removed = files_removed_in_uploader(current, session_ids)
     for file_id in removed:
@@ -117,16 +147,13 @@ def _prune_files_removed_in_uploader(uploaded_list) -> bool:
 
 def _handle_uploads(uploaded_list) -> None:
     existing_ids = {f["id"] for f in st.session_state.uploaded_files}
-    excluded = st.session_state.setdefault("_uploader_excluded_names", set())
     new_ids: list[str] = []
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-    for uploaded in uploaded_list:
+    # 삭제 버튼으로 지운 파일의 칩은 위젯에 남아 있지만 숨겨 두었으므로 다시 읽지 않는다.
+    for uploaded in visible_uploads(uploaded_list, _hidden_counts()):
         file_id = uploaded.name
-        # 삭제 버튼으로 제거된 파일: 위젯에 칩이 남아 있어도 session에 다시 넣지 않음
-        if file_id in excluded:
-            continue
         if file_id in existing_ids:
             continue
 
@@ -170,9 +197,6 @@ def _handle_uploads(uploaded_list) -> None:
         new_ids.append(file_id)
 
     if new_ids:
-        # 새로 올린 이름은 제외 목록에서 제거
-        for file_id in new_ids:
-            excluded.discard(file_id)
         st.session_state.preview_file_id = new_ids[-1]
         st.session_state._pending_preview_radio = new_ids[-1]
         _maybe_apply_suggested_profile(new_ids[-1])

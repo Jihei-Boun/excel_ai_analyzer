@@ -487,16 +487,22 @@ def remove_file(file_id: str, *, from_uploader: bool = False) -> None:
         sanitized.discard(file_id)
 
     # 일부만 삭제: uploader key(nonce)는 올리지 않는다.
-    # 위젯에 남은 칩 중 삭제분은 _uploader_excluded_names로 표시만 숨긴다.
+    # 위젯에 남은 칩 중 삭제분은 _uploader_hidden_counts로 표시만 숨긴다.
     # (nonce를 올리면 남은 파일 칩까지 모두 사라져 UI/session이 어긋남)
     if not from_uploader:
-        excluded = st.session_state.setdefault("_uploader_excluded_names", set())
-        excluded.add(file_id)
+        # 위젯에서 칩을 지울 수 없으니, 지금 이 이름으로 있는 칩 수만큼 숨긴다.
+        # 나중에 같은 이름을 다시 올리면 그 칩은 숨김 수를 넘으므로 보이고 다시 읽힌다.
+        hidden = st.session_state.get("_uploader_hidden_counts")
+        if not isinstance(hidden, dict):
+            hidden = {}
+        counts = st.session_state.get("_uploader_name_counts") or {}
+        hidden[file_id] = max(int(counts.get(file_id, 1)), 1)
+        st.session_state._uploader_hidden_counts = hidden
 
     if not files and not from_uploader:
         # 마지막 파일까지 삭제한 경우에만 업로더 위젯을 초기화
         st.session_state.uploader_nonce = st.session_state.get("uploader_nonce", 0) + 1
-        st.session_state._uploader_excluded_names = set()
+        st.session_state._uploader_hidden_counts = {}
 
     if st.session_state.get("preview_file_id") == file_id:
         st.session_state.preview_file_id = files[-1]["id"] if files else None
