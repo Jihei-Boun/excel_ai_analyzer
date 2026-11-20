@@ -154,6 +154,7 @@ def _explain_derive(p: dict[str, Any]) -> str:
     b = ops[1] if len(ops) > 1 else "?"
     formula = {
         "sum": " + ".join(ops),
+        "product": " × ".join(ops),
         "mean": f"({', '.join(ops)})의 평균",
         "diff": f"{a} − {b}",
         "abs_diff": f"|{a} − {b}|",

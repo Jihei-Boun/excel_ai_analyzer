@@ -216,7 +216,8 @@ def validate_analysis_plan(
             user_prompt=user_prompt,
         )
     )
-    issues.extend(_validate_overall_aggregate(plan, available))
+    # Columns the plan derives itself are valid metrics too (e.g. 금액 = 수량 × 단가, then its total).
+    issues.extend(_validate_overall_aggregate(plan, available | known))
     issues.extend(_validate_grouped_selection(plan, df, user_prompt=user_prompt))
     issues.extend(_validate_per_row_combination(plan, user_prompt=user_prompt))
 
@@ -1570,9 +1571,9 @@ def _validate_derive(
                     f"derive_column `{step.payload.get('name')}` depends on missing column `{name}`.",
                 )
             )
-        elif kind in {"sum", "mean", "diff", "abs_diff"} and _is_split_code_column(df, name):
+        elif kind in {"sum", "mean", "product", "diff", "abs_diff"} and _is_split_code_column(df, name):
             issues.append(_code_column_issue(name, f"derive `{kind}`"))
-        elif name in df.columns and kind in {"ratio", "percent_ratio", "diff", "abs_diff", "sum", "mean"}:
+        elif name in df.columns and kind in {"ratio", "percent_ratio", "diff", "abs_diff", "sum", "mean", "product"}:
             if not _is_numeric_compatible(df[name]):
                 issues.append(
                     ValidationIssue(
