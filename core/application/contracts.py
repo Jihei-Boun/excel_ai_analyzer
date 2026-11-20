@@ -34,6 +34,7 @@ SAFE_OUTCOME_META_KEYS = frozenset(
     {
         "filter_summary",
         "filter_note",
+        "plan_explanation",
         "list_values",
         "list_label",
         "list_groups",

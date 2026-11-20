@@ -128,8 +128,8 @@ def _render_chat_history() -> None:
                 st.success(f"✓ {message['filter_summary']}")
             if message.get("filter_note"):
                 st.info(f"↻ {message['filter_note']}")
-            for notice in message.get("plan_notices") or []:
-                st.warning(f"⚠ {notice}")
+            if message.get("plan_explanation"):
+                st.caption(f"계산 방식: {message['plan_explanation']}")
 
             chart_path = message.get("chart_path")
             if chart_path:

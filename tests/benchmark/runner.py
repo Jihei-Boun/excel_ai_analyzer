@@ -453,10 +453,9 @@ def run_case_live(
         has_result=isinstance(result_df, pd.DataFrame) and not result_df.empty,
         route_observed=route_observed,
         loading_unverified=loading_unverified,
-        plan_notice=bool(meta.get("plan_notices")),
     )
     details["loading_unverified"] = loading_unverified
-    details["plan_notices"] = list(meta.get("plan_notices") or [])
+    details["plan_explanation"] = meta.get("plan_explanation")
     return CaseResult(
         outcome=outcome,
         case_id=case.id,
