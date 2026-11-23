@@ -13,7 +13,8 @@ from core.application import analyze_excel
 from tests.application_support import base_request, write_table
 
 
-def test_single_summary_early_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_single_summary_early_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route_kind) -> None:
+    route_kind('summary')
     monkeypatch.setattr(
         "core.routing.route_single.run_analysis",
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("summary must not call run_analysis")),
@@ -31,7 +32,8 @@ def test_single_summary_early_route(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert response["safety"]["validation"]["structural"]["covers_semantic_correctness"] is False
 
 
-def test_single_schema_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_single_schema_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route_kind) -> None:
+    route_kind('schema')
     monkeypatch.setattr(
         "core.routing.route_single.run_analysis",
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("schema must not call run_analysis")),
@@ -48,7 +50,8 @@ def test_single_schema_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert Path(table_artifacts[0]["path"]).resolve().is_relative_to((tmp_path / "out").resolve())
 
 
-def test_single_quality_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_single_quality_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route_kind) -> None:
+    route_kind('quality')
     monkeypatch.setattr(
         "core.routing.route_single.run_analysis",
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("quality must not call run_analysis")),
@@ -98,7 +101,8 @@ def test_single_analysis_uses_fake_dependency(
     assert artifact_path.resolve().is_relative_to((tmp_path / "out").resolve())
 
 
-def test_legitimate_zero_row_stays_success(tmp_path: Path) -> None:
+def test_legitimate_zero_row_stays_success(tmp_path: Path, route_kind) -> None:
+    route_kind('missing_rows')
     path = write_table(tmp_path / "sales.xlsx", {"지역": ["서울", "부산"], "매출": [10, 20]})
     response = analyze_excel(
         base_request(tmp_path, paths=[path], prompt="결측값이 있는 행만 보여줘")

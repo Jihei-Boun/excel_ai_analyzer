@@ -26,13 +26,11 @@ from core.display.chart_utils import generate_fallback_chart, generate_multi_fil
 from core.pai.pandasai_config import chat, chat_multi
 from core.routing.prompt_intent import (
     expects_plot,
-    is_analytical_request,
     is_complex_analysis,
     is_list_request,
     resolve_output_type,
     wants_table_and_chart,
 )
-from core.schema.schema_compare import explain_column_meanings, is_column_meaning_request
 from core.filter.value_filter import (
     _filter_by_mentioned_value,
     _filter_multi_by_mentioned_value,
@@ -132,26 +130,7 @@ def _run_analysis_impl(
     if not prompt.strip():
         raise ValueError("분석 요청을 입력해 주세요.")
 
-    # ------------------------------------------------------------------
-    # A. System/Data Command
-    # ------------------------------------------------------------------
-    if is_column_meaning_request(prompt):
-        text = explain_column_meanings(
-            df,
-            prompt,
-            base_url=base_url,
-            model=model,
-            profile_name=profile_name,
-        )
-        return None, text, {}
-
     output_type = resolve_output_type(prompt)
-
-    from core.summary.file_summary import build_file_summary, is_summary_request
-
-    if is_summary_request(prompt):
-        summary = build_file_summary(df, profile_name=profile_name)
-        return None, summary, {}
 
     # Chart-only display (분석 방법을 우회하지 않음)
     if _is_chart_only_display(prompt):
@@ -163,29 +142,29 @@ def _run_analysis_impl(
     # AnalysisPlan — analytical request면 키워드와 무관하게 우선 시도
     # ------------------------------------------------------------------
     pipeline_exhaust: dict = {}
-    if is_analytical_request(prompt, profile_name=profile_name):
-        planned = try_analysis_pipeline(
-            prompt,
-            df,
-            base_url=base_url,
-            model=model,
-            profile_name=profile_name,
-            exhaust_meta=pipeline_exhaust,
-        )
-        if planned is not None:
-            meta = dict(planned.meta)
-            # 분석+차트: Planner 결과 위에 렌더 (분석 우회 금지)
-            if expects_plot(prompt) and not meta.get("chart_path"):
-                chart_source = (
-                    planned.dataframe
-                    if isinstance(planned.dataframe, pd.DataFrame)
-                    and not planned.dataframe.empty
-                    else df
-                )
-                chart_path = generate_fallback_chart(chart_source, prompt)
-                if chart_path:
-                    meta["chart_path"] = chart_path
-            return planned.dataframe, planned.reply, meta
+    # 질문 종류는 라우터가 LLM으로 정했다. 여기 온 질문은 모두 Planner가 먼저 계획을 세운다.
+    planned = try_analysis_pipeline(
+        prompt,
+        df,
+        base_url=base_url,
+        model=model,
+        profile_name=profile_name,
+        exhaust_meta=pipeline_exhaust,
+    )
+    if planned is not None:
+        meta = dict(planned.meta)
+        # 분석+차트: Planner 결과 위에 렌더 (분석 우회 금지)
+        if expects_plot(prompt) and not meta.get("chart_path"):
+            chart_source = (
+                planned.dataframe
+                if isinstance(planned.dataframe, pd.DataFrame)
+                and not planned.dataframe.empty
+                else df
+            )
+            chart_path = generate_fallback_chart(chart_source, prompt)
+            if chart_path:
+                meta["chart_path"] = chart_path
+        return planned.dataframe, planned.reply, meta
 
     prior_reason = str(pipeline_exhaust.get("fallback_reason") or "")
 
@@ -452,34 +431,12 @@ def _run_multi_analysis_impl(
     if not prompt.strip():
         raise ValueError("분석 요청을 입력해 주세요.")
 
-    if is_column_meaning_request(prompt):
-        parts: list[str] = []
-        for name, frame in named_dfs:
-            block = explain_column_meanings(
-                frame,
-                prompt,
-                base_url=base_url,
-                model=model,
-                profile_name=profile_name,
-            )
-            parts.append(f"### {name}\n{block}")
-        return None, "\n\n".join(parts), {}
-
     output_type = resolve_output_type(prompt)
 
     if output_type == "plot":
         chart_path = generate_multi_file_chart(named_dfs, prompt)
         if chart_path:
             return None, "차트 결과를 생성했습니다.", {"chart_path": chart_path}
-
-    from core.summary.file_summary import build_multi_file_summary, is_summary_request
-
-    if is_summary_request(prompt):
-        summary = build_multi_file_summary(
-            named_dfs,
-            profile_name=profile_name,
-        )
-        return None, summary, {}
 
     metric_aggregate = is_metric_aggregate_request(prompt, named_dfs=named_dfs)
     if output_type == "dataframe" and metric_aggregate and not skip_metric_aggregate:

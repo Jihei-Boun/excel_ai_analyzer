@@ -927,7 +927,8 @@ def test_future_not_cancelled_worker_continues(tmp_path):
     _assert_bound(recs, "req-A", "PROMPT_A")
 
 
-def test_route_multi_legacy_unchanged_when_shadow_off(monkeypatch):
+def test_route_multi_legacy_unchanged_when_shadow_off(monkeypatch, route_kind):
+    route_kind('summary')
     monkeypatch.delenv("MULTI_SHADOW_ENABLED", raising=False)
     out = route_multi_prompt(
         "요약해줘",

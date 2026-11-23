@@ -8,6 +8,7 @@ cases:
     tags: [system, routing]
     expected:
       route: system
+      request_kind: summary
 
   - id: budget_group_sum_001
     domain: budget

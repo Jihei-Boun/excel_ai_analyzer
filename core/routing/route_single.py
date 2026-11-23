@@ -2,7 +2,7 @@
 
 Phase 5 우선순위
 ----------------
-1. System/Data Command → deterministic handler
+1. 질문 종류(LLM 판정) → 요약·빈 칸 행·품질·구조·열 의미는 정해진 처리기
 2. Chart-only display (분석 우회 없음; 표+차트는 아래)
 3. Analysis Pipeline (run_analysis: Planner → retrieval → simple groupby → PandasAI)
 
@@ -11,21 +11,29 @@ Router는 비교/비율/순위 등 분석 *방법*을 고르지 않는다.
 
 from __future__ import annotations
 
+from typing import Callable
+
 import pandas as pd
 
 from core.aggregates import scalar_to_context_table
 from core.analysis.analyzer import run_analysis
 from core.display.chart_utils import generate_fallback_chart
-from core.summary.file_summary import (
-    build_file_summary,
-    is_summary_request,
-)
+from core.summary.file_summary import build_file_summary
 from core.routing.prompt_intent import (
     _expects_plot,
     detect_aggregate_op,
     wants_table_and_chart,
 )
-from core.schema.quality import build_quality_outcome, is_quality_request
+from core.schema.quality import build_quality_outcome
+from core.routing.request_kind import (
+    KIND_ANALYSIS,
+    KIND_COLUMN_MEANING,
+    KIND_MISSING_ROWS,
+    KIND_QUALITY,
+    KIND_SCHEMA,
+    KIND_SUMMARY,
+    classify_request,
+)
 from core.routing.route_helpers import (
     _attach_filter_summary_meta,
     _context_updates_from_filter,
@@ -34,11 +42,8 @@ from core.routing.route_helpers import (
     resolve_chart_table,
 )
 from core.routing.route_types import SingleRouteOutcome
-from core.schema.schema_compare import build_schema_outcome, is_schema_request
-from core.filter.value_filter import (
-    build_missing_rows_outcome,
-    is_missing_rows_request,
-)
+from core.schema.schema_compare import build_schema_outcome, explain_column_meanings
+from core.filter.value_filter import build_missing_rows_outcome
 
 
 def route_single_prompt(
@@ -54,67 +59,116 @@ def route_single_prompt(
     prior_aggregate_prompt: str | None = None,
     prior_user_prompt: str | None = None,
     last_assistant_df: pd.DataFrame | None = None,
-    summary_text: str | None = None,
+    build_summary: Callable[[], str] | None = None,
+    request_kind: str | None = None,
 ) -> SingleRouteOutcome:
     # ------------------------------------------------------------------
-    # A. System/Data Command — deterministic (Planner 불필요)
+    # A. 질문 종류 — LLM이 처리기를 고른다 (request_kind.py)
+    #    요약·빈 칸 행·품질·구조·열 의미는 Planner 없이 정해진 처리기로 답한다.
     # ------------------------------------------------------------------
-    if is_summary_request(prompt):
-        reply = summary_text
-        if reply is None:
-            reply = build_file_summary(full_df, profile_name=profile_name)
+    kind = request_kind or classify_request(prompt, full_df, base_url=base_url, model=model)
+    system = _run_system_kind(
+        kind,
+        prompt,
+        full_df=full_df,
+        source_df=source_df,
+        base_url=base_url,
+        model=model,
+        profile_name=profile_name,
+        build_summary=build_summary,
+    )
+    if system is not None:
+        system.meta = {**(system.meta or {}), "request_kind": kind}
+        return system
+
+    outcome = _route_analysis(
+        prompt,
+        full_df=full_df,
+        source_df=source_df,
+        context_label=context_label,
+        base_url=base_url,
+        model=model,
+        profile_name=profile_name,
+        prior_aggregate_df=prior_aggregate_df,
+        prior_aggregate_prompt=prior_aggregate_prompt,
+        prior_user_prompt=prior_user_prompt,
+        last_assistant_df=last_assistant_df,
+    )
+    outcome.meta = {**(outcome.meta or {}), "request_kind": KIND_ANALYSIS}
+    return outcome
+
+
+def _run_system_kind(
+    kind: str,
+    prompt: str,
+    *,
+    full_df: pd.DataFrame,
+    source_df: pd.DataFrame,
+    base_url: str,
+    model: str,
+    profile_name: str | None,
+    build_summary: Callable[[], str] | None,
+) -> SingleRouteOutcome | None:
+    """분석이 아닌 종류를 정해진 처리기로 답한다. 분석이면 None."""
+    from core.profile_loader import schema_ui_for
+
+    if kind == KIND_SUMMARY:
+        reply = build_summary() if build_summary else build_file_summary(
+            full_df, profile_name=profile_name
+        )
         return SingleRouteOutcome(reply=reply, dataframe=None)
 
-    if is_missing_rows_request(prompt):
-        from core.profile_loader import schema_ui_for
+    if kind == KIND_COLUMN_MEANING:
+        reply = explain_column_meanings(
+            full_df, prompt, base_url=base_url, model=model, profile_name=profile_name
+        )
+        return SingleRouteOutcome(reply=reply, dataframe=None)
 
-        ui = schema_ui_for(profile_name=profile_name)
+    ui = schema_ui_for(profile_name=profile_name)
+    if kind == KIND_MISSING_ROWS:
         reply, table = build_missing_rows_outcome(
             source_df,
             label=ui["current_data"],
             profile_name=profile_name,
         )
-        return SingleRouteOutcome(
-            reply=reply,
-            dataframe=table,
-            # 결측 행 조회는 미리보기용 — 이후 집계 범위를 잠그지 않는다
-            keep_as_filter=False,
-            replace_selection=False,
-        )
-
-    if is_quality_request(prompt):
-        from core.profile_loader import schema_ui_for
-
-        ui = schema_ui_for(profile_name=profile_name)
+    elif kind == KIND_QUALITY:
         reply, table = build_quality_outcome(
             [(ui["current_data"], full_df)],
             unit_label=ui["unit_target"],
             prompt=prompt,
         )
-        return SingleRouteOutcome(
-            reply=reply,
-            dataframe=table,
-            keep_as_filter=False,
-            replace_selection=False,
-        )
-
-    if is_schema_request(prompt):
-        from core.profile_loader import schema_ui_for
-
-        ui = schema_ui_for(profile_name=profile_name)
+    elif kind == KIND_SCHEMA:
         reply, table = build_schema_outcome(
             prompt,
             [(ui["current_data"], full_df)],
             unit_label=ui["unit_target"],
             profile_name=profile_name,
         )
-        return SingleRouteOutcome(
-            reply=reply,
-            dataframe=table,
-            keep_as_filter=False,
-            replace_selection=False,
-        )
+    else:
+        return None
+    # 빈 칸 행·품질·구조 표는 미리보기용 — 이후 집계 범위를 잠그지 않는다
+    return SingleRouteOutcome(
+        reply=reply,
+        dataframe=table,
+        keep_as_filter=False,
+        replace_selection=False,
+    )
 
+
+def _route_analysis(
+    prompt: str,
+    *,
+    full_df: pd.DataFrame,
+    source_df: pd.DataFrame,
+    context_label: str | None,
+    base_url: str,
+    model: str,
+    profile_name: str | None,
+    prior_aggregate_df: pd.DataFrame | None,
+    prior_aggregate_prompt: str | None,
+    prior_user_prompt: str | None,
+    last_assistant_df: pd.DataFrame | None,
+) -> SingleRouteOutcome:
     wants_plot = _expects_plot(prompt)
     wants_table = wants_table_and_chart(prompt)
 

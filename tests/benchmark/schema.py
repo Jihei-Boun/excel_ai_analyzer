@@ -18,6 +18,8 @@ from tests.benchmark import CASES_DIR
 @dataclass
 class ExpectedSpec:
     route: str | None = None  # system | retrieval | analysis_plan | legacy_fallback | pandasai | failure_safe
+    # route가 system일 때 어느 처리기인지: summary | missing_rows | quality | schema | column_meaning
+    request_kind: str | None = None
     required_operations: list[str] = field(default_factory=list)
     forbidden_operations: list[str] = field(default_factory=list)
     expected_columns: dict[str, Any] = field(default_factory=dict)
@@ -54,6 +56,7 @@ def _parse_expected(data: dict[str, Any] | None) -> ExpectedSpec:
     data = data or {}
     return ExpectedSpec(
         route=data.get("route"),
+        request_kind=data.get("request_kind"),
         required_operations=list(data.get("required_operations") or []),
         forbidden_operations=list(data.get("forbidden_operations") or []),
         expected_columns=dict(data.get("expected_columns") or {}),

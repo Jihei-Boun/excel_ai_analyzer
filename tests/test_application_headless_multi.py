@@ -22,7 +22,8 @@ def _two_files(tmp_path: Path) -> tuple[Path, Path]:
     return left, right
 
 
-def test_multi_summary_early_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_multi_summary_early_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route_kind) -> None:
+    route_kind('summary')
     monkeypatch.setattr(
         "core.routing.route_multi.run_multi_analysis",
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("summary must not analyze")),

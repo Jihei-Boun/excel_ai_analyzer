@@ -281,7 +281,8 @@ def test_mock_responses_keep_failure_and_not_run(monkeypatch: pytest.MonkeyPatch
     assert body["artifacts"] == []
 
 
-def test_direct_summary_schema_and_quality(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_direct_summary_schema_and_quality(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, route_kind) -> None:
+    route_kind("summary")
     sales = FIXTURES / "sales.xlsx"
     quality = FIXTURES / "quality.xlsx"
     before = {
@@ -304,6 +305,7 @@ def test_direct_summary_schema_and_quality(monkeypatch: pytest.MonkeyPatch, tmp_
     assert summary["input_integrity"]["files"][0]["before"] == before[sales]
     assert summary["input_integrity"]["files"][0]["after"] == before[sales]
 
+    route_kind("schema")
     code, schema = _invoke(
         monkeypatch,
         tmp_path,
@@ -320,6 +322,7 @@ def test_direct_summary_schema_and_quality(monkeypatch: pytest.MonkeyPatch, tmp_
     assert artifact["size_matches"] is True
     assert Path(artifact["path"]).is_file()
 
+    route_kind("quality")
     code, quality_body = _invoke(
         monkeypatch,
         tmp_path,

@@ -8,7 +8,6 @@ import pandas as pd
 import streamlit as st
 
 from core.io.excel_loader import sanitize_dataframe
-from core.summary.file_summary import is_summary_request
 from core.pai.pandasai_config import _friendly_error
 from core.routing.prompt_intent import (
     _expects_plot,
@@ -174,7 +173,7 @@ def _run_prompt(
         prior_aggregate_prompt=st.session_state.get("last_analysis_prompt"),
         prior_user_prompt=_prior_user_analysis_prompt(),
         last_assistant_df=_last_assistant_dataframe(),
-        summary_text=_build_summary_reply(df) if is_summary_request(prompt) else None,
+        build_summary=lambda: _build_summary_reply(df),
     )
     return _apply_route_outcome(outcome)
 
@@ -219,7 +218,9 @@ def _resolve_context_label(source: pd.DataFrame, prompt: str) -> str | None:
         st.session_state.analysis_context_label = label
         return label
 
-    for message in reversed(st.session_state.get("chat_messages") or []):
+    messages = st.session_state.get("chat_messages") or []
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
         if message.get("role") != "user":
             continue
         content = str(message.get("content") or "")
@@ -227,7 +228,7 @@ def _resolve_context_label(source: pd.DataFrame, prompt: str) -> str | None:
             continue
         if detect_aggregate_op(content):
             continue
-        if _is_meta_user_prompt(content):
+        if _answered_as_meta(messages, index):
             continue
         # 이전 질문에서는 실제 데이터 셀 값만 라벨로 인정 (문장 조각 추출 금지)
         label = infer_context_label(
@@ -242,18 +243,20 @@ def _resolve_context_label(source: pd.DataFrame, prompt: str) -> str | None:
     return None
 
 
-def _is_meta_user_prompt(content: str) -> bool:
-    """스키마/품질/요약/의미추정 등 집계 맥락이 아닌 메타 질문."""
-    from core.summary.file_summary import is_summary_request
-    from core.schema.quality import is_quality_request
-    from core.schema.schema_compare import is_column_meaning_request, is_schema_request
+def _answered_as_meta(messages: list[dict], user_index: int) -> bool:
+    """이 질문을 요약·구조·품질 같은 정해진 처리기가 답했는지 (집계 맥락이 아님).
 
-    return (
-        is_schema_request(content)
-        or is_column_meaning_request(content)
-        or is_quality_request(content)
-        or is_summary_request(content)
-    )
+    질문 종류는 라우터가 LLM으로 정해 답 메시지의 request_kind에 남긴다.
+    """
+    from core.routing.request_kind import KIND_ANALYSIS
+
+    for message in messages[user_index + 1:]:
+        if message.get("role") == "user":
+            return False
+        if message.get("role") == "assistant":
+            kind = message.get("request_kind")
+            return bool(kind) and kind != KIND_ANALYSIS
+    return False
 
 
 def _looks_like_meta_label(label: str) -> bool:

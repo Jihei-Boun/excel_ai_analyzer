@@ -17,17 +17,22 @@ import pandas as pd
 from core.aggregates import build_multi_context_aggregate_table
 from core.analysis.analyzer import run_multi_analysis
 from core.display.chart_utils import generate_fallback_chart
-from core.summary.file_summary import (
-    build_multi_file_summary,
-    is_summary_request,
-)
+from core.summary.file_summary import build_multi_file_summary
 from core.integrate.integrate_pipeline import looks_like_structural_integrate, try_integrate_pipeline
 from core.routing.prompt_intent import (
     _expects_plot,
     detect_aggregate_op,
     wants_table_and_chart,
 )
-from core.schema.quality import build_quality_outcome, is_quality_request
+from core.schema.quality import build_quality_outcome
+from core.routing.request_kind import (
+    KIND_COLUMN_MEANING,
+    KIND_MISSING_ROWS,
+    KIND_QUALITY,
+    KIND_SCHEMA,
+    KIND_SUMMARY,
+    classify_request,
+)
 from core.routing.route_helpers import (
     _attach_filter_summary_meta,
     _context_updates_from_filter,
@@ -36,11 +41,8 @@ from core.routing.route_helpers import (
     resolve_multi_aggregate_source,
 )
 from core.routing.route_types import SingleRouteOutcome
-from core.schema.schema_compare import build_schema_outcome, is_schema_request
-from core.filter.value_filter import (
-    filter_missing_rows,
-    is_missing_rows_request,
-)
+from core.schema.schema_compare import build_schema_outcome, explain_column_meanings
+from core.filter.value_filter import filter_missing_rows
 from core.shadow.hook import (
     finish_with_shadow,
     maybe_build_shadow_snapshot,
@@ -61,72 +63,28 @@ def route_multi_prompt(
     unit_label: str = "파일",
     request_id: str | None = None,
     case_id: str | None = None,
+    request_kind: str | None = None,
 ) -> SingleRouteOutcome:
     prepared = named_frames
 
-    # A. System/Data Command (single과 동일 — Planner 불필요)
-    # Shadow는 LLM/integrate 경로만 관찰 (system command는 대상 아님)
-    if is_summary_request(prompt):
-        reply = build_multi_file_summary(
-            prepared,
-            sheet_info=sheet_info,
-            profile_name=profile_name,
-            unit_label=unit_label,
-        )
-        return SingleRouteOutcome(reply=reply, dataframe=None)
-
-    if is_missing_rows_request(prompt):
-        parts: list[pd.DataFrame] = []
-        for name, frame in prepared:
-            missing = filter_missing_rows(frame)
-            if missing.empty:
-                continue
-            part = missing.copy()
-            part.insert(0, "출처파일", name)
-            parts.append(part)
-        if not parts:
-            return SingleRouteOutcome(
-                reply=f"선택된 {unit_label}에서 결측값이 있는 행을 찾지 못했습니다.",
-                dataframe=None,
-            )
-        table = pd.concat(parts, ignore_index=True)
-        reply = (
-            f"결측값이 있는 행 {len(table):,}개 "
-            f"({len(parts)}개 {unit_label})"
-        )
-        return SingleRouteOutcome(
-            reply=reply,
-            dataframe=table,
-            keep_as_filter=False,
-            replace_selection=False,
-        )
-
-    if is_quality_request(prompt):
-        reply, table = build_quality_outcome(
-            prepared,
-            unit_label=unit_label,
-            prompt=prompt,
-        )
-        return SingleRouteOutcome(
-            reply=reply,
-            dataframe=table,
-            keep_as_filter=False,
-            replace_selection=False,
-        )
-
-    if is_schema_request(prompt):
-        reply, table = build_schema_outcome(
-            prompt,
-            prepared,
-            unit_label=unit_label,
-            profile_name=profile_name,
-        )
-        return SingleRouteOutcome(
-            reply=reply,
-            dataframe=table,
-            keep_as_filter=False,
-            replace_selection=False,
-        )
+    # A. 질문 종류 — LLM이 처리기를 고른다 (single과 동일, request_kind.py)
+    # Shadow는 LLM/integrate 경로만 관찰 (정해진 처리기는 대상 아님)
+    kind = request_kind or classify_request(
+        prompt, [frame for _, frame in prepared], base_url=base_url, model=model
+    )
+    system = _run_system_kind(
+        kind,
+        prompt,
+        prepared,
+        base_url=base_url,
+        model=model,
+        profile_name=profile_name,
+        sheet_info=sheet_info,
+        unit_label=unit_label,
+    )
+    if system is not None:
+        system.meta = {**(system.meta or {}), "request_kind": kind}
+        return system
 
     # Phase 37: snapshot before legacy LLM/integrate work (enabled via env only)
     # Phase 38: post-snapshot uncaught legacy exceptions still schedule Shadow once.
@@ -351,3 +309,69 @@ def route_multi_prompt(
             )
             shadow_scheduled = True
         raise
+
+
+def _run_system_kind(
+    kind: str,
+    prompt: str,
+    prepared: list[tuple[str, pd.DataFrame]],
+    *,
+    base_url: str,
+    model: str,
+    profile_name: str | None,
+    sheet_info: dict[str, dict] | None,
+    unit_label: str,
+) -> SingleRouteOutcome | None:
+    """분석이 아닌 종류를 정해진 처리기로 답한다. 분석이면 None."""
+    if kind == KIND_SUMMARY:
+        reply = build_multi_file_summary(
+            prepared,
+            sheet_info=sheet_info,
+            profile_name=profile_name,
+            unit_label=unit_label,
+        )
+        return SingleRouteOutcome(reply=reply, dataframe=None)
+
+    if kind == KIND_COLUMN_MEANING:
+        parts = [
+            f"### {name}\n"
+            + explain_column_meanings(
+                frame, prompt, base_url=base_url, model=model, profile_name=profile_name
+            )
+            for name, frame in prepared
+        ]
+        return SingleRouteOutcome(reply="\n\n".join(parts), dataframe=None)
+
+    if kind == KIND_MISSING_ROWS:
+        parts_df: list[pd.DataFrame] = []
+        for name, frame in prepared:
+            missing = filter_missing_rows(frame)
+            if missing.empty:
+                continue
+            part = missing.copy()
+            part.insert(0, "출처파일", name)
+            parts_df.append(part)
+        if not parts_df:
+            return SingleRouteOutcome(
+                reply=f"선택된 {unit_label}에서 결측값이 있는 행을 찾지 못했습니다.",
+                dataframe=None,
+            )
+        table = pd.concat(parts_df, ignore_index=True)
+        reply = (
+            f"결측값이 있는 행 {len(table):,}개 "
+            f"({len(parts_df)}개 {unit_label})"
+        )
+    elif kind == KIND_QUALITY:
+        reply, table = build_quality_outcome(prepared, unit_label=unit_label, prompt=prompt)
+    elif kind == KIND_SCHEMA:
+        reply, table = build_schema_outcome(
+            prompt, prepared, unit_label=unit_label, profile_name=profile_name
+        )
+    else:
+        return None
+    return SingleRouteOutcome(
+        reply=reply,
+        dataframe=table,
+        keep_as_filter=False,
+        replace_selection=False,
+    )

@@ -91,32 +91,23 @@ def _route_like_app(
     return outcome.dataframe, outcome.reply or "", meta
 
 
-def _is_system_question(question: str) -> bool:
-    from core.routing.prompt_intent import is_system_data_command
-
-    return is_system_data_command(question)
-
-
 def _run_system(case: BenchmarkCase, df: pd.DataFrame) -> tuple[Any, str, dict]:
-    from core.summary.file_summary import build_file_summary, is_summary_request
-    from core.schema.schema_compare import build_schema_outcome, is_schema_request
-    from core.filter.value_filter import build_missing_rows_outcome, is_missing_rows_request
-    from core.schema.quality import build_quality_outcome, is_quality_request
+    """결정적 실행: 케이스에 적힌 처리기로 답한다 (LLM 판정 없음)."""
+    from core.routing.route_single import route_single_prompt
 
-    if is_summary_request(case.question):
-        return None, build_file_summary(df, profile_name=case.profile), {"aggregation": {"operation": "system"}}
-    if is_missing_rows_request(case.question):
-        reply, table = build_missing_rows_outcome(df, label="current", profile_name=case.profile)
-        return table, reply, {"aggregation": {"operation": "system"}}
-    if is_quality_request(case.question):
-        reply, table = build_quality_outcome([("current", df)], unit_label="파일", prompt=case.question)
-        return table, reply, {"aggregation": {"operation": "system"}}
-    if is_schema_request(case.question):
-        reply, table = build_schema_outcome(
-            case.question, [("current", df)], unit_label="파일", profile_name=case.profile
-        )
-        return table, reply, {"aggregation": {"operation": "system"}}
-    return None, "", {"aggregation": {"operation": "system"}}
+    outcome = route_single_prompt(
+        case.question,
+        full_df=df,
+        source_df=df,
+        context_label=None,
+        base_url="http://localhost:11434",
+        model="benchmark-fixed",
+        profile_name=case.profile,
+        request_kind=case.expected.request_kind,
+    )
+    meta = dict(outcome.meta or {})
+    meta["aggregation"] = {"operation": "system"}
+    return outcome.dataframe, outcome.reply or "", meta
 
 
 def _make_fixed_chat_json(case: BenchmarkCase) -> Callable[..., dict[str, Any]]:
@@ -162,9 +153,7 @@ def run_case_deterministic(
     semantic_warning = False
 
     try:
-        if case.expected.route == "system" or (
-            not case.expected.route and _is_system_question(case.question)
-        ):
+        if case.expected.route == "system":
             result_df, reply, meta = _run_system(case, df)
             route_observed = "system"
         elif case.fixed_plan is not None:
@@ -203,16 +192,10 @@ def run_case_deterministic(
                 r.get("failure_stage") == "semantic_soft_retry" for r in retry_log
             )
         else:
-            # routing-only / expectation-only without fixed plan: classify intent
-            from core.routing.prompt_intent import is_analytical_request, is_system_data_command
-
-            if is_system_data_command(case.question):
-                route_observed = "system"
-            elif is_analytical_request(case.question):
-                route_observed = "analysis_plan"  # intended route (not executed)
-                details["note"] = "routing intent only (no fixed_plan)"
-            else:
-                route_observed = "unknown"
+            # routing-only without fixed plan: 질문 종류는 LLM이 정하므로 결정적 실행에서는
+            # 분석 경로로 간다고만 기록한다 (실행하지 않음).
+            route_observed = "analysis_plan"
+            details["note"] = "routing intent only (no fixed_plan)"
     except Exception as exc:  # noqa: BLE001
         crashed = True
         err = f"{type(exc).__name__}: {exc}"
@@ -345,44 +328,39 @@ def run_case_live(
     exec_hint = "none"
 
     try:
-        if case.expected.route == "system" or (
-            not case.expected.route and _is_system_question(case.question)
-        ):
-            result_df, reply, meta = _run_system(case, df)
-            route_observed = "system"
-        else:
-            result_df, reply, meta = _route_like_app(
-                df,
-                case.question,
-                base_url=base_url,
-                model=model,
-                profile_name=case.profile,
-            )
-            meta = dict(meta or {})
-            route_observed = observe_route(meta)
-            op = str((meta.get("aggregation") or {}).get("operation") or "")
-            analysis_plan_direct = op == "analysis_plan"
-            legacy_fallback = op in {"legacy_simple_groupby_fallback", "groupby"}
-            pandasai_fallback = meta.get("source") == "pandasai" or (
-                route_observed == "unknown" and not analysis_plan_direct and not legacy_fallback
-                and result_df is not None and op not in {"value_match", "list_seed", "system"}
-            )
-            if op in {"value_match", "list_seed"}:
-                route_observed = "retrieval"
-            plan_dict = meta.get("analysis_plan")
-            retry_log = meta.get("retry_log") or []
-            if analysis_plan_direct:
-                if not retry_log:
-                    first_plan_success = True
-                else:
-                    retry_success = True
-            elif case.expected.route == "analysis_plan" and not analysis_plan_direct:
-                # likely exhausted then fallback
-                if legacy_fallback or pandasai_fallback or route_observed in {"legacy_fallback", "pandasai", "retrieval"}:
-                    retry_exhausted = True
-            semantic_warning = any(
-                "semantic" in str(x).lower() for x in (meta.get("validation_warnings") or [])
-            ) or any(r.get("failure_stage") == "semantic_soft_retry" for r in retry_log)
+        # 라이브 실행은 앱과 같은 라우터를 거친다. 질문 종류 판정(LLM)도 측정 대상이다.
+        result_df, reply, meta = _route_like_app(
+            df,
+            case.question,
+            base_url=base_url,
+            model=model,
+            profile_name=case.profile,
+        )
+        meta = dict(meta or {})
+        route_observed = observe_route(meta)
+        op = str((meta.get("aggregation") or {}).get("operation") or "")
+        analysis_plan_direct = op == "analysis_plan"
+        legacy_fallback = op in {"legacy_simple_groupby_fallback", "groupby"}
+        pandasai_fallback = meta.get("source") == "pandasai" or (
+            route_observed == "unknown" and not analysis_plan_direct and not legacy_fallback
+            and result_df is not None and op not in {"value_match", "list_seed", "system"}
+        )
+        if op in {"value_match", "list_seed"}:
+            route_observed = "retrieval"
+        plan_dict = meta.get("analysis_plan")
+        retry_log = meta.get("retry_log") or []
+        if analysis_plan_direct:
+            if not retry_log:
+                first_plan_success = True
+            else:
+                retry_success = True
+        elif case.expected.route == "analysis_plan" and not analysis_plan_direct:
+            # likely exhausted then fallback
+            if legacy_fallback or pandasai_fallback or route_observed in {"legacy_fallback", "pandasai", "retrieval"}:
+                retry_exhausted = True
+        semantic_warning = any(
+            "semantic" in str(x).lower() for x in (meta.get("validation_warnings") or [])
+        ) or any(r.get("failure_stage") == "semantic_soft_retry" for r in retry_log)
     except Exception as exc:  # noqa: BLE001
         crashed = True
         err = f"{type(exc).__name__}: {exc}"
