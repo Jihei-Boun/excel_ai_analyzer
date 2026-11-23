@@ -139,7 +139,8 @@ def test_render_issues_empty_when_clean() -> None:
     )
 
 
-def test_route_preanalysis_fix_bypasses_pandasai() -> None:
+def test_route_preanalysis_fix_bypasses_pandasai(route_kind) -> None:
+    route_kind('quality')
     df = pd.DataFrame(
         {
             "항목_코드": ["A-001", "A-002"],
@@ -162,7 +163,8 @@ def test_route_preanalysis_fix_bypasses_pandasai() -> None:
     assert outcome.operation_name is None
 
 
-def test_route_issues_only() -> None:
+def test_route_issues_only(route_kind) -> None:
+    route_kind('quality')
     df = pd.DataFrame({"코드": ["A", "B"], "금액": [1, None]})
     outcome = route_single_prompt(
         "문제가 있는 부분만 알려줘",
@@ -205,7 +207,8 @@ def test_build_quality_outcome_multi() -> None:
     assert "판정" in table.columns
 
 
-def test_route_single_quality_bypasses_pandasai() -> None:
+def test_route_single_quality_bypasses_pandasai(route_kind) -> None:
+    route_kind('quality')
     df = pd.DataFrame({"코드": ["A", "B", "C"], "금액": [1, 2, 3]})
     outcome = route_single_prompt(
         "이 파일의 데이터 품질을 분석해줘",
@@ -221,7 +224,8 @@ def test_route_single_quality_bypasses_pandasai() -> None:
     assert outcome.operation_name is None
 
 
-def test_route_multi_quality() -> None:
+def test_route_multi_quality(route_kind) -> None:
+    route_kind('quality')
     frames = [
         ("1월", pd.DataFrame({"금액": [1, 2]})),
         ("2월", pd.DataFrame({"금액": [3, None]})),

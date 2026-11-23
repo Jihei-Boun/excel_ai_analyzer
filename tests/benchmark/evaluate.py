@@ -15,6 +15,9 @@ def observe_route(meta: dict[str, Any] | None, *, system: bool = False) -> str:
     if system:
         return "system"
     meta = meta or {}
+    # 라우터가 정해진 처리기(요약·구조·품질 …)로 보낸 질문
+    if meta.get("request_kind") not in (None, "", "analysis"):
+        return "system"
     agg = meta.get("aggregation") or {}
     op = str(agg.get("operation") or "")
     if op == "analysis_plan":

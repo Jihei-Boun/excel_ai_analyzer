@@ -232,8 +232,9 @@ def test_default_config_off():
     assert cfg.enabled is False
 
 
-def test_route_multi_shadow_off_no_schedule(monkeypatch, tmp_path):
+def test_route_multi_shadow_off_no_schedule(monkeypatch, tmp_path, route_kind):
     """Shadow OFF: route_multi system path unchanged; no telemetry."""
+    route_kind("summary")
     monkeypatch.setenv("MULTI_SHADOW_ENABLED", "false")
     from core.routing.route_multi import route_multi_prompt
 

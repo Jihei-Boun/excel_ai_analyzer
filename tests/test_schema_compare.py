@@ -40,7 +40,8 @@ def test_is_schema_request_excludes_analysis() -> None:
     assert is_schema_request("결측값이 있는 행만 보여줘") is False
 
 
-def test_route_missing_rows_shows_rows_not_schema() -> None:
+def test_route_missing_rows_shows_rows_not_schema(route_kind) -> None:
+    route_kind('missing_rows')
     df = pd.DataFrame(
         {
             "항목_코드": ["A-001", "A-006"],
@@ -143,7 +144,8 @@ def test_type_groups_outcome() -> None:
     assert table is None
 
 
-def test_route_type_groups_bypasses_pandasai() -> None:
+def test_route_type_groups_bypasses_pandasai(route_kind) -> None:
+    route_kind('schema')
     df = pd.DataFrame({"지역": ["서울"], "매출": [100], "판매일": pd.to_datetime(["2026-01-01"])})
     outcome = route_single_prompt(
         "숫자 컬럼과 문자 컬럼을 구분해서 보여줘",
@@ -160,8 +162,9 @@ def test_route_type_groups_bypasses_pandasai() -> None:
     assert outcome.operation_name is None
 
 
-def test_route_column_meanings_uses_llm(monkeypatch) -> None:
+def test_route_column_meanings_uses_llm(monkeypatch, route_kind) -> None:
     """컬럼 의미 추정은 PandasAI가 아니라 Ollama 텍스트(또는 규칙 폴백)로 간다."""
+    route_kind('column_meaning')
     df = pd.DataFrame({"담당자": ["김"], "집행_금액": [1]})
     called: dict[str, object] = {}
 
@@ -189,8 +192,9 @@ def test_route_column_meanings_uses_llm(monkeypatch) -> None:
     assert "Korean" in system or "한국어" in system
 
 
-def test_route_column_meanings_english(monkeypatch) -> None:
+def test_route_column_meanings_english(monkeypatch, route_kind) -> None:
     """영어 컬럼 의미 요청은 분석 계획이 아니라 의미 설명 경로로 간다."""
+    route_kind('column_meaning')
     df = pd.DataFrame({"Region": ["Seoul"], "Revenue": [100]})
 
     def _fake_chat_text(prompt, *, system, base_url, model, timeout=300):
@@ -215,8 +219,9 @@ def test_route_column_meanings_english(monkeypatch) -> None:
     assert "Find items" not in outcome.reply
 
 
-def test_route_column_meanings_falls_back_to_rules(monkeypatch) -> None:
+def test_route_column_meanings_falls_back_to_rules(monkeypatch, route_kind) -> None:
     """LLM 실패 시 규칙 기반 의미 설명을 반환한다."""
+    route_kind('column_meaning')
     df = pd.DataFrame({"비용명": [121], "실행예산": [100]})
 
     def _boom(*_a, **_k):
@@ -264,7 +269,8 @@ def test_build_schema_outcome_common_columns() -> None:
     assert "3월만" in reply
 
 
-def test_route_multi_schema_compare_skips_llm() -> None:
+def test_route_multi_schema_compare_skips_llm(route_kind) -> None:
+    route_kind('schema')
     frames = _sales_frames()
     outcome = route_multi_prompt(
         "각 시트의 행 수와 컬럼 목록을 비교해줘",
@@ -281,7 +287,8 @@ def test_route_multi_schema_compare_skips_llm() -> None:
     assert "비교" in outcome.reply
 
 
-def test_route_single_dtypes() -> None:
+def test_route_single_dtypes(route_kind) -> None:
+    route_kind('schema')
     df = pd.DataFrame({"지역": ["서울", None], "매출": [100, 200]})
     outcome = route_single_prompt(
         "각 컬럼의 데이터 타입과 결측치 개수를 알려줘",
@@ -296,7 +303,8 @@ def test_route_single_dtypes() -> None:
     assert int(outcome.dataframe.loc[outcome.dataframe["컬럼"] == "지역", "결측치"].iloc[0]) == 1
 
 
-def test_route_single_dtypes_english_locale() -> None:
+def test_route_single_dtypes_english_locale(route_kind) -> None:
+    route_kind('schema')
     df = pd.DataFrame({"Region": ["Seoul", None], "Revenue": [100, 200]})
     outcome = route_single_prompt(
         "Show data types and missing counts for each column",

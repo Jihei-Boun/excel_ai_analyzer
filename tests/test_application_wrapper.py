@@ -148,7 +148,8 @@ def test_prefix_lookalike_is_outside(tmp_path: Path) -> None:
     assert is_inside(evil / "file.xlsx", root) is False
 
 
-def test_rule_summary_publishes_nothing_and_keeps_inputs(tmp_path: Path) -> None:
+def test_rule_summary_publishes_nothing_and_keeps_inputs(tmp_path: Path, route_kind) -> None:
+    route_kind('summary')
     sales = _copy_fixture(tmp_path)
     before = sales.read_bytes()
     config = _config(tmp_path)
@@ -167,7 +168,8 @@ def test_rule_summary_publishes_nothing_and_keeps_inputs(tmp_path: Path) -> None
     assert response["source_identity"]["diff_sha256"]
 
 
-def test_schema_table_is_published_after_hash_check(tmp_path: Path) -> None:
+def test_schema_table_is_published_after_hash_check(tmp_path: Path, route_kind) -> None:
+    route_kind('schema')
     sales = _copy_fixture(tmp_path)
     config = _config(tmp_path)
     response, code = run_job(
@@ -188,7 +190,8 @@ def test_schema_table_is_published_after_hash_check(tmp_path: Path) -> None:
     assert list(loaded.columns) == ["행 수", "열 수", "컬럼 목록"]
 
 
-def test_zero_row_stays_success_without_artifact(tmp_path: Path) -> None:
+def test_zero_row_stays_success_without_artifact(tmp_path: Path, route_kind) -> None:
+    route_kind('missing_rows')
     sales = _copy_fixture(tmp_path)
     config = _config(tmp_path)
     response, code = run_job(

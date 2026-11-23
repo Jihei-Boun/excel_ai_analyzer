@@ -65,7 +65,7 @@ from core.routing.route_multi import route_multi_prompt
 from core.routing.route_single import route_single_prompt
 from core.io import table_structure
 from core.routing.route_types import SingleRouteOutcome
-from core.summary.file_summary import build_file_summary, is_summary_request
+from core.summary.file_summary import build_file_summary
 
 _UNSAFE_OUTPUT_MARKERS = ("안전하지 않은 코드", "shouldn't use", "malicious")
 
@@ -403,9 +403,9 @@ def _resolve_sheet(
 
 def _run_single(request: AnalyzeRequest, loaded: _LoadedInput) -> SingleRouteOutcome:
     frame = loaded.frame.copy()
-    summary_text = None
-    if is_summary_request(request.user_prompt):
-        summary_text = build_file_summary(
+
+    def _summary() -> str:
+        return build_file_summary(
             frame,
             file_name=loaded.source.display_name,
             sheet_name=str(loaded.sheet_name),
@@ -413,6 +413,7 @@ def _run_single(request: AnalyzeRequest, loaded: _LoadedInput) -> SingleRouteOut
             file_path=loaded.path,
             profile_name=request.profile_name,
         )
+
     return route_single_prompt(
         request.user_prompt,
         full_df=frame,
@@ -425,7 +426,7 @@ def _run_single(request: AnalyzeRequest, loaded: _LoadedInput) -> SingleRouteOut
         prior_aggregate_prompt=None,
         prior_user_prompt=None,
         last_assistant_df=None,
-        summary_text=summary_text,
+        build_summary=_summary,
     )
 
 

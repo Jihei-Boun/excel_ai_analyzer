@@ -46,3 +46,4 @@ cases:
     tags: [system, dirty]
     expected:
       route: system
+      request_kind: schema

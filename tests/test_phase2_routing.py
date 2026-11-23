@@ -70,7 +70,8 @@ def test_analytical_gate_ignores_domain_profile_keywords() -> None:
     assert is_analytical_request("집행률 비교", profile_name="generic") is True
 
 
-def test_route_system_summary_bypasses_planner(monkeypatch) -> None:
+def test_route_system_summary_bypasses_planner(monkeypatch, route_kind) -> None:
+    route_kind('summary')
     from core.analysis import analyzer as analyzer_mod
 
     def _boom(*_a, **_k):
@@ -91,7 +92,8 @@ def test_route_system_summary_bypasses_planner(monkeypatch) -> None:
     assert len(outcome.reply) > 10
 
 
-def test_route_system_schema_bypasses_planner(monkeypatch) -> None:
+def test_route_system_schema_bypasses_planner(monkeypatch, route_kind) -> None:
+    route_kind('schema')
     from core.analysis import analyzer as analyzer_mod
 
     monkeypatch.setattr(

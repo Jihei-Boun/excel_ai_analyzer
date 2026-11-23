@@ -288,7 +288,8 @@ def test_t3_scheduler_failure_preserves_legacy_exception(tmp_path, monkeypatch) 
 # ---------------------------------------------------------------------------
 
 
-def test_t4_presnapshot_early_route_no_shadow(tmp_path, monkeypatch) -> None:
+def test_t4_presnapshot_early_route_no_shadow(tmp_path, monkeypatch, route_kind) -> None:
+    route_kind('summary')
     calls = _count_schedule(monkeypatch)
     cfg = _cfg(tmp_path, inline_for_tests=True)
     monkeypatch.setattr("core.shadow.hook.load_shadow_config", lambda: cfg)
