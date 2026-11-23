@@ -20,7 +20,8 @@ def _assert_invalid(response: dict, *, code: str | None = None) -> None:
     assert "traceback" not in str(response).lower()
 
 
-def test_valid_single_request_contract(tmp_path: Path) -> None:
+def test_valid_single_request_contract(tmp_path: Path, route_kind) -> None:
+    route_kind("summary")
     path = write_table(tmp_path / "input.xlsx")
     response = analyze_excel(base_request(tmp_path, paths=[path], prompt="이 파일의 주요 내용을 요약해줘"))
     assert response["status"] == "success"
@@ -34,7 +35,8 @@ def test_valid_single_request_contract(tmp_path: Path) -> None:
     assert response["safety"]["validation"]["structural"]["covers_semantic_correctness"] is False
 
 
-def test_valid_multi_request_contract(tmp_path: Path) -> None:
+def test_valid_multi_request_contract(tmp_path: Path, route_kind) -> None:
+    route_kind("summary")
     left = write_table(tmp_path / "a.xlsx", {"항목": ["A"], "값": [1]})
     right = write_table(tmp_path / "b.xlsx", {"항목": ["B"], "값": [2]})
     response = analyze_excel(

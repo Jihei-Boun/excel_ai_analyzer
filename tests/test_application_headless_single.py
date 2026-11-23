@@ -114,7 +114,8 @@ def test_legitimate_zero_row_stays_success(tmp_path: Path, route_kind) -> None:
     assert response["safety"]["validation"]["structural"]["state"] == "not_run"
 
 
-def test_headless_single_does_not_import_streamlit(tmp_path: Path) -> None:
+def test_headless_single_does_not_import_streamlit(tmp_path: Path, route_kind) -> None:
+    route_kind("summary")
     retained = {name: mod for name, mod in sys.modules.items() if name == "streamlit" or name.startswith("streamlit.")}
     for name in list(retained):
         del sys.modules[name]

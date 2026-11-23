@@ -33,7 +33,8 @@ def _run_cli(payload: str, *, extra_env: dict[str, str] | None = None) -> subpro
     )
 
 
-def test_cli_stdin_json_to_stdout_json(tmp_path: Path) -> None:
+def test_cli_stdin_json_to_stdout_json(tmp_path: Path, route_kind) -> None:
+    route_kind("summary")
     path = write_table(tmp_path / "input.xlsx")
     payload = base_request(tmp_path, paths=[path], prompt="이 파일 요약해줘")
     result = _run_cli(json.dumps(payload))
