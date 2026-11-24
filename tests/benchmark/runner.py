@@ -26,6 +26,7 @@ from tests.benchmark.evaluate import (
     eval_plan,
     eval_routing,
     observe_route,
+    score_requirements,
 )
 from tests.benchmark.generate_datasets import ensure_datasets
 from tests.benchmark.metrics import (
@@ -393,6 +394,13 @@ def run_case_live(
             details[_k] = meta[_k]
     if isinstance(result_df, pd.DataFrame):
         details["result_preview"] = result_df.head(10).to_dict(orient="records")
+    if case.expected.requirements:
+        details["requirements"] = score_requirements(
+            case.expected.requirements, result_df if isinstance(result_df, pd.DataFrame) else None
+        )
+    if case.expected.manual_grade:
+        # 되묻기·자료 없음 문항은 표가 아니라 답 문장으로 판정한다. 사람이 읽도록 남긴다.
+        details["reply"] = (reply or "")[:2000]
 
     interp_ok = None
     if case.expected.interpreter_grounding:
