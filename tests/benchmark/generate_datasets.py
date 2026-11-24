@@ -275,6 +275,10 @@ from tests.benchmark.heldout5 import WRITERS as _HELDOUT5_WRITERS  # noqa: E402
 
 DATASETS.update(_HELDOUT5_WRITERS)
 
+from tests.benchmark.heldout7 import WRITERS as _HELDOUT7_WRITERS  # noqa: E402
+
+DATASETS.update(_HELDOUT7_WRITERS)
+
 
 def ensure_datasets(datasets_dir: Path | None = None, *, force: bool = False) -> dict[str, Path]:
     root = datasets_dir or DATASETS_DIR

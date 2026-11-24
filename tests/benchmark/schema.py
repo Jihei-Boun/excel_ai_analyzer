@@ -31,6 +31,10 @@ class ExpectedSpec:
     expect_retry: bool = False
     expect_safe_failure: bool = False
     interpreter_grounding: bool = False
+    # 요구사항별 채점: [{"text": 문장, "check": _eval_cells 검사}] 또는 [{"text": 문장, "manual": True}]
+    requirements: list[dict[str, Any]] = field(default_factory=list)
+    # 되묻기·표에 없는 질문처럼 사람이 답 문장을 읽고 판정해야 하는 문항
+    manual_grade: bool = False
     notes: str = ""
 
 
@@ -68,6 +72,8 @@ def _parse_expected(data: dict[str, Any] | None) -> ExpectedSpec:
         expect_retry=bool(data.get("expect_retry") or False),
         expect_safe_failure=bool(data.get("expect_safe_failure") or False),
         interpreter_grounding=bool(data.get("interpreter_grounding") or False),
+        requirements=[dict(r) for r in (data.get("requirements") or [])],
+        manual_grade=bool(data.get("manual_grade") or False),
         notes=str(data.get("notes") or ""),
     )
 
@@ -102,7 +108,7 @@ def load_cases_from_file(path: Path) -> list[BenchmarkCase]:
     return [load_case_dict(item) for item in items]
 
 
-HELD_OUT_DOMAINS = frozenset({"heldout", "heldout2", "heldout3", "heldout4", "heldout5"})
+HELD_OUT_DOMAINS = frozenset({"heldout", "heldout2", "heldout3", "heldout4", "heldout5", "heldout7"})
 
 
 def iter_case_files(cases_dir: Path | None = None) -> list[Path]:

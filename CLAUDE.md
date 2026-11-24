@@ -34,6 +34,33 @@ observed failure turn into patches. Add one only if all three hold:
 3. **It generalises.** Even when a failure prompted it, its effect is judged on a
    held-out set nobody has looked at.
 
+### Changing a prompt
+
+A prompt is code too. A sentence added after each observed failure turns the
+prompt into the word list we removed from the code.
+
+- **What a prompt may say:**
+  - what the model is given (tables, tools, actions) and what each action does
+  - the output format
+  - general ways of working (one step at a time, check each result, compute
+    values from the data instead of typing them)
+- **What it must not say:**
+  - how to handle a kind of question ("for a discount rate, compute it per channel")
+  - domain words, column names or layouts taken from test questions or datasets
+  - a sentence whose only reason is one observed failure ("do not forget the
+    total row")
+- **Prefer facts over instructions.** When the model gets something wrong, first
+  fix what it is shown: a wrong table read, a misleading preview, an error
+  message without the failing line. Tell it what is true ("this is the same code
+  as your previous step"), not what to do.
+- **One prompt change per commit.** The message says why the change was made and
+  what it did on a held-out set. A change with no measurable effect is removed.
+- **Prune.** From time to time, remove sentences one at a time; if the score does
+  not drop, the sentence goes.
+- **Tests guard the obvious cases:** prompts may not contain words from benchmark
+  questions or datasets, and each prompt has a length limit. Raising a limit is
+  a visible change and needs a reason in the commit.
+
 ## Measure, don't guess
 
 Judge changes with the benchmark in `tests/benchmark` (`runner.py --live`).

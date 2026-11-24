@@ -1,0 +1,625 @@
+# heldout7: 사용자가 2026-11-24에 작성한 새 시험 세트 (표 4개, 질문 15개).
+# 정답은 사용자 확인 + 독립 계산 일치. 요구사항 문장은 사용자의 '맞는 답을 내는 방법' 그대로.
+# requirements[].check 는 _eval_cells 검사 하나. manual 은 사람이 답 문장을 읽고 판정한다.
+- id: heldout7_01_mail_login_errors
+  domain: heldout7
+  profile: generic
+  dataset: office_support.xlsx
+  question: 메일로 들어온 접속 오류는 총 몇 건이야?
+  tags:
+  - heldout7
+  - user_written
+  - simple
+  live_only: true
+  expected:
+    expected_result:
+      cells:
+      - 4
+      max_rows: 1
+    requirements:
+    - text: 1) 접수 채널이 메일인 상세 건을 고른다.
+      check:
+        cells:
+        - 4
+        absent_cells:
+        - 6
+    - text: 2) 문의 유형이 접속 오류인 접수 건의 수를 센다. 상태는 모두 포함한다.
+      check:
+        cells:
+        - 4
+        absent_cells:
+        - 5
+- id: heldout7_02_optical_recheck_lots
+  domain: heldout7
+  profile: generic
+  dataset: office_quality.xlsx
+  question: 광학 모듈 중에 재검 대상으로 잡힌 로트 번호만 알려줘.
+  tags:
+  - heldout7
+  - user_written
+  - simple
+  live_only: true
+  expected:
+    expected_result:
+      labels:
+      - 가-03
+      - 가-05
+      - 나-02
+      - 나-05
+      absent_labels:
+      - 가-01
+      - 가-02
+      - 가-04
+      - 나-03
+      - 나-04
+    requirements:
+    - text: 1) 로트 번호가 있는 상세 행에서 제품군이 광학 모듈인 건을 고른다.
+      check:
+        absent_labels:
+        - 가-02
+        labels:
+        - 가-03
+        - 가-05
+        - 나-02
+        - 나-05
+    - text: 2) 판정이 재검 대상인 건의 로트 번호만 표시한다.
+      check:
+        labels:
+        - 가-03
+        - 가-05
+        - 나-02
+        - 나-05
+        absent_labels:
+        - 가-01
+        - 가-04
+        - 나-03
+        - 나-04
+- id: heldout7_03_east_stop_minutes
+  domain: heldout7
+  profile: generic
+  dataset: office_equipment.xlsx
+  question: 동관에서 점검하면서 설비 멈춘 시간 다 더하면 몇 분이야?
+  tags:
+  - heldout7
+  - user_written
+  - simple
+  live_only: true
+  expected:
+    expected_result:
+      cells:
+      - 187
+    requirements:
+    - text: 1) 시간 합계 행을 제외하고 설치 구역이 동관인 상세 점검을 고른다.
+      check:
+        cells:
+        - 187
+        absent_cells:
+        - 410
+        - 597
+    - text: 2) 점검 시간이 아닌 정지 시간 열을 합산해 분 단위로 표시한다.
+      check:
+        cells:
+        - 187
+        absent_cells:
+        - 361
+- id: heldout7_04_docs_no_change_requests
+  domain: heldout7
+  profile: generic
+  dataset: office_docs.xlsx
+  question: 검토 끝난 문서 중 수정 요청이 한 건도 없었던 문서는 뭐야?
+  tags:
+  - heldout7
+  - user_written
+  - simple
+  live_only: true
+  expected:
+    expected_result:
+      labels:
+      - 치수 샘플링 기준
+      - 절연 검사 기준
+      absent_labels:
+      - 계측기 설치 절차
+      - 시험편 이송 절차
+      max_rows: 2
+    requirements:
+    - text: 1) 실제 완료일이 있는 문서만 고른다.
+      check:
+        absent_labels:
+        - 계측기 설치 절차
+        labels:
+        - 치수 샘플링 기준
+        - 절연 검사 기준
+    - text: 2) 수정 요청 건수가 숫자 0인 문서의 문서명을 표시한다.
+      check:
+        labels:
+        - 치수 샘플링 기준
+        - 절연 검사 기준
+- id: heldout7_05_late_mail_login_errors
+  domain: heldout7
+  profile: generic
+  dataset: office_support.xlsx
+  question: 11월 4일부터 13일까지 들어온 접속 오류 중에 메일로 받았고, 처리까지 끝났는데 첫 답변이 기준보다 늦었던 건만 찾아줘. 몇 분 늦었는지랑 처리 시간도 적고, 많이 늦은 것부터 보여줘.
+  tags:
+  - heldout7
+  - user_written
+  - compound
+  live_only: true
+  expected:
+    expected_result:
+      rows:
+        문의-737:
+        - 30
+        - 210
+      absent_labels:
+      - 문의-731
+      - 문의-733
+      - 문의-735
+      - 문의-736
+      - 문의-739
+      max_rows: 1
+    requirements:
+    - text: 1) 접수일 11월 4~13일(양 끝 포함)의 상세 건을 고른다.
+      check:
+        absent_labels:
+        - 문의-731
+        labels:
+        - 문의-737
+    - text: 2) 문의 유형이 접속 오류이고 접수 채널이 메일인 건을 남긴다.
+      check:
+        absent_labels:
+        - 문의-733
+        - 문의-736
+        labels:
+        - 문의-737
+    - text: 3) 상태가 완료인 건만 남긴다.
+      check:
+        absent_labels:
+        - 문의-739
+        labels:
+        - 문의-737
+    - text: 4) 첫 응답 시간이 응답 기준을 초과한 건만 남긴다.
+      check:
+        absent_labels:
+        - 문의-735
+        labels:
+        - 문의-737
+    - text: 5) 초과 시간은 첫 응답 시간에서 응답 기준을 빼서 분 단위로 계산한다.
+      check:
+        rows:
+          문의-737:
+          - 30
+    - text: 6) 접수번호와 초과 시간, 처리 시간을 표시하고 초과 시간 내림차순으로 정렬한다.
+      check:
+        rows:
+          문의-737:
+          - 30
+          - 210
+- id: heldout7_06_optical_line_defect_rate
+  domain: heldout7
+  profile: generic
+  dataset: office_quality.xlsx
+  question: 11월 3~12일에 검사한 광학 모듈 중 표본을 60개 이상 본 로트만 묶어서, 라인별 검사량과 불량량, 각 라인의 전체 표본 기준 불량률을 보여줘. 불량률 높은 라인부터 부탁해.
+  tags:
+  - heldout7
+  - user_written
+  - compound
+  live_only: true
+  expected:
+    expected_result:
+      rows:
+        라인 2:
+        - 175
+        - 6
+        - ratio: 0.034285714
+        라인 1:
+        - 320
+        - 7
+        - ratio: 0.021875
+      row_order:
+      - 라인 2
+      - 라인 1
+    requirements:
+    - text: 1) 로트 번호가 있는 상세 행을 사용하고 소계와 합계는 제외한다.
+      check:
+        absent_labels:
+        - 소계
+        - 합계
+        absent_cells:
+        - 640
+        - 350
+        labels:
+        - 라인 1
+        - 라인 2
+    - text: 2) 검사일이 11월 3~12일(양 끝 포함)인 행을 고른다.
+      check:
+        absent_cells:
+        - 235
+        labels:
+        - 라인 1
+        - 라인 2
+    - text: 3) 제품군이 광학 모듈인 행을 남긴다.
+      check:
+        absent_cells:
+        - 380
+        - 265
+        labels:
+        - 라인 1
+        - 라인 2
+    - text: 4) 검사 수량이 60개 이상인 로트만 남긴다.
+      check:
+        absent_cells:
+        - 225
+        labels:
+        - 라인 1
+        - 라인 2
+    - text: 5) 생산 라인별로 검사 수량과 불량 수량을 각각 합산한다.
+      check:
+        rows:
+          라인 2:
+          - 175
+          - 6
+          라인 1:
+          - 320
+          - 7
+    - text: 6) 라인별 불량 수량 합계를 검사 수량 합계로 나눠 백분율로 표시한다.
+      check:
+        rows:
+          라인 2:
+          - ratio: 0.034285714
+          라인 1:
+          - ratio: 0.021875
+    - text: 7) 반올림 전 불량률 내림차순으로 정렬한다.
+      check:
+        row_order:
+        - 라인 2
+        - 라인 1
+- id: heldout7_07_regular_action_stops_by_equipment
+  domain: heldout7
+  profile: generic
+  dataset: office_equipment.xlsx
+  question: 11월 3일부터 16일까지 정기점검한 것 중 조치가 필요했고 30분 이상 설비를 멈춘 건을 설비별로 합쳐줘. 몇 번인지랑 총 몇 분 멈췄는지 적고, 총 정지 시간이 긴 순서로 보여줘.
+  tags:
+  - heldout7
+  - user_written
+  - compound
+  live_only: true
+  expected:
+    expected_result:
+      rows:
+        순환 펌프:
+        - 2
+        - 85
+        집진기:
+        - 2
+        - 75
+        열교환기:
+        - 1
+        - 42
+      row_order:
+      - 순환 펌프
+      - 집진기
+      - 열교환기
+      absent_labels:
+      - 공기 압축기
+      - 온도 제어기
+    requirements:
+    - text: 1) 점검 번호가 있는 행만 사용한다.
+      check:
+        absent_labels:
+        - 시간 합계
+        absent_cells:
+        - 410
+        labels:
+        - 순환 펌프
+        - 집진기
+        - 열교환기
+    - text: 2) 점검일이 11월 3~16일(양 끝 포함)인 행을 고른다.
+      check:
+        absent_cells:
+        - 123
+        labels:
+        - 순환 펌프
+        - 집진기
+        - 열교환기
+    - text: 3) 점검 구분이 정기인 행을 남긴다.
+      check:
+        absent_cells:
+        - 92
+        absent_labels:
+        - 공기 압축기
+        labels:
+        - 순환 펌프
+        - 집진기
+        - 열교환기
+    - text: 4) 점검 결과가 조치 필요인 행을 남긴다.
+      check:
+        absent_labels:
+        - 온도 제어기
+        labels:
+        - 순환 펌프
+        - 집진기
+        - 열교환기
+    - text: 5) 정지 시간이 30분 이상인 행만 남긴다.
+      check:
+        rows:
+          집진기:
+          - 2
+          - 75
+    - text: 6) 설비명별로 점검 건수와 정지 시간 합계를 구한다.
+      check:
+        rows:
+          순환 펌프:
+          - 2
+          - 85
+          집진기:
+          - 2
+          - 75
+          열교환기:
+          - 1
+          - 42
+    - text: 7) 정지 시간 합계 내림차순으로 정렬한다.
+      check:
+        row_order:
+        - 순환 펌프
+        - 집진기
+        - 열교환기
+- id: heldout7_08_late_work_standards
+  domain: heldout7
+  profile: generic
+  dataset: office_docs.xlsx
+  question: 11월 2~12일에 제출한 작업표준서 중 수정 요청이 2건 이상이었고, 검토가 끝났는데 기한을 넘긴 문서만 보여줘. 문서별로 며칠 늦었는지 적고 많이 늦은 순서로 정리해줘. 같은 일수면 먼저 제출한 문서부터 보여줘.
+  tags:
+  - heldout7
+  - user_written
+  - compound
+  live_only: true
+  expected:
+    expected_result:
+      rows:
+        문서-532:
+        - 배선 고정 절차
+        - 3
+        문서-535:
+        - 치공구 세척 절차
+        - 2
+        문서-530:
+        - 센서 조립 절차
+        - 1
+      row_order:
+      - 문서-532
+      - 문서-535
+      - 문서-530
+      absent_labels:
+      - 문서-534
+      - 문서-536
+      - 문서-537
+      - 문서-538
+      - 문서-540
+    requirements:
+    - text: 1) 제출일이 11월 2~12일(양 끝 포함)인 상세 문서를 고른다.
+      check:
+        labels:
+        - 문서-530
+        - 문서-532
+        - 문서-535
+    - text: 2) 문서 유형이 작업표준서인 행을 남긴다.
+      check:
+        absent_labels:
+        - 문서-534
+        labels:
+        - 문서-532
+    - text: 3) 수정 요청 건수가 2건 이상인 행을 남긴다.
+      check:
+        absent_labels:
+        - 문서-536
+        labels:
+        - 문서-532
+    - text: 4) 실제 완료일이 입력된 행만 사용한다.
+      check:
+        absent_labels:
+        - 문서-538
+        - 문서-540
+        labels:
+        - 문서-532
+    - text: 5) 실제 완료일이 검토 기한보다 늦은 행만 남긴다.
+      check:
+        absent_labels:
+        - 문서-537
+        labels:
+        - 문서-532
+    - text: 6) 실제 완료일에서 검토 기한을 뺀 달력 일수와 문서명, 문서 번호를 표시한다.
+      check:
+        rows:
+          문서-532:
+          - 배선 고정 절차
+          - 3
+          문서-535:
+          - 치공구 세척 절차
+          - 2
+          문서-530:
+          - 센서 조립 절차
+          - 1
+    - text: 7) 지연 일수 내림차순, 동률이면 제출일 오름차순으로 정렬한다.
+      check:
+        row_order:
+        - 문서-532
+        - 문서-535
+        - 문서-530
+- id: heldout7_09_done_avg_handling_by_type
+  domain: heldout7
+  profile: generic
+  dataset: office_support.xlsx
+  question: 완료된 문의만 놓고 보면 유형별 평균 처리 시간이 몇 분이야?
+  tags:
+  - heldout7
+  - user_written
+  - simple
+  live_only: true
+  expected:
+    expected_result:
+      pairs:
+        접속 오류: 131
+        기능 문의: 71
+        계정 변경: 59
+    requirements:
+    - text: 1) 상태가 완료인 상세 건만 선택한다.
+      check:
+        pairs:
+          접속 오류: 131
+          기능 문의: 71
+          계정 변경: 59
+    - text: 2) 문의 유형별로 처리 시간의 산술평균을 분 단위로 계산한다.
+      check:
+        pairs:
+          접속 오류: 131
+          기능 문의: 71
+          계정 변경: 59
+- id: heldout7_10_zero_defect_lots_to_nov10
+  domain: heldout7
+  profile: generic
+  dataset: office_quality.xlsx
+  question: 11월 10일까지 검사한 것 중 불량이 아예 없었던 로트가 몇 개야?
+  tags:
+  - heldout7
+  - user_written
+  - simple
+  live_only: true
+  expected:
+    expected_result:
+      cells:
+      - 2
+      max_rows: 1
+    requirements:
+    - text: 1) 소계와 합계를 빼고 검사일이 11월 10일 이하인 로트만 고른다.
+      check:
+        absent_cells:
+        - 3
+        cells:
+        - 2
+    - text: 2) 불량 수량이 0개인 로트의 수를 센다.
+      check:
+        cells:
+        - 2
+- id: heldout7_11_no_stop_inspections
+  domain: heldout7
+  profile: generic
+  dataset: office_equipment.xlsx
+  question: 가동 멈추지 않고 끝낸 점검 번호랑 설비명만 뽑아줘.
+  tags:
+  - heldout7
+  - user_written
+  - simple
+  live_only: true
+  expected:
+    expected_result:
+      labels:
+      - 점검-303
+      - 점검-309
+      - 온도 제어기
+      row_count: 2
+    requirements:
+    - text: 1) 점검 번호가 있는 상세 행만 대상으로 한다.
+      check:
+        absent_labels:
+        - 시간 합계
+        labels:
+        - 점검-303
+        - 점검-309
+    - text: 2) 정지 시간이 0분인 행에서 점검 번호와 설비명만 추출한다.
+      check:
+        labels:
+        - 점검-303
+        - 점검-309
+        - 온도 제어기
+        row_count: 2
+- id: heldout7_12_review_days_ask_back
+  domain: heldout7
+  profile: generic
+  dataset: office_docs.xlsx
+  question: 문서 검토는 보통 며칠 걸려?
+  tags:
+  - heldout7
+  - user_written
+  - ask_back
+  live_only: true
+  expected:
+    expect_safe_failure: true
+    manual_grade: true
+    notes: '되물어야 맞음: 시작점(제출일/착수일), 달력일/근무일, 평균/중앙값. 착수일은 표에 없음.'
+    requirements:
+    - text: 1) 소요 기간의 시작점을 제출일로 볼지, 실제 검토 착수일부터 볼지 확인한다. 착수일은 표에 없다.
+      manual: true
+    - text: 2) 달력일 또는 근무일 기준과 보통의 대표값을 평균 또는 중앙값 중 무엇으로 볼지 확인한다.
+      manual: true
+    - text: 3) 제출일부터 완료일까지를 원하면 실제 완료일이 있는 문서에서 기간을 구해 합의한 기준으로 요약한다.
+      manual: true
+- id: heldout7_13_satisfaction_not_in_table
+  domain: heldout7
+  profile: generic
+  dataset: office_support.xlsx
+  question: 문의 답변 받고 고객이 남긴 만족도 점수, 채널별로 평균 좀 알려줘.
+  tags:
+  - heldout7
+  - user_written
+  - not_in_table
+  live_only: true
+  expected:
+    expect_safe_failure: true
+    manual_grade: true
+    notes: 만족도 점수가 표에 없다고 답하고, 설문 원자료를 요청해야 맞음.
+    requirements:
+    - text: 1) 표에 고객 만족도 점수나 설문 결과가 없음을 확인한다.
+      manual: true
+    - text: 2) 접수번호로 연결할 수 있는 설문 데이터나 채널별 점수 원자료를 요청한다.
+      manual: true
+- id: heldout7_14_defects_by_line
+  domain: heldout7
+  profile: generic
+  dataset: office_quality.xlsx
+  question: 라인별로 불량품이 총 몇 개 나왔는지만 알려줘.
+  tags:
+  - heldout7
+  - user_written
+  - simple
+  live_only: true
+  expected:
+    expected_result:
+      pairs:
+        라인 1: 11
+        라인 2: 12
+      absent_cells:
+      - 22
+      - 24
+    requirements:
+    - text: 1) 로트 번호가 있는 상세 행만 골라 소계와 합계의 중복 집계를 막는다.
+      check:
+        absent_cells:
+        - 22
+        - 24
+        labels:
+        - 라인 1
+        - 라인 2
+    - text: 2) 생산 라인별로 불량 수량을 합산한다.
+      check:
+        pairs:
+          라인 1: 11
+          라인 2: 12
+- id: heldout7_15_repair_cost_not_in_table
+  domain: heldout7
+  profile: generic
+  dataset: office_equipment.xlsx
+  question: 조치 필요였던 설비들은 실제로 수리하는 데 얼마씩 들었어?
+  tags:
+  - heldout7
+  - user_written
+  - not_in_table
+  live_only: true
+  expected:
+    expect_safe_failure: true
+    manual_grade: true
+    notes: 수리비가 표에 없다고 답하고, 수리비 내역을 요청해야 맞음.
+    requirements:
+    - text: 1) 점검 결과와 비고는 확인할 수 있지만 실제 수리비 열이나 수리 집행 내역은 없음을 확인한다.
+      manual: true
+    - text: 2) 점검 번호나 설비명으로 연결할 수 있는 수리비 내역을 요청한다.
+      manual: true
