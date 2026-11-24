@@ -461,6 +461,35 @@ def _eval_cells(exp: dict[str, Any], result_df: pd.DataFrame) -> tuple[bool, str
     return True, "cell checks passed", "none"
 
 
+def score_requirements(
+    requirements: list[dict[str, Any]], result_df: pd.DataFrame | None
+) -> dict[str, Any]:
+    """요구사항마다 검사 하나를 돌려 몇 개를 지켰는지 센다.
+
+    전부 맞아야 정답인 채점은 "8개 중 7개 맞음"과 "아무것도 못 함"을 구분하지 못한다.
+    이 점수는 그 차이를 보려는 보조 지표다. 정답 판정은 expected_result가 한다.
+    manual 요구사항은 세지 않고 사람이 판정하도록 남긴다.
+    """
+    items = []
+    for req in requirements:
+        text = str(req.get("text") or "")
+        if req.get("manual"):
+            items.append({"text": text, "ok": None, "detail": "manual"})
+            continue
+        if result_df is None:
+            items.append({"text": text, "ok": False, "detail": "no answer table"})
+            continue
+        ok, detail, _ = _eval_cells(dict(req.get("check") or {}), result_df)
+        items.append({"text": text, "ok": ok, "detail": detail})
+    auto = [i for i in items if i["ok"] is not None]
+    return {
+        "met": sum(1 for i in auto if i["ok"]),
+        "checked": len(auto),
+        "manual": len(items) - len(auto),
+        "items": items,
+    }
+
+
 _NUM_RE = re.compile(
     r"(?<![A-Za-z_])[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![A-Za-z_])[-+]?\d+(?:\.\d+)?%?"
 )
