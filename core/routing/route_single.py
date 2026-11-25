@@ -208,6 +208,17 @@ def _route_analysis(
         profile_name=profile_name,
         skip_aggregate_shortcuts=False,
     )
+    if analysis_meta.get("engine") == "step":
+        # 단계별 엔진의 답은 그대로 보여준다. 아래 후처리(합계 행 빼기, 원본 순서 복원,
+        # 빈 결과면 전체 표로 다시 묻기)는 질문 단어로 판단하는 옛 경로용이라 거치지 않는다.
+        # 답 표가 다음 질문의 분석 범위가 되지도 않는다.
+        return SingleRouteOutcome(
+            reply=summary,
+            dataframe=result,
+            meta=analysis_meta,
+            keep_as_filter=False,
+            replace_selection=False,
+        )
 
     reset_filter = False
     if (

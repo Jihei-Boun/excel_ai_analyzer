@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 import traceback
@@ -243,3 +244,45 @@ def ollama_chat(model: str, base_url: str = "http://localhost:11434", timeout: i
         return str(resp.json()["message"]["content"] or "")
 
     return _chat
+
+
+ENGINE_ENV = "EXCEL_ANALYZER_ENGINE"
+
+NOT_FOUND_REPLY = "단계 한도 안에 답을 찾지 못했습니다. 질문을 더 구체적으로 바꿔 다시 물어봐 주세요."
+
+
+def enabled() -> bool:
+    """EXCEL_ANALYZER_ENGINE=step 이면 분석 질문을 이 엔진이 맡는다. 기본은 기존 엔진."""
+    return os.environ.get(ENGINE_ENV, "").strip().lower() == "step"
+
+
+def answer_for_app(
+    df: pd.DataFrame,
+    question: str,
+    chat: Callable[[list[dict[str, str]]], str],
+) -> tuple[pd.DataFrame | None, str, dict[str, Any]]:
+    """앱의 run_analysis와 같은 모양 (결과 표, 답변 문장, meta)으로 돌려준다."""
+    tables = starting_tables(df)
+    res = run(question, tables, chat)
+    code = "\n\n".join(
+        f"# {s.detail.get('why') or s.detail.get('save_as') or ''}\n{s.detail.get('code')}".strip()
+        for s in res.steps
+        if s.action == "python" and s.detail.get("code")
+    )
+    meta: dict[str, Any] = {
+        "engine": "step",
+        "engine_stopped": res.stopped,
+        "engine_steps": len(res.steps),
+        "engine_tables": list(tables),
+    }
+    if code:
+        meta["code"] = code
+    if res.stopped == "answered" and res.answer is not None:
+        table = res.answer
+        # 묶음 기준처럼 이름 붙은 index는 열로 꺼내 보여준다. 이름 없는 index는 행 번호일 뿐이다.
+        named = any(name is not None for name in table.index.names)
+        table = table.reset_index(drop=not named)
+        return table, res.note or "분석 결과입니다.", meta
+    if res.stopped == "asked":
+        return None, res.note, meta
+    return None, NOT_FOUND_REPLY, meta
