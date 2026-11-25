@@ -108,3 +108,9 @@ def test_engine_shows_the_failing_line_to_the_model() -> None:
     assert res.stopped == "answered"
     assert seen[-1].startswith("Observation:\nERROR while running the code: KeyError: '없음'")
     assert "failing line 2: result = tables['표']['없음']" in seen[-1]
+
+
+def test_code_text_is_not_checked() -> None:
+    """막는 근거는 운영체제 한도다. 이미 올라온 모듈을 import하는 정상 코드는 돈다."""
+    out = step_engine._run_python("import math\nresult = tables['표'].assign(r=math.sqrt(4))", TABLES)
+    assert out["r"].tolist() == [2.0, 2.0, 2.0]

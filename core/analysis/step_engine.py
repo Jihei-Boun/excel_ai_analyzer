@@ -87,8 +87,6 @@ def _preview(df: pd.DataFrame, rows: int | str = PREVIEW_ROWS) -> str:
 
 
 def _run_python(code: str, tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    if re.search(r"\b(import|open|exec|eval|__\w+__|os\.|sys\.|subprocess)\b", code):
-        raise ValueError("forbidden statement (import/open/exec/eval/dunder)")
     # 운영체제 한도가 걸린 별도 프로세스에서 실행한다 (core/analysis/sandbox.py).
     return sandbox.run_code(code, tables)
 
