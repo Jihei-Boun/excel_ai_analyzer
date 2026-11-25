@@ -441,6 +441,10 @@ def run_case_live(
         loading_unverified=loading_unverified,
     )
     details["loading_unverified"] = loading_unverified
+    # 표 읽기가 옛 방식으로 넘어갔다면 왜 그랬는지 (검사 실패 내용, 응답 시간 초과 등)
+    structure_info = df.attrs.get(table_structure.ATTRS_KEY) or {}
+    if structure_info.get("source") == "fallback":
+        details["loading_fallback_reason"] = str(structure_info.get("reason") or "")[:500]
     details["plan_explanation"] = meta.get("plan_explanation")
     return CaseResult(
         outcome=outcome,

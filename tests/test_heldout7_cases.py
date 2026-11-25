@@ -72,6 +72,24 @@ def test_written_tables_keep_the_values_the_user_saw(tmp_path) -> None:
             assert a == pytest.approx(b) if isinstance(a, float) else a == b, (file, a, b)
 
 
+# 수식 칸 중 일부. 원본과 결과를 서로만 비교하면 둘 다 비었을 때도 통과한다
+# (실제로 그랬다: 원본을 다시 저장하면서 수식의 계산값이 지워졌다). 그래서 사용자가
+# 표에서 본 값을 직접 적어 둔다. (엑셀 행, 열) 기준.
+FORMULA_VALUES = {
+    "office_quality.xlsx": {(6, "F"): 79, (6, "H"): 0.0125, (12, "E"): 480, (19, "G"): 12, (20, "E"): 935},
+    "office_equipment.xlsx": {(18, "F"): 689, (18, "G"): 410},
+}
+
+
+@pytest.mark.parametrize("file", sorted(FORMULA_VALUES))
+def test_formula_cells_have_their_values(file: str, tmp_path) -> None:
+    write_all(tmp_path)
+    grid = pd.read_excel(tmp_path / file, header=None)
+    for (row, col), want in FORMULA_VALUES[file].items():
+        got = grid.iat[row - 1, ord(col) - ord("A")]
+        assert got == pytest.approx(want), f"{file} {col}{row}: {got!r}, want {want}"
+
+
 @pytest.mark.parametrize("num", sorted(RIGHT))
 def test_confirmed_answer_passes_everything(num: str) -> None:
     case = CASES[num]
