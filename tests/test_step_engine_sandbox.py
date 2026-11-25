@@ -114,3 +114,24 @@ def test_code_text_is_not_checked() -> None:
     """막는 근거는 운영체제 한도다. 이미 올라온 모듈을 import하는 정상 코드는 돈다."""
     out = step_engine._run_python("import math\nresult = tables['표'].assign(r=math.sqrt(4))", TABLES)
     assert out["r"].tolist() == [2.0, 2.0, 2.0]
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "result = tables['표'].pivot_table(index='부서', values='값', aggfunc='sum')",
+        "result = pd.crosstab(tables['표']['부서'], tables['표']['섞임'].astype(str))",
+        "result = tables['표'].groupby('부서').agg(합=('값', 'sum'))",
+        "result = tables['표'].describe()",
+        "result = tables['표'].assign(r=tables['표']['값'] / tables['표']['값'].sum()).sort_values('r')",
+    ],
+)
+def test_common_pandas_calls_work_behind_the_closed_door(code: str) -> None:
+    """numpy·pandas가 처음 쓸 때 늦게 읽는 모듈도 미리 읽혀 있어야 한다 (8504 화면 확인에서 막혔던 것들)."""
+    assert isinstance(sandbox.run_code(code, TABLES), pd.DataFrame)
+
+
+def test_blocked_file_access_says_why() -> None:
+    with pytest.raises(sandbox.CodeError) as err:
+        sandbox.run_code("open('/etc/hostname')", TABLES)
+    assert sandbox.CLOSED_NOTE in str(err.value)

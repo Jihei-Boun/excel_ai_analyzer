@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import errno
 import json
 import math
 import multiprocessing as mp
@@ -35,11 +36,15 @@ import pandas as pd
 TIMEOUT_SECONDS = 30
 EXTRA_MEMORY_BYTES = 2 * 1024**3
 MAX_RESULT_BYTES = 64 * 1024**2
+CLOSED_NOTE = (
+    "this step runs in a closed process: it cannot open files, import modules that are not "
+    "already loaded, use the network or start programs"
+)
 _START_NAMES = {"__builtins__", "tables", "pd", "np"}
 
 _ctx = mp.get_context("forkserver")
 # 작업용 프로세스는 이 서버 프로세스에서 복제된다. pandas를 미리 올려 두면 단계마다 다시 읽지 않는다.
-_ctx.set_forkserver_preload(["pandas", "numpy", __name__])
+_ctx.set_forkserver_preload(["core.analysis.sandbox_preload", __name__])
 
 
 class CodeError(Exception):
@@ -187,6 +192,9 @@ def _child(conn: Any, code: str, tables: dict[str, pd.DataFrame], cpu_seconds: i
             if frame.filename == "<string>":
                 line = frame.lineno
         message = traceback.format_exception_only(type(exc), exc)[-1].strip()
+        if isinstance(exc, OSError) and exc.errno in (errno.EMFILE, errno.EFBIG):
+            # 오류 문장만으로는 원인이 보이지 않는다 (모델이 "시스템을 재시작하라"고 답한 적이 있다).
+            message += f" ({CLOSED_NOTE})"
         conn.send_bytes(b"er" + json.dumps({"message": message, "line": line}).encode())
 
 
