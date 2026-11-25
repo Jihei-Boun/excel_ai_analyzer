@@ -21,6 +21,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from core.analysis import step_engine
 from core.io import table_structure
 from core.routing import request_kind
 from tests.benchmark.generate_datasets import ensure_datasets
@@ -29,6 +30,7 @@ from tests.benchmark.schema import iter_case_files, load_cases_from_file
 # 이름: (지시문, 길이 상한). 상한은 만들 때 길이에 약 10% 여유를 둔 값이다.
 GUARDED_PROMPTS = {
     "request_kind": (request_kind.REQUEST_KIND_SYSTEM_PROMPT, 1300),
+    "step_engine": (step_engine.SYSTEM_PROMPT, 1900),
     "table_structure": (table_structure.SYSTEM_PROMPT, 1800),
 }
 
