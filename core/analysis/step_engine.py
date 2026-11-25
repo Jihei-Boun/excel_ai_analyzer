@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 from core.analysis import sandbox
+from core.io.excel_loader import SOURCE_ATTRS_KEY
 
 MAX_STEPS = 24
 PREVIEW_ROWS = 40
@@ -71,6 +72,25 @@ class RunResult:
     note: str
     steps: list[Step] = field(default_factory=list)
     stopped: str = ""
+
+
+def starting_tables(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """엔진이 처음 받는 표. 앱이 읽은 표("표")와, 가능하면 그 시트의 원래 칸("원본_셀").
+
+    원래 칸은 df가 그 시트를 통째로 읽은 표일 때만 준다. 필터로 줄였거나 여러 파일을
+    합친 표에 시트 전체를 같이 주면 둘이 서로 다른 데이터가 된다.
+    """
+    tables = {"표": df}
+    source = df.attrs.get(SOURCE_ATTRS_KEY)
+    if not isinstance(source, dict):
+        return tables
+    if list(df.shape) != source.get("shape") or [str(c) for c in df.columns] != source.get("columns"):
+        return tables
+    try:
+        tables["원본_셀"] = pd.read_excel(source["path"], sheet_name=source["sheet"], header=None)
+    except Exception:  # noqa: BLE001 — 파일이 지워졌거나 못 읽으면 앱이 읽은 표만 준다
+        pass
+    return tables
 
 
 def _column_names(df: pd.DataFrame) -> list[Any]:
