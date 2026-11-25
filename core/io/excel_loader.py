@@ -24,7 +24,23 @@ _DATE_VALUE_RE = re.compile(
 )
 
 
+# 표가 어느 파일·시트에서 왔는지 남기는 attrs 키. 새 분석 엔진이 원래 칸을 다시 읽을 때 쓴다.
+SOURCE_ATTRS_KEY = "source_sheet"
+
+
 def load_excel(path: str | Path, *, sheet_name: str | int = 0) -> pd.DataFrame:
+    df = _load_excel(path, sheet_name=sheet_name)
+    # 읽은 직후의 모양도 남긴다. 나중에 받은 표가 이 시트를 통째로 읽은 표인지 확인하는 데 쓴다.
+    df.attrs[SOURCE_ATTRS_KEY] = {
+        "path": str(Path(path).resolve()),
+        "sheet": sheet_name,
+        "shape": list(df.shape),
+        "columns": [str(c) for c in df.columns],
+    }
+    return df
+
+
+def _load_excel(path: str | Path, *, sheet_name: str | int = 0) -> pd.DataFrame:
     """엑셀 파일을 읽고 기본 전처리를 적용한다.
 
     xlsx/xlsm은 먼저 LLM이 표 구조(머리글 행, 데이터 범위, 소계·총계 행)를 판단하고

@@ -20,6 +20,7 @@ from core.aggregates import (
     _build_list_seed_frame,
     build_multi_context_aggregate_table,
 )
+from core.analysis import step_engine
 from core.analysis.analysis_pipeline import try_analysis_pipeline
 from core.analysis.legacy_fallback import try_legacy_simple_groupby_fallback
 from core.display.chart_utils import generate_fallback_chart, generate_multi_file_chart
@@ -137,6 +138,10 @@ def _run_analysis_impl(
         chart_path = generate_fallback_chart(df, prompt)
         if chart_path:
             return None, "차트 결과를 생성했습니다.", {"chart_path": chart_path}
+
+    # 두 번째 분석 경로: EXCEL_ANALYZER_ENGINE=step 이면 단계별 엔진이 답한다.
+    if step_engine.enabled():
+        return step_engine.answer_for_app(df, prompt, step_engine.ollama_chat(model, base_url))
 
     # ------------------------------------------------------------------
     # AnalysisPlan — analytical request면 키워드와 무관하게 우선 시도

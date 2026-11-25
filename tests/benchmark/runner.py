@@ -12,12 +12,14 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
 import traceback
 from pathlib import Path
 from typing import Any, Callable
 
 import pandas as pd
 
+from core.analysis import step_engine
 from tests.benchmark import DATASETS_DIR, RESULTS_DIR
 from tests.benchmark.evaluate import (
     classify_failure,
@@ -392,14 +394,17 @@ def run_case_live(
     ):
         if _k in meta:
             details[_k] = meta[_k]
+    for _k in ("engine", "engine_stopped", "engine_steps", "engine_tables"):
+        if _k in meta:
+            details[_k] = meta[_k]
     if isinstance(result_df, pd.DataFrame):
         details["result_preview"] = result_df.head(10).to_dict(orient="records")
     if case.expected.requirements:
         details["requirements"] = score_requirements(
             case.expected.requirements, result_df if isinstance(result_df, pd.DataFrame) else None
         )
-    if case.expected.manual_grade:
-        # 되묻기·자료 없음 문항은 표가 아니라 답 문장으로 판정한다. 사람이 읽도록 남긴다.
+    if case.expected.manual_grade or meta.get("engine_stopped") in {"asked", "step limit"}:
+        # 되묻기·자료 없음 문항, 그리고 새 엔진이 표 없이 끝낸 답은 답 문장으로 판정한다. 사람이 읽도록 남긴다.
         details["reply"] = (reply or "")[:2000]
 
     interp_ok = None
@@ -480,6 +485,40 @@ def run_suite(
     datasets_dir: Path | None = None,
     save: bool = True,
     profile_override: str | None = None,
+    engine: str = "plan",
+) -> dict[str, Any]:
+    """engine="step"이면 앱 스위치(EXCEL_ANALYZER_ENGINE=step)를 켠 채로 돌린다."""
+    previous = os.environ.get(step_engine.ENGINE_ENV)
+    os.environ[step_engine.ENGINE_ENV] = engine
+    try:
+        summary = _run_suite(
+            live=live,
+            domains=domains,
+            base_url=base_url,
+            model=model,
+            datasets_dir=datasets_dir,
+            profile_override=profile_override,
+        )
+    finally:
+        if previous is None:
+            os.environ.pop(step_engine.ENGINE_ENV, None)
+        else:
+            os.environ[step_engine.ENGINE_ENV] = previous
+    summary["engine"] = engine
+    if save:
+        path = save_summary(summary, RESULTS_DIR)
+        summary["saved_to"] = str(path)
+    return summary
+
+
+def _run_suite(
+    *,
+    live: bool,
+    domains: list[str] | None,
+    base_url: str,
+    model: str,
+    datasets_dir: Path | None,
+    profile_override: str | None,
 ) -> dict[str, Any]:
     datasets_dir = datasets_dir or DATASETS_DIR
     ensure_datasets(datasets_dir, force=False)
@@ -511,9 +550,6 @@ def run_suite(
         mode="live" if live else "deterministic",
         profile_override=profile_override,
     )
-    if save:
-        path = save_summary(summary, RESULTS_DIR)
-        summary["saved_to"] = str(path)
     return summary
 
 
@@ -527,6 +563,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--compare", default=None, help="Compare against a previous summary JSON")
     parser.add_argument("--no-save", action="store_true")
     parser.add_argument("--profile", default=None, help="Run every case with this profile (e.g. generic)")
+    parser.add_argument(
+        "--engine",
+        choices=["plan", "step"],
+        default="plan",
+        help="Analysis engine: plan (current) or step (EXCEL_ANALYZER_ENGINE=step)",
+    )
     args = parser.parse_args(argv)
 
     if args.compare and not (args.deterministic or args.live):
@@ -550,12 +592,14 @@ def main(argv: list[str] | None = None) -> int:
         model=args.model,
         save=not args.no_save,
         profile_override=args.profile,
+        engine=args.engine,
     )
     overall = summary.get("overall") or {}
     print(
         json.dumps(
             {
                 "mode": summary.get("mode"),
+                "engine": summary.get("engine"),
                 "saved_to": summary.get("saved_to"),
                 "profile_override": summary.get("profile_override"),
                 "total_cases": summary.get("total_cases"),
