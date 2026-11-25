@@ -24,8 +24,9 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
+from core.analysis import sandbox
+
 MAX_STEPS = 24
-_START_NAMES = {"__builtins__", "tables", "pd", "np"}
 PREVIEW_ROWS = 40
 
 SYSTEM_PROMPT = """You are a careful spreadsheet analyst. You answer the user's question about Excel tables
@@ -85,46 +86,20 @@ def _preview(df: pd.DataFrame, rows: int | str = PREVIEW_ROWS) -> str:
     return f"shape={df.shape}\ncolumns={_column_names(df)}\n{text}{more}"
 
 
-_SAFE_BUILTINS = {
-    name: __builtins__[name] if isinstance(__builtins__, dict) else getattr(__builtins__, name)
-    for name in (
-        "abs", "all", "any", "bool", "dict", "enumerate", "filter", "float", "int", "isinstance",
-        "len", "list", "map", "max", "min", "range", "round", "set", "sorted", "str", "sum",
-        "tuple", "zip", "reversed", "print", "ValueError", "KeyError", "Exception",
-    )
-}
-
-
 def _run_python(code: str, tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
     if re.search(r"\b(import|open|exec|eval|__\w+__|os\.|sys\.|subprocess)\b", code):
         raise ValueError("forbidden statement (import/open/exec/eval/dunder)")
-    # 한 namespace로 실행한다. globals/locals를 나누면 lambda·comprehension 안에서 tables·pd가 안 보인다.
-    scope: dict[str, Any] = {
-        "__builtins__": _SAFE_BUILTINS,
-        "tables": {k: v.copy() for k, v in tables.items()},
-        "pd": pd,
-        "np": np,
-    }
-    exec(compile(code, "<string>", "exec"), scope)  # noqa: S102 — 실험용, 로컬 전용
-    result = scope.get("result")
-    if result is None:
-        # result를 깜빡했으면 이 단계에서 새로 만든 표(마지막 것)를 결과로 받는다.
-        made = [v for k, v in scope.items() if k not in _START_NAMES and isinstance(v, (pd.DataFrame, pd.Series))]
-        result = made[-1] if made else None
-    if isinstance(result, pd.Series):
-        result = result.to_frame()
-    if not isinstance(result, pd.DataFrame):
-        raise ValueError("`result` must be a DataFrame")
-    return result
+    # 운영체제 한도가 걸린 별도 프로세스에서 실행한다 (core/analysis/sandbox.py).
+    return sandbox.run_code(code, tables)
 
 
 def _error_report(exc: Exception, code: str, tables: dict[str, pd.DataFrame]) -> str:
     """오류와 함께 실패한 코드 줄, 그 시점 표들의 열 이름을 돌려준다."""
-    message = traceback.format_exception_only(type(exc), exc)[-1].strip()
-    line_no = None
-    for frame in traceback.extract_tb(exc.__traceback__):
-        if frame.filename == "<string>":
-            line_no = frame.lineno
+    if isinstance(exc, sandbox.CodeError):  # 이미 "KeyError: '열'" 형태로 와 있다
+        message = str(exc)
+    else:
+        message = traceback.format_exception_only(type(exc), exc)[-1].strip()
+    line_no = getattr(exc, "line", None)  # 작업용 프로세스가 알려 준 줄 번호
     lines = code.splitlines()
     where = ""
     if line_no and 0 < line_no <= len(lines):
